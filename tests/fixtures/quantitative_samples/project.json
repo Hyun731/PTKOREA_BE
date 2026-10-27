@@ -1,0 +1,69 @@
+{
+  "name": "brand-research-golden",
+  "client": "합성 테스트 고객",
+  "timezone": "Asia/Seoul",
+  "period": {
+    "start": "2026-01-01",
+    "end": "2026-09-30"
+  },
+  "brands": [
+    {
+      "id": "B1",
+      "name": "브랜드A",
+      "aliases": [
+        "브랜드 A"
+      ],
+      "categories": [
+        "가방"
+      ],
+      "target": {
+        "age_min": 35,
+        "age_max": null,
+        "gender": "all",
+        "label": "35세 이상 · 전체 성별"
+      },
+      "competitors": [
+        "경쟁X",
+        "경쟁Y"
+      ],
+      "keyword_groups": [
+        {
+          "entity": "브랜드A",
+          "keywords": [
+            "브랜드A"
+          ]
+        },
+        {
+          "entity": "경쟁X",
+          "keywords": [
+            "경쟁X"
+          ]
+        },
+        {
+          "entity": "경쟁Y",
+          "keywords": [
+            "경쟁Y"
+          ]
+        }
+      ],
+      "official_profiles": []
+    }
+  ],
+  "enabled_slides": [
+    "cover",
+    "index",
+    "divider",
+    "2-8a",
+    "2-8b",
+    "2-8c",
+    "2-8d",
+    "3-1",
+    "5-recap",
+    "end"
+  ],
+  "template_version": "1.0",
+  "budget_policy": {
+    "mode": "offline",
+    "external_calls_enabled": false
+  }
+}

@@ -1,0 +1,5 @@
+﻿post_id,brand,channel,creator,owner_type,posted_at,measured_at,followers,followers_measured_at,views,likes,comments,likes_hidden,product,url
+P1,B1,youtube,합성 크리에이터 P1,creator,2026-06-05,2026-10-01,500000,2026-10-01,1000000,200,50,false,합성 가방,
+P2,B1,youtube,합성 크리에이터 P2,creator,2026-07-10,2026-10-01,200000,2026-10-01,300000,6000,400,false,합성 가방,
+P3,B1,instagram,합성 크리에이터 P3,creator,2026-08-15,2026-10-01,50000,2026-10-01,,2500,100,false,합성 가방,
+P4,B1,instagram,합성 크리에이터 P4,creator,2026-09-20,2026-10-01,30000,2026-10-01,,,300,true,합성 가방,

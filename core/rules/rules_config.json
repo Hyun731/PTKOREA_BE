@@ -1,0 +1,11 @@
+{
+  "_note": "PRD 9: product defaults before validation. Thresholds live here, not in code.",
+  "version": "1",
+  "ad_like_view_threshold": "0.03",
+  "windows": {"long": "12M", "main": "9M"},
+  "R03": {"min_months": 2},
+  "R04": {"min_reduction_pp": "1.5"},
+  "R05": {"max_self_ratio": "0.5"},
+  "R06": {},
+  "R10": {"min_ad_share": "50", "min_coverage": "80", "min_view_posts": 2}
+}

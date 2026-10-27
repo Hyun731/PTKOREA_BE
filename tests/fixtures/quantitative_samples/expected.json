@@ -1,0 +1,186 @@
+{
+  "schema_version": "3.0",
+  "synthetic": true,
+  "decimal_comparison": "ROUND_HALF_UP; value 10 decimals; strength 6 decimals; no intermediate rounding",
+  "input_counts": {
+    "facts": 39,
+    "posts": 4
+  },
+  "shares": {
+    "12M_all": {
+      "브랜드A": {
+        "value": "40.0000000000",
+        "display": "40.0%"
+      },
+      "경쟁X": {
+        "value": "36.0000000000",
+        "display": "36.0%"
+      },
+      "경쟁Y": {
+        "value": "24.0000000000",
+        "display": "24.0%"
+      }
+    },
+    "9M_all": {
+      "브랜드A": {
+        "value": "35.8571428571",
+        "display": "35.9%"
+      },
+      "경쟁X": {
+        "value": "35.1428571429",
+        "display": "35.1%"
+      },
+      "경쟁Y": {
+        "value": "29.0000000000",
+        "display": "29.0%"
+      }
+    },
+    "9M_T": {
+      "브랜드A": {
+        "value": "26.6666666667",
+        "display": "26.7%"
+      },
+      "경쟁X": {
+        "value": "40.0000000000",
+        "display": "40.0%"
+      },
+      "경쟁Y": {
+        "value": "33.3333333333",
+        "display": "33.3%"
+      }
+    },
+    "9M_all_cat_캐리어": {
+      "브랜드A": {
+        "value": "16.9000000000",
+        "display": "16.9%"
+      },
+      "경쟁X": {
+        "value": "37.0000000000",
+        "display": "37.0%"
+      },
+      "경쟁Y": {
+        "value": "46.1000000000",
+        "display": "46.1%"
+      }
+    }
+  },
+  "posts": {
+    "P1": {
+      "er": "0.0500000000",
+      "er_display": "0.05%",
+      "like_view": "0.0200000000",
+      "ad_heuristic": true
+    },
+    "P2": {
+      "er": "3.2000000000",
+      "er_display": "3.20%",
+      "like_view": "2.0000000000",
+      "ad_heuristic": false
+    },
+    "P3": {
+      "er": "5.2000000000",
+      "er_display": "5.20%",
+      "like_view": null,
+      "ad_heuristic": "unknown"
+    },
+    "P4": {
+      "er": "1.0000000000",
+      "er_display": "1.00%†",
+      "like_view": null,
+      "ad_heuristic": "unknown"
+    }
+  },
+  "ad_view_share": {
+    "value": "76.9230769231",
+    "display": "76.9%",
+    "classification_coverage": "100.0000000000"
+  },
+  "finding_count": 5,
+  "findings": [
+    {
+      "rule_id": "RULE-R06",
+      "brand_id": "B1",
+      "strength": "0.959524",
+      "strength_display": "0.96",
+      "summary": {
+        "all": "35.8571428571",
+        "target": "26.6666666667",
+        "diff": "-9.1904761905"
+      }
+    },
+    {
+      "rule_id": "RULE-R10",
+      "brand_id": "B1",
+      "strength": "0.884615",
+      "strength_display": "0.88",
+      "summary": {
+        "ad_share": "76.9230769231",
+        "ad_posts": 1,
+        "coverage": "100.0000000000",
+        "view_eligible_posts": 2
+      }
+    },
+    {
+      "rule_id": "RULE-R05",
+      "brand_id": "B1",
+      "strength": "0.853362",
+      "strength_display": "0.85",
+      "summary": {
+        "cat": "캐리어",
+        "rival": "경쟁Y",
+        "self_share": "16.9000000000",
+        "rival_share": "46.1000000000"
+      }
+    },
+    {
+      "rule_id": "RULE-R04",
+      "brand_id": "B1",
+      "strength": "0.828571",
+      "strength_display": "0.83",
+      "summary": {
+        "rival": "경쟁X",
+        "gap_12m": "4.0000000000",
+        "gap_9m": "0.7142857143",
+        "reduction": "3.2857142857"
+      }
+    },
+    {
+      "rule_id": "RULE-R03",
+      "brand_id": "B1",
+      "strength": "0.750000",
+      "strength_display": "0.75",
+      "summary": {
+        "rival": "경쟁X",
+        "start_month": "2026-06",
+        "end_month": "2026-09",
+        "months": 4
+      }
+    }
+  ],
+  "quantitative_deck_order": [
+    "cover",
+    "index",
+    "section-02",
+    "2-8a",
+    "2-8b",
+    "2-8c",
+    "2-8d",
+    "section-03",
+    "3-1-B1",
+    "section-05",
+    "5-recap",
+    "end"
+  ],
+  "acceptance": {
+    "qc_blocks": 0,
+    "warnings_allowed": true,
+    "manual_batch_acceptance_required": true,
+    "api_calls": 0
+  },
+  "split_fixture": {
+    "input": "posts_13.csv",
+    "rows": 13,
+    "creator_table_pages": 2,
+    "quantitative_total_pages": 13
+  }
+}

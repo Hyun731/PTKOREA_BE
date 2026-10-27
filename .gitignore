@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+out/
+# DB, uploads, client outputs
+var/
+# API keys and the backend token
+.env
+.env*.local
+.claude/
+# Copied from templates/fonts before building the standalone renderer image
+infra/render/fonts/
+.DS_Store

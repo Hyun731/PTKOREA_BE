@@ -1,0 +1,42 @@
+# `docker compose up -d --build` starts the API on :8000 (SQLite in ./var, keys from ./.env).
+# Fixed public address (profile "tunnel", needs NGROK_AUTHTOKEN + NGROK_DOMAIN in .env):
+#   docker compose --profile tunnel up -d
+# Postgres/Redis are optional (profile "infra"): `docker compose --profile infra up -d postgres redis`.
+services:
+  api:
+    build: .
+    image: ptk-backend:latest
+    env_file: [.env]
+    environment:
+      JOB_BACKEND: thread
+    ports: ["8000:8000"]
+    volumes: ["./var:/app/var"]
+    restart: unless-stopped
+  tunnel:
+    profiles: [tunnel]
+    image: ngrok/ngrok:latest
+    command: ["http", "--url=${NGROK_DOMAIN:?set NGROK_DOMAIN in .env}", "api:8000"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?set NGROK_AUTHTOKEN in .env}
+    ports: ["127.0.0.1:4040:4040"]  # ngrok inspector, local only
+    depends_on: [api]
+    restart: unless-stopped
+  postgres:
+    profiles: [infra]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ptk
+      POSTGRES_PASSWORD: ptk
+      POSTGRES_DB: ptk
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptk"]
+      interval: 3s
+      retries: 20
+  redis:
+    profiles: [infra]
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+volumes:
+  pgdata:
