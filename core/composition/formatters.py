@@ -30,6 +30,11 @@ def fmt_rate(value: Decimal) -> str:
     return f"{_dp(value, 2)}%"
 
 
+def fmt_times(value: Decimal) -> str:
+    """A multiplier, e.g. cocreator_vs_usual (04_지표정의_발견규칙.md 예시: '평소의 0.68배')."""
+    return f"{_dp(value, 2)}배"
+
+
 def fmt_pct_given(value: Decimal) -> str:
     """A percentage someone read off a source: shown with the source's own precision (50.5 -> 50.5%)."""
     return f"{format(Decimal(value).normalize(), 'f')}%"
@@ -77,6 +82,10 @@ def fmt_rank_num(value: int) -> str:
 
 def fmt_months(value: int) -> str:
     return f"{int(value)}개월"
+
+
+def fmt_days(value: int) -> str:
+    return f"{int(value)}일"
 
 
 def fmt_posts(value: int) -> str:
@@ -138,6 +147,8 @@ FORMATTERS: dict[str, Callable] = {
     "strength": fmt_strength,
     "krw": fmt_krw,
     "count": fmt_count_unit,
+    "times": fmt_times,
+    "days": fmt_days,
 }
 
 

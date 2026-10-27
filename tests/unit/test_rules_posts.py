@@ -60,3 +60,18 @@ def test_r11_leads_31_with_zero_qc_blocks():
     assert slide.finding_ids == [r11.id]
     qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
     assert qc.blocks == 0, [i for i in qc.issues if i.severity == "block"]
+
+
+def test_r12_r13_surface_on_recap_with_zero_qc_blocks():
+    """R12/R13 have no dedicated slide (spec only names Recap for R13) — both must still show
+    up on 5-recap, and their derived-fact citations must not trip any QC check there."""
+    p, f, po = load_fixture("posts_rules.csv")
+    result = build_deck(BuildInputs(project=p, facts=f.facts + po.facts, posts=po.posts, generated_on=date(2026, 10, 1)))
+    recap = next(s for s in result.deck.slides if s.slide_id == "5-recap")
+    r12 = next(fn for fn in result.findings if fn.rule_id == "RULE-R12")
+    r13 = next(fn for fn in result.findings if fn.rule_id == "RULE-R13")
+    # Recap caps each pillar at its 2 strongest findings; R10 doesn't fire on this fixture
+    # (see test_r11_leads_31...), so R12/R13 are the only two in "콘텐츠·관측 성과" and both fit.
+    assert set(recap.finding_ids) >= {r12.id, r13.id}
+    qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
+    assert qc.blocks == 0, [i for i in qc.issues if i.severity == "block"]

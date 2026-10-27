@@ -701,7 +701,9 @@ def _reference_panel(asset: AssetRef) -> list[Block]:
 PILLARS = [
     ("검색 경쟁", {"RULE-R03", "RULE-R04", "RULE-R05"}),
     ("타겟 적합성", {"RULE-R06"}),
-    ("콘텐츠·관측 성과", {"RULE-R10"}),
+    # R13은 04_지표정의_발견규칙.md 섹션 C가 Recap 후보로 직접 지정; R12는 같은 콘텐츠·
+    # 관측 도메인이라 묶었다(3-1은 R10/R11로 리드 자리가 이미 다 차 있어 넣을 자리가 없음).
+    ("콘텐츠·관측 성과", {"RULE-R10", "RULE-R12", "RULE-R13"}),
 ]
 
 
@@ -768,4 +770,9 @@ def _recap_item(ctx: QuantContext, f: Finding) -> tuple[list, list]:
                 [T("타겟 "), pf.fact(f.fact_ids[1], "share"), T(" · 전체 대비 "), pf.fact(f.fact_ids[2], "pp")])
     if f.rule_id == "RULE-R10":
         return ([T("광고 추정 후보 게시물에 관측 조회 집중")], [T("조회 있는 creator 게시물 조회의 "), pf.fact(f.fact_ids[0], "share")])
+    if f.rule_id == "RULE-R12":
+        return ([T("공동 게시물 반응 저하")], [T("크리에이터 평소 게시물의 "), pf.fact(f.fact_ids[0], "times")])
+    if f.rule_id == "RULE-R13":
+        start, end = date.fromisoformat(s["start"]), date.fromisoformat(s["end"])
+        return ([T("자체 채널 운영 공백")], [D(start), T(" ~ "), D(end), T(" · "), pf.fact(f.fact_ids[0], "days")])
     return ([T(f.allowed_expression)], [])
