@@ -23,7 +23,8 @@ from core.schemas.slidespec import (
 Severity = Literal["block", "warn"]
 FRAME_ROLES = {"cover", "index", "divider", "end"}
 
-FORBIDDEN_WORDS = ["검토 필요", "재측정 필요", "공개 자료 없음", "측정 불가", "부스트", "Earned 강도", "N/A", "조사 필요", "TODO", "TBD"]
+FORBIDDEN_WORDS = ["검토 필요", "재측정 필요", "공개 자료 없음", "측정 불가", "부스트", "Earned 강도", "N/A", "조사 필요", "TODO", "TBD",
+                   "데이터 부재", "확인 필요", "정성 분석"]
 INTERNAL_ID = re.compile(r"\b(?:F|DF|FN|SRC|EV|AS|CL)-[0-9A-Za-z]{4,}")
 # Assertions the data cannot support (ad heuristics / relative search indexes as facts).
 OVERCLAIMS = ["광고 집행 게시물", "유료 광고 게시물", "광고비 투입", "광고비를", "검색량이 증가", "검색량 증가", "판매 증가",
@@ -60,7 +61,13 @@ class QCReport:
 AssetLookup = Callable[[str], Optional[AssetRef]]
 
 
-def run_qc(deck: DeckSpec, registry: FactRegistry, assets: AssetLookup) -> QCReport:
+def self_brand_names(project_config: dict) -> frozenset[str]:
+    """Names of the client's own brands in a project (never compared against each other)."""
+    return frozenset(b["name"] for b in project_config.get("brands", []))
+
+
+def run_qc(deck: DeckSpec, registry: FactRegistry, assets: AssetLookup,
+           self_brands: Optional[frozenset[str]] = None) -> QCReport:
     report = QCReport()
     add = report.issues.append
     for slot in deck.plan:
@@ -72,7 +79,7 @@ def run_qc(deck: DeckSpec, registry: FactRegistry, assets: AssetLookup) -> QCRep
     if not any(s.is_data for s in deck.slides):
         add(Issue("NO_DATA_SLIDES", "block", "본문 데이터 장표가 0개입니다", "최소 자료를 채택한 뒤 다시 생성"))
     for slide in deck.slides:
-        _check_slide(slide, registry, assets, add)
+        _check_slide(slide, registry, assets, add, self_brands)
     return report
 
 
@@ -95,7 +102,8 @@ def _text_parts(slide: SlideSpec):
                             yield f"{b.block_id}[{r_i},{c_i}]", b, part
 
 
-def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, add):
+def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, add,
+                  self_brands: Optional[frozenset[str]] = None):
     sid = slide.slide_id
     canvas = tokens()["canvas"]
     frame = slide.page_role in FRAME_ROLES
@@ -133,6 +141,17 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
         for phrase in OVERCLAIMS:
             if phrase in text:
                 add(Issue("OVERCLAIM", "block", f"근거보다 강한 단정 '{phrase}'", "허용 표현 범위로 수정", sid, block_id))
+
+    # 3b. the client's own brands are never compared against each other in prose (PRD 핵심가치 1)
+    if self_brands and len(self_brands) > 1:
+        mentioned: dict[str, set[str]] = {}
+        for block_id, _, part in _text_parts(slide):
+            if part.type == "name" and part.text in self_brands:
+                mentioned.setdefault(block_id, set()).add(part.text)
+        for block_id, names in mentioned.items():
+            if len(names) > 1:
+                add(Issue("SELF_BRAND_COMPARISON", "block", f"자사 브랜드끼리 비교: {', '.join(sorted(names))}",
+                          "문장에서 자사 브랜드 중 하나만 남기고 분리", sid, block_id))
 
     # 4. lead / commentary rules
     body_facts = set()

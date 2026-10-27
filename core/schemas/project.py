@@ -130,6 +130,10 @@ class Project(BaseModel):
             overlap = set(b.benchmarks).intersection(b.entity_set)
             if overlap:
                 raise ValueError(f"{b.name}: 벤치마크는 경쟁 세트와 겹칠 수 없습니다 ({', '.join(sorted(overlap))})")
+            # P02: another self brand cannot be registered as this brand's benchmark either.
+            bench_clash = self_names.intersection(b.benchmarks) - {b.name}
+            if bench_clash:
+                raise ValueError(f"{b.name}: 다른 자사 브랜드({', '.join(sorted(bench_clash))})를 벤치마크로 등록할 수 없습니다")
             _check_keywords(b)
         if self.report_profile not in IMPLEMENTED_PROFILES:
             raise ValueError("proposal 프로필은 P1입니다. 현재는 diagnostic만 지원합니다")

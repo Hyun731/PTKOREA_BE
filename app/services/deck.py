@@ -18,7 +18,7 @@ from app.services.inputs import load_inputs
 from app.storage import get_storage
 from core.composition.build import build_deck, fingerprint
 from core.export import write_outputs
-from core.quality.qc import run_qc
+from core.quality.qc import run_qc, self_brand_names
 from core.rendering.pptx_renderer import render_deck
 from core.rendering.preview import RenderUnavailable, render_pages
 from core.schemas.slidespec import DeckSpec
@@ -46,7 +46,7 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     inputs.generated_on = deck.created_at.astimezone(SEOUL).date()
     progress(15)
     result = build_deck(inputs)
-    qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid))
+    qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(project.config))
     progress(35)
     storage = get_storage()
     key_dir = f"decks/{project.id}/{deck.id}"
@@ -90,7 +90,7 @@ def run_export(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     stored = json.loads(DeckSpec.model_validate(deck.spec).model_dump_json())  # fills fields added since the build
     if json.loads(result.deck.model_dump_json()) != stored:
         raise JobFailure("RENDER_FAILED", "재현한 덱이 미리보기 버전과 다릅니다")
-    qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid))
+    qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(project.config))
     if qc.blocks:
         raise JobFailure("QC_BLOCKED", f"QC 차단 {qc.blocks}건 — 출력 화면에서 해결하세요")
     if deck.render_status != "ok":

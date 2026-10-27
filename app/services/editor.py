@@ -26,7 +26,7 @@ from core.editing.commands import OPS, apply_commands
 from core.editing.scope import Scope, SelectionIn, Target, resolve_target, slide_context
 from core.editing.text import DeckVocabulary
 from core.export import write_outputs
-from core.quality.qc import FORBIDDEN_WORDS, run_qc
+from core.quality.qc import FORBIDDEN_WORDS, run_qc, self_brand_names
 from core.rendering.pptx_renderer import render_deck
 from core.schemas.slidespec import DeckSpec, SlideSpec
 from integrations.base import ProviderError
@@ -101,7 +101,8 @@ def renumber(slides: list[SlideSpec]) -> list[SlideSpec]:
 
 def qc_for(db: Session, project: Project, deck: Deck, slides: list[SlideSpec]) -> dict:
     result = build_context(db, project)
-    report = run_qc(edited_deck(deck, slides), result.metrics.registry, lambda aid: result.assets.get(aid))
+    report = run_qc(edited_deck(deck, slides), result.metrics.registry, lambda aid: result.assets.get(aid),
+                     self_brand_names(project.config))
     return report.to_dict()
 
 
@@ -269,7 +270,7 @@ def export_edited(db: Session, project: Project, deck: Deck) -> Export:
     slides = edit_slides(deck, db)
     result = build_context(db, project)
     spec = edited_deck(deck, slides)
-    qc = run_qc(spec, result.metrics.registry, lambda aid: result.assets.get(aid))
+    qc = run_qc(spec, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(project.config))
     if qc.blocks:
         raise ApiError(409, "QC_BLOCKED", f"검수 차단 {qc.blocks}건이 있어 내보낼 수 없습니다", "편집기의 검수 목록을 확인하세요",
                        [i for i in qc.to_dict()["issues"] if i["severity"] == "block"])

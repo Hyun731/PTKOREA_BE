@@ -21,7 +21,7 @@ from app.services.deck import current_fingerprint, next_deck_version
 from app.services.inputs import load_inputs
 from app.storage import get_storage
 from core.composition.build import build_deck
-from core.quality.qc import run_qc
+from core.quality.qc import run_qc, self_brand_names
 
 router = APIRouter()
 
@@ -31,7 +31,7 @@ def slide_plan(project_id: str, db: Session = Depends(get_db)):
     """Dry-run composition: planned vs generatable slots and current QC, without rendering."""
     p = get_project(db, project_id)
     result = build_deck(load_inputs(db, p))
-    qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid))
+    qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(p.config))
     return {
         "plan": [s.model_dump() for s in result.deck.plan],
         "counts": result.deck.counts(),
