@@ -22,6 +22,10 @@ class RulesConfig:
     r10_min_ad_share: Decimal
     r10_min_coverage: Decimal
     r10_min_view_posts: int
+    r11_top_n: int
+    r12_max_ratio: Decimal
+    r12_min_creator_sample: int
+    r13_gap_days: int
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "RulesConfig":
@@ -37,4 +41,8 @@ class RulesConfig:
             r10_min_ad_share=Decimal(raw["R10"]["min_ad_share"]),
             r10_min_coverage=Decimal(raw["R10"]["min_coverage"]),
             r10_min_view_posts=int(raw["R10"]["min_view_posts"]),
+            r11_top_n=int(raw["R11"]["top_n"]),
+            r12_max_ratio=Decimal(raw["R12"]["max_ratio"]),
+            r12_min_creator_sample=int(raw["R12"]["min_creator_sample"]),
+            r13_gap_days=int(raw["R13"]["gap_days"]),
         )

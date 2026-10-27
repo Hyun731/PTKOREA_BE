@@ -7,5 +7,8 @@
   "R04": {"min_reduction_pp": "1.5"},
   "R05": {"max_self_ratio": "0.5"},
   "R06": {},
-  "R10": {"min_ad_share": "50", "min_coverage": "80", "min_view_posts": 2}
+  "R10": {"min_ad_share": "50", "min_coverage": "80", "min_view_posts": 2},
+  "R11": {"top_n": 3},
+  "R12": {"max_ratio": "0.8", "min_creator_sample": 3},
+  "R13": {"gap_days": 60}
 }

@@ -573,9 +573,17 @@ def creator_pages(ctx: QuantContext, brand_id: str) -> list[SlideSpec]:
 
     ad = ctx.metrics.ad.get(brand_id)
     finding = None
-    r10 = [f for f in ctx.findings if f.rule_id == "RULE-R10" and f.brand_id == brand_id]
-    if r10 and r10[0].id not in ctx.used_leads:
-        finding = r10[0]
+    finding_rule = None
+    # 3-1 accepts RULE-R10 and RULE-R11 (04_지표정의_발견규칙.md 섹션 C); only one leads, so
+    # the stronger wins. R11 cites two representative posts that must land on this same page,
+    # so it only competes when the table isn't split across pages.
+    candidates = [f for f in ctx.findings if f.rule_id in ("RULE-R10", "RULE-R11") and f.brand_id == brand_id
+                 and f.id not in ctx.used_leads]
+    if len(chunks) > 1:
+        candidates = [f for f in candidates if f.rule_id != "RULE-R11"]
+    if candidates:
+        finding = max(candidates, key=lambda f: f.strength)
+        finding_rule = finding.rule_id
         ctx.used_leads.add(finding.id)
 
     slides = []
@@ -615,9 +623,13 @@ def creator_pages(ctx: QuantContext, brand_id: str) -> list[SlideSpec]:
                      ctx.pf.fact(ad.view_eligible_posts, "posts", bold=False), T(" 기준, 광고 집행·유료 조회의 증거 아님")]
             takeaway = takeaway_block(P(*parts, bullet="▶"))
             fact_ids += [ad.ad_view_share.id, ad.coverage.id, ad.view_eligible_posts.id]
-        if page_i == 0 and finding:
+        if page_i == 0 and finding_rule == "RULE-R10":
             lead = _neutral_lead(T("관측 조회가 "), T("광고 추정 후보 게시물에 집중", bold=True), T(" — 조회 있는 creator 게시물 조회의 "),
                                  ctx.pf.fact(ad.ad_view_share, "share"))
+        elif page_i == 0 and finding_rule == "RULE-R11":
+            lead = _neutral_lead(T("반응률 상위 크리에이터는 "), T("팔로워 규모가 작음", bold=True), T(" — 반응률 상위 팔로워 "),
+                                 ctx.pf.fact(finding.fact_ids[0], "lead_count"), T(" vs 조회 상위 "),
+                                 ctx.pf.fact(finding.fact_ids[1], "lead_count"))
         elif page_i == 0:
             lead = _neutral_lead(N(brand.name), T(" 관련 크리에이터 게시물 관측 현황"))
         else:
