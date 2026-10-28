@@ -156,6 +156,9 @@ class Material(Base):
     duplicate_reason: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     event_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # AI's short name for the activity
     target_segment: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # one of core.schemas.materials.TARGET_SEGMENTS
+    # P4 사례 카드 해설 (06_AI_프롬프트_템플릿.md): set only once a CaseCommentary proposal is accepted.
+    ai_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_implication: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Person-picked for a one-slide deep dive (full image + period + numbered insights) instead of the card grid.
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     order: Mapped[int] = mapped_column(Integer, default=0)
@@ -247,6 +250,23 @@ class LeadProposal(Base):
     errors: Mapped[list] = mapped_column(JSON, default=list)
     model: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CaseCommentary(Base):
+    """P4 사례 카드 해설 candidate for one competitor/benchmark case Material. Never overwrites a
+    person's card until accepted (same pattern as LeadProposal)."""
+    __tablename__ = "case_commentary"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    material_id: Mapped[str] = mapped_column(String(40), index=True)
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    implication: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|accepted|rejected|failed|superseded
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     job_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

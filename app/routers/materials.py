@@ -234,6 +234,8 @@ class MaterialPatch(BaseModel):
     featured: Optional[bool] = None
     order: Optional[int] = None
     target_segment: Optional[str] = None
+    ai_detail: Optional[str] = None  # P4 사례 카드 해설 — 수동 수정·초기화(null)용
+    ai_implication: Optional[str] = None
 
 
 def material_out(db: Session, m: Material, detail: bool = False) -> dict:
@@ -260,7 +262,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
                         "publisher": s.publisher, "published_at": s.published_at, "review_status": d.review_status}
                        for d, s in db.execute(select(Material, Source).join(Source, Source.id == Material.source_id)
                                               .where(Material.duplicate_of == m.id).order_by(Material.created_at))],
-        "target_segment": m.target_segment,
+        "target_segment": m.target_segment, "ai_detail": m.ai_detail, "ai_implication": m.ai_implication,
         "created_at": m.created_at, "updated_at": m.updated_at,
     }
     if detail:

@@ -77,7 +77,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
             asset=asset_ref(asset) if asset else None, metric_fact_ids=manual_by_mat.get(m.id, []),
             claims=[claim_ref(c) for c in sorted(claims_by_mat.get(m.id, []), key=lambda c: c.created_at)],
             comment=m.comment, review_status=m.review_status, input_path=m.input_path, featured=m.featured, order=m.order,
-            target_segment=m.target_segment))
+            target_segment=m.target_segment, ai_detail=m.ai_detail, ai_implication=m.ai_implication))
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}
     leads = {k: [Paragraph.model_validate(p) for p in v] for k, v in (project.lead_overrides or {}).items()}
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,

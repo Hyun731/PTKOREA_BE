@@ -15,6 +15,7 @@ from app.errors import ApiError, api_error_handler, unhandled_handler
 from app.routers import decks, editor, materials, meta, projects
 from app.services import deck as _deck_handlers  # noqa: F401  (registers job handlers)
 from app.services import insights as _insight_handlers  # noqa: F401
+from app.services import case_commentary as _case_commentary_handlers  # noqa: F401
 from app.services import research as _research_handlers  # noqa: F401
 
 logging.basicConfig(level=logging.INFO)

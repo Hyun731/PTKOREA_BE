@@ -80,3 +80,5 @@ class CaseMaterial(BaseModel):
     featured: bool = False
     order: int = 0
     target_segment: Optional[str] = None  # one of TARGET_SEGMENTS, or None if not evident in the source
+    ai_detail: Optional[str] = None  # P4 사례 카드 해설: 무엇을 했고 왜 통했나 (accepted CaseCommentary only)
+    ai_implication: Optional[str] = None  # P4: 자사에 적용할 시사점

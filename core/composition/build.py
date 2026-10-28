@@ -39,15 +39,16 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
     "recap": ("5", "Recap", "Insight", "본문 근거 요약"),
     "appendix": ("A", "Appendix", "Appendix", "출처"),
 }
-TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-8a": "search", "2-8b": "search",
-                    "2-8c": "search", "2-8d": "search", "3-1": "influencer", "C1": "campaign", "C2": "campaign",
-                    "M1": "campaign", "5-recap": "recap", "A-source": "appendix"}
+TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-8a": "search",
+                    "2-8b": "search", "2-8c": "search", "2-8d": "search", "3-1": "influencer", "C1": "campaign",
+                    "C2": "campaign", "M1": "campaign", "5-recap": "recap", "A-source": "appendix"}
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
-                  "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
+                  "2-2": "운영 공백 분석", "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
                   "M1": "시장·타겟 근거", "5-recap": "Recap", "A-source": "출처 표"}
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "recap", "appendix"]
-TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1", "5-recap", "A-source"]
+TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1", "5-recap",
+                  "A-source"]
 FRAME_TEMPLATES = {"cover", "index", "divider", "end"}
 
 
@@ -132,6 +133,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     if "2-1" in enabled:
         s = owned.channel_inventory_page(ctx)
         slot("2-1", "2-1", [s] if s else [], "공식 계정 전체 게시물 데이터 없음(Brand.official_profiles 확인)")
+    if "2-2" in enabled:
+        s = owned.operating_gap_page(ctx)
+        slot("2-2", "2-2", [s] if s else [],
+             "공백 구간(자체 게시 0건 달) 없음 — 해당 사항 없으면 생략 처리, 2-1 데이터 미확보면 2-1부터 확인")
     if "2-8a" in enabled:
         s = quant.search_share(ctx)
         slot("2-8a", "2-8a", [s] if s else [], "12M 브랜드명 검색 세트(자사+경쟁사 전원) 미확보")

@@ -672,7 +672,14 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
     비중처럼 판단이 필요한 열은 여기서 만들지 않는다(core/composition/owned.py 참고)."""
     from statistics import median
 
-    from core.ingestion.owned import owned_fact
+    from core.ingestion.owned import monthly_post_count_fact, owned_fact
+
+    def month_list(start: date, end: date) -> list[str]:
+        out_, y, m = [], start.year, start.month
+        while (y, m) <= (end.year, end.month):
+            out_.append(f"{y:04d}-{m:02d}")
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        return out_
 
     p = _providers()
     core = core_project(project)
@@ -685,8 +692,8 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
 
     today = date.today()
     start_s, end_s = item.period_start.isoformat(), item.period_end.isoformat()
-    months = max(1, (item.period_end.year - item.period_start.year) * 12
-                + (item.period_end.month - item.period_start.month) + 1)
+    period_months = month_list(item.period_start, item.period_end)
+    months = max(1, len(period_months))
     existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
 
     def add(fact) -> bool:
@@ -742,6 +749,14 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                                     period_start=item.period_start, period_end=item.period_end, measured_at=today,
                                     label="Instagram 중앙값 좋아요")):
             out["facts"] += 1
+        ig_by_month = {mo: 0 for mo in period_months}
+        for po in posts:
+            if po["posted_at"]:
+                ig_by_month[po["posted_at"][:7]] = ig_by_month.get(po["posted_at"][:7], 0) + 1
+        for mo, count in ig_by_month.items():
+            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=brand.name, channel="instagram", month=mo,
+                                           count=count, measured_at=today)):
+                out["facts"] += 1
         out["channels"].append({"channel": "instagram", "handle": handle, "posts_in_period": len(posts)})
 
     yt = profiles.get("youtube")
@@ -791,6 +806,14 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                                         value=Decimal(str(round(sum(views) / len(views), 1))), channel="youtube",
                                         period_start=item.period_start, period_end=item.period_end, measured_at=today,
                                         label=f"YouTube {fmt_label} 평균 조회", extra_dims={"format": fmt})):
+                out["facts"] += 1
+        yt_by_month = {mo: 0 for mo in period_months}
+        for v in videos:
+            if v["published_at"]:
+                yt_by_month[v["published_at"][:7]] = yt_by_month.get(v["published_at"][:7], 0) + 1
+        for mo, count in yt_by_month.items():
+            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=brand.name, channel="youtube", month=mo,
+                                           count=count, measured_at=today)):
                 out["facts"] += 1
         out["channels"].append({"channel": "youtube", **yt_ref, "videos_in_period": len(videos)})
 

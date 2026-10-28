@@ -12,7 +12,7 @@ from typing import Optional
 from core.schemas.project import Project
 
 SECTIONS = [
-    {"id": "owned", "label": "자사 채널 점검", "templates": ["2-1"],
+    {"id": "owned", "label": "자사 채널 점검", "templates": ["2-1", "2-2"],
      "data": "공식 Instagram·YouTube 계정 전체 게시물(ScrapeCreators, Brand.official_profiles 필요)",
      "default_window": "프로젝트 기간"},
     {"id": "search", "label": "검색 경쟁", "templates": ["2-8a", "2-8b", "2-8c", "2-8d"],

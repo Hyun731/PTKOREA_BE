@@ -379,7 +379,10 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
         blocks.append(text_block("case_kicker", "caption", Region(x=48, y=61, w=1184, h=21), [P(N(_card_label(m)))],
                                  spec="panel_header", color="muted"))
         head = interp[0] if interp else facts_claims[0]
-        blocks.append(text_block("lead", "lead", Region(x=48, y=84, w=1184, h=50), [P(*_claim_parts(head, pf))],
+        # P4 사례 카드 해설이 채택돼 있으면(경쟁사·벤치마크 사례만 해당) 그 쪽이 리드로 우선한다 —
+        # 원문 그대로의 claim보다 '무엇을 했고 왜 통했나'로 다듬은 문장이 낫다.
+        lead_parts = [T(m.ai_detail)] if m.ai_detail else _claim_parts(head, pf)
+        blocks.append(text_block("lead", "lead", Region(x=48, y=84, w=1184, h=50), [P(*lead_parts)],
                                  spec="lead", color="navy", size=19, line=25, editable=True))
         # left: the image with its source caption
         img = Region(x=48, y=146, w=560, h=315)
@@ -445,8 +448,10 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
                                          spec="card_body", line=14))
                 blocks[-1].paragraphs[1].parts[0].size = 7
                 y += h + 8
-        # bottom: the remaining interpretation as the summary line
-        if len(interp) > 1 or (interp and head is not interp[0]):
+        # bottom: P4 시사점(있으면 우선) or the remaining interpretation as the summary line
+        if m.ai_implication:
+            blocks.append(takeaway_block(P(T(m.ai_implication))))
+        elif len(interp) > 1 or (interp and head is not interp[0]):
             rest = interp[1] if head is interp[0] else interp[0]
             blocks.append(takeaway_block(P(*_claim_parts(rest, pf))))
         foot = [T("*출처  "), N(pub)]

@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall
-from app.services import insights, research
+from app.services import case_commentary, insights, research
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -50,6 +50,12 @@ class Fakes:
 
     def structured(self, system, user, schema, **kw):
         self._hit("structured")
+        if "detail" in schema["properties"]:  # P4 case commentary
+            if "이전 답의 문제" not in user:
+                return CallResult(data={"detail": "3일 만에 완판된 협업 캡슐 컬렉션", "implication": "자사도 한정판 캡슐로 화제성 확보"},
+                                  usage={"input_tokens": 100, "output_tokens": 30, "model": "fake"}, cost_usd=0.001)
+            return CallResult(data={"detail": "짧은 기간에 완판된 협업 캡슐 컬렉션", "implication": "자사도 한정판 캡슐로 화제성 확보"},
+                              usage={"input_tokens": 100, "output_tokens": 30, "model": "fake"}, cost_usd=0.001)
         if "facts" in schema["properties"]:  # extraction
             return CallResult(data={
                 "relevant": True, "relevance_note": "", "activity_date": "2026-03-01",
@@ -114,6 +120,8 @@ def fakes(monkeypatch):
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend)
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
+    case_commentary.STRUCTURED.clear()
+    case_commentary.STRUCTURED.append(f.structured)
     for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"):
         monkeypatch.setenv(k, "test-key")
     monkeypatch.setenv("ANTHROPIC_MODEL", "fake-model")
@@ -121,6 +129,7 @@ def fakes(monkeypatch):
     yield f
     research.PROVIDERS.clear()
     insights.STRUCTURED.clear()
+    case_commentary.STRUCTURED.clear()
 
 
 def ok(r, status=200):
@@ -518,3 +527,31 @@ def test_hashtag_discovery_adds_in_period_creator_posts(client, fakes, monkeypat
     urls = item(saved, "influencer")["inputs"]["post_urls"]
     assert urls == ["https://www.instagram.com/p/AAA/", "https://www.instagram.com/p/BBB/"]  # best engagement first
     assert fakes.calls["instagram_post"] >= 2 and res["posts"] >= 1  # the fake returns one post id for every URL
+
+
+def test_case_commentary_rewrite_then_accept(client, fakes):
+    pid, plan = setup_project(client)
+    item_ = next(i for i in plan["items"] if i["section_id"] == "campaign" and i["entity"] == "경쟁X")
+    m = ok(client.post(f"/v1/projects/{pid}/materials", json={
+        "title": "경쟁X 팝업 캠페인", "url": "https://example.com/campaign/x", "brand_id": "B1", "entity": "경쟁X",
+        "section_id": "campaign", "research_item_id": item_["id"]}), 201)
+    a = ok(client.post(f"/v1/materials/{m['id']}/assets", files={"file": ("case.png", png(), "image/png")}), 201)
+    ok(client.patch(f"/v1/assets/{a['id']}", json={"review_status": "accepted"}))
+    c = ok(client.post(f"/v1/materials/{m['id']}/claims", json={"kind": "fact", "text": "협업 캡슐 컬렉션 출시"}), 201)
+    ok(client.patch(f"/v1/claims/{c['id']}", json={"base_version": c["version"], "review_status": "accepted"}))
+    ok(client.patch(f"/v1/materials/{m['id']}/review", json={"status": "accepted"}))
+
+    job = ok(client.post(f"/v1/projects/{pid}/case-commentary", json={}), 202)["job"]
+    job = ok(client.get(f"/v1/jobs/{job['id']}"))
+    assert job["state"] == "succeeded" and job["result"]["proposed"] == 1
+
+    props = ok(client.get(f"/v1/projects/{pid}/case-commentary"))
+    cc = next(p for p in props if p["material_id"] == m["id"])
+    assert cc["status"] == "pending" and cc["attempts"] == 2  # first answer had a digit, the rewrite dropped it
+    assert "완판" in cc["detail"] and "3" not in cc["detail"]
+    ok(client.post(f"/v1/case-commentary/{cc['id']}/review", json={"action": "accept"}))
+
+    updated = ok(client.get(f"/v1/materials/{m['id']}"))
+    assert updated["ai_detail"] == cc["detail"] and updated["ai_implication"] == cc["implication"]
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    assert not [i for i in sp["qc"]["issues"] if i["severity"] == "block" and str(i.get("slide_id", "")).startswith("C2")]

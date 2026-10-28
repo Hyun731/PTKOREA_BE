@@ -201,7 +201,8 @@ def export_file(export_id: str, name: str, db: Session = Depends(get_db)):
     media = {"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "csv": "text/csv",
              "json": "application/json"}[name.rsplit(".", 1)[-1]]
     p = get_project(db, e.project_id)
-    download = f"{p.name}_v{e.deck_version}.pptx" if name == "report.pptx" else name
+    download = ({"report.pptx": f"{p.name}_v{e.deck_version}.pptx",
+                "report_light.pptx": f"{p.name}_v{e.deck_version}_경량.pptx"}).get(name, name)
     return FileResponse(get_storage().path(e.manifest[name]), media_type=media, filename=download)
 
 
@@ -305,3 +306,72 @@ def clear_lead(project_id: str, slide_id: str, db: Session = Depends(get_db), wh
     audit(db, project_id, "slide", slide_id, "lead_reset", actor=who)
     db.commit()
     return {"lead_overrides": list(p.lead_overrides)}
+
+
+# ------------------------------------------------------------------ P4 case commentary (경쟁사 사례 카드 해설)
+
+class CaseCommentaryIn(BaseModel):
+    material_ids: Optional[list[str]] = None
+
+
+@router.post("/projects/{project_id}/case-commentary", status_code=202)
+def start_case_commentary(project_id: str, body: CaseCommentaryIn, db: Session = Depends(get_db), who: str = Depends(actor)):
+    from app.config import settings
+    from app.services.ledger import run_budget_usd
+
+    p = get_project(db, project_id)
+    if not settings.provider_configured("anthropic"):
+        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "Anthropic 키·모델이 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY·ANTHROPIC_MODEL을 확인하세요")
+    if run_budget_usd() <= 0:
+        raise ApiError(409, "BUDGET_EXCEEDED", "실행 예산(RUN_BUDGET_USD)이 설정되지 않았습니다")
+    running = db.scalar(select(Job).where(Job.project_id == project_id, Job.kind == "case_commentary",
+                                          Job.state.in_(("queued", "running"))))
+    if running:
+        return {"job": job_out(running), "reused": True}
+    job, _ = create_job(db, project_id, p.version, "case_commentary", {"material_ids": body.material_ids})
+    audit(db, project_id, "case_commentary", job.id, "start", actor=who)
+    db.commit()
+    dispatch(job.id)
+    db.refresh(job)
+    return {"job": job_out(job), "reused": False}
+
+
+def commentary_out(c) -> dict:
+    return {"id": c.id, "material_id": c.material_id, "detail": c.detail, "implication": c.implication,
+            "status": c.status, "attempts": c.attempts, "errors": c.errors, "model": c.model, "created_at": c.created_at}
+
+
+@router.get("/projects/{project_id}/case-commentary")
+def list_case_commentary(project_id: str, db: Session = Depends(get_db)):
+    from app.models import CaseCommentary
+    get_project(db, project_id)
+    rows = db.scalars(select(CaseCommentary).where(CaseCommentary.project_id == project_id,
+                                                    CaseCommentary.status.in_(("pending", "failed", "accepted")))
+                      .order_by(CaseCommentary.created_at.desc()).limit(60))
+    return [commentary_out(r) for r in rows]
+
+
+class CommentaryReview(BaseModel):
+    action: str  # accept | reject
+
+
+@router.post("/case-commentary/{commentary_id}/review")
+def review_case_commentary(commentary_id: str, body: CommentaryReview, db: Session = Depends(get_db), who: str = Depends(actor)):
+    from app.models import CaseCommentary
+    from app.services.case_commentary import accept_case_commentary
+
+    c = db.get(CaseCommentary, commentary_id)
+    if c is None:
+        raise not_found("해설 후보")
+    if c.status != "pending":
+        raise ApiError(409, "INVALID_STATE", "이미 처리된 후보입니다")
+    p = get_project(db, c.project_id)
+    if body.action == "accept":
+        accept_case_commentary(db, c)
+    elif body.action == "reject":
+        c.status = "rejected"
+    else:
+        raise ApiError(422, "INVALID_INPUT", "action은 accept 또는 reject")
+    audit(db, p.id, "case_commentary", c.id, body.action, after={"material_id": c.material_id}, actor=who)
+    db.commit()
+    return commentary_out(c)

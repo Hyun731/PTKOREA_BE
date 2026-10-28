@@ -19,6 +19,7 @@ from app.storage import get_storage
 from core.composition.build import build_deck, fingerprint
 from core.export import write_outputs
 from core.quality.qc import run_qc, self_brand_names
+from core.rendering.compress import compress_image
 from core.rendering.pptx_renderer import render_deck
 from core.rendering.preview import RenderUnavailable, render_pages
 from core.schemas.slidespec import DeckSpec
@@ -30,6 +31,24 @@ def _resolver(result):
     def resolve(asset_id: str):
         a = result.assets[asset_id]
         return a.path, a.width, a.height
+    return resolve
+
+
+def _light_resolver(result, cache_dir: Path):
+    """Same AssetResolver contract as _resolver, but each image is compressed once (cached by
+    asset_id) and the *compressed* file's own dimensions are returned — the renderer's crop math
+    only ever sees fractions of whatever file it is actually about to embed."""
+    cache: dict[str, tuple[str, int, int]] = {}
+
+    def resolve(asset_id: str):
+        hit = cache.get(asset_id)
+        if hit:
+            return hit
+        a = result.assets[asset_id]
+        dest = cache_dir / f"{asset_id}.jpg"
+        w, h = compress_image(Path(a.path), dest)
+        cache[asset_id] = (str(dest), w, h)
+        return cache[asset_id]
     return resolve
 
 
@@ -106,13 +125,20 @@ def run_export(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
         # The client deck is the exact file that was previewed for this deck_version.
         shutil.copyfile(storage.path(deck.pptx_key), out / "report.pptx")
         paths["pptx"] = out / "report.pptx"
+        # 경량 PPTX 옵션 (09_고객피드백_요구사항화.md): same slides, every image resized+JPEG — an
+        # additional file in the bundle, never a replacement for the full-quality report.pptx.
+        light_path = out / "report_light.pptx"
+        render_deck(result.deck, light_path, _light_resolver(result, out / "light_assets"))
+        paths["pptx_light"] = light_path
         manifest = {}
         for name, p in paths.items():
             key = f"{key_dir}/{p.name}"
             storage.put_file(key, p)
             manifest[p.name] = key
+        light_bytes = light_path.stat().st_size
     exp = Export(id=export_id, project_id=project.id, deck_id=deck.id, deck_version=deck.version, qc=qc.to_dict(),
                  manifest=manifest)
     db.add(exp)
     db.commit()
-    return {"export_id": export_id, "files": sorted(manifest)}
+    return {"export_id": export_id, "files": sorted(manifest), "light_pptx_bytes": light_bytes,
+            "light_pptx_under_30mb": light_bytes <= 30 * 1024 * 1024}
