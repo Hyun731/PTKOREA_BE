@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 
-from core.composition import cases, quant
+from core.composition import cases, overview, owned, quant
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
 )
@@ -31,19 +31,23 @@ from core.schemas.slidespec import (
 
 # section_id: (number, label, index group, divider subtitle)
 SECTIONS: dict[str, tuple[str, str, str, str]] = {
+    "overview": ("1", "마케팅 Overview", "Overview", "브랜드 · 카테고리 · 타겟 매핑"),
+    "owned": ("2", "자사 채널 점검", "Owned", "채널 인벤토리 · 팔로워 · 게시 빈도"),
     "search": ("2", "검색 경쟁", "Check", "브랜드명 · 카테고리 조합어 · 키 타겟 검색 점유"),
     "influencer": ("3", "인플루언서", "Check", "크리에이터 게시물 관측 지표"),
     "campaign": ("4", "캠페인·시장 사례", "Check", "활동 사실 · 관측 성과 · 근거"),
     "recap": ("5", "Recap", "Insight", "본문 근거 요약"),
     "appendix": ("A", "Appendix", "Appendix", "출처"),
 }
-TEMPLATE_SECTION = {"2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search", "3-1": "influencer",
-                    "C1": "campaign", "C2": "campaign", "M1": "campaign", "5-recap": "recap", "A-source": "appendix"}
-TEMPLATE_LABEL = {"2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유", "2-8d": "키 타겟 검색 점유",
-                  "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세", "M1": "시장·타겟 근거", "5-recap": "Recap",
-                  "A-source": "출처 표"}
-SECTION_ORDER = ["search", "influencer", "campaign", "recap", "appendix"]
-TEMPLATE_ORDER = ["2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1", "5-recap", "A-source"]
+TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-8a": "search", "2-8b": "search",
+                    "2-8c": "search", "2-8d": "search", "3-1": "influencer", "C1": "campaign", "C2": "campaign",
+                    "M1": "campaign", "5-recap": "recap", "A-source": "appendix"}
+TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
+                  "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
+                  "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
+                  "M1": "시장·타겟 근거", "5-recap": "Recap", "A-source": "출처 표"}
+SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "recap", "appendix"]
+TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1", "5-recap", "A-source"]
 FRAME_TEMPLATES = {"cover", "index", "divider", "end"}
 
 
@@ -119,6 +123,15 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                                  reason=missing_reason))
 
     # Order matters: leads are assigned to the first page that can show a finding.
+    if "1-1" in enabled:
+        s = overview.brand_mapping_page(ctx)
+        slot("1-1", "1-1", [s] if s else [], "브랜드 설정 없음")
+    if "1-6" in enabled:
+        s = overview.campaign_matrix_page(project, inputs.materials)
+        slot("1-6", "1-6", [s] if s else [], "타겟이 분류된 채택 캠페인 사례 없음")
+    if "2-1" in enabled:
+        s = owned.channel_inventory_page(ctx)
+        slot("2-1", "2-1", [s] if s else [], "공식 계정 전체 게시물 데이터 없음(Brand.official_profiles 확인)")
     if "2-8a" in enabled:
         s = quant.search_share(ctx)
         slot("2-8a", "2-8a", [s] if s else [], "12M 브랜드명 검색 세트(자사+경쟁사 전원) 미확보")
@@ -284,7 +297,8 @@ def _korean_breadcrumb(slide: SlideSpec, shown: dict[str, str]) -> None:
             return
 
 
-CHIPS = {"search": "SEARCH", "influencer": "INFLUENCER", "recap": "RECAP", "appendix": "APPENDIX"}
+CHIPS = {"overview": "OVERVIEW", "owned": "OWNED", "search": "SEARCH", "influencer": "INFLUENCER", "recap": "RECAP",
+        "appendix": "APPENDIX"}
 
 
 def _chip(slide: SlideSpec) -> str:

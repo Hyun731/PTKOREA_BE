@@ -46,6 +46,7 @@ class Settings:
             "anthropic": ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"],
             "scrapecreators": ["SCRAPECREATORS_API_KEY"],
             "apify": ["APIFY_TOKEN"],  # actor defaults to apify~instagram-hashtag-scraper
+            "naver": ["NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"],
         }[provider]
         aliases = {"APIFY_TOKEN": ("APIFY_TOKEN", "APIFY_API_TOKEN")}
         return all(any(_env(name) for name in aliases.get(k, (k,))) for k in keys)

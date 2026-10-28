@@ -24,7 +24,7 @@ def meta():
         "template_labels": TEMPLATE_LABEL,
         "channels": [{"id": cid, **c, "status": channel_status(c["provider"], bool(c["provider"]) and settings.provider_configured(c["provider"]))}
                      for cid, c in CHANNELS.items()],
-        "providers": {p: settings.provider_configured(p) for p in ("perplexity", "anthropic", "scrapecreators", "apify")},
+        "providers": {p: settings.provider_configured(p) for p in ("perplexity", "anthropic", "scrapecreators", "apify", "naver")},
         "manual_metrics": list(MANUAL_METRICS),
         "render_backend": render_backend(),
         "tokens": tokens(),

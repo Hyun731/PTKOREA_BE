@@ -41,7 +41,9 @@ def test_full_manual_flow(client):
     batches = ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201)
     assert all(b["status"] == "candidate" and b["synthetic"] for b in batches[:1])
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
-    assert sp["counts"]["generated"] == 0
+    # 1-1 (브랜드 매핑) always generates — it reads only the project's own config, not accepted data.
+    assert sp["counts"]["generated"] == 1
+    assert next(s for s in sp["plan"] if s["slot_id"] == "1-1")["readiness"] == "ready"
     for b in batches:
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))

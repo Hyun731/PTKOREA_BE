@@ -30,6 +30,7 @@ from core.composition.formatters import UNIT_FORMATTER, fmt_date_dot, format_val
 from core.ingestion.csv_import import import_facts_csv, import_posts_csv
 from core.ingestion.manual import make_manual_fact
 from core.schemas.facts import MANUAL_METRICS, Fact
+from core.schemas.materials import TARGET_SEGMENTS
 
 router = APIRouter()
 DIGIT = re.compile(r"\d")
@@ -183,6 +184,12 @@ def batch_errors(batch_id: str, db: Session = Depends(get_db)):
 
 # ------------------------------------------------------------------ materials
 
+def _check_target_segment(v: Optional[str]) -> Optional[str]:
+    if v is not None and v not in TARGET_SEGMENTS:
+        raise ApiError(422, "INVALID_TARGET_SEGMENT", f"지원하는 값: {', '.join(TARGET_SEGMENTS)}")
+    return v
+
+
 def _check_url(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
@@ -207,6 +214,7 @@ class MaterialIn(BaseModel):
     activity_date: Optional[date] = None
     activity_date_end: Optional[date] = None
     research_item_id: Optional[str] = None
+    target_segment: Optional[str] = None  # 1-6 매트릭스 행; TARGET_SEGMENTS 중 하나
 
 
 class MaterialPatch(BaseModel):
@@ -225,6 +233,7 @@ class MaterialPatch(BaseModel):
     activity_date_end: Optional[date] = None
     featured: Optional[bool] = None
     order: Optional[int] = None
+    target_segment: Optional[str] = None
 
 
 def material_out(db: Session, m: Material, detail: bool = False) -> dict:
@@ -251,6 +260,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
                         "publisher": s.publisher, "published_at": s.published_at, "review_status": d.review_status}
                        for d, s in db.execute(select(Material, Source).join(Source, Source.id == Material.source_id)
                                               .where(Material.duplicate_of == m.id).order_by(Material.created_at))],
+        "target_segment": m.target_segment,
         "created_at": m.created_at, "updated_at": m.updated_at,
     }
     if detail:
@@ -303,7 +313,8 @@ def create_material(project_id: str, body: MaterialIn, db: Session = Depends(get
     m = Material(id=new_id("EV"), project_id=project_id, source_id=src.id, research_item_id=body.research_item_id,
                  brand_id=body.brand_id, entity=body.entity, section_id=body.section_id, title=body.title,
                  label=body.label, comment=body.comment, excerpt=body.excerpt, activity_date=body.activity_date,
-                 activity_date_end=body.activity_date_end, input_path="manual", order=order)
+                 activity_date_end=body.activity_date_end, target_segment=_check_target_segment(body.target_segment),
+                 input_path="manual", order=order)
     db.add(m)
     audit(db, project_id, "material", m.id, "create", after=body.model_dump(mode="json"), actor=who)
     db.commit()
@@ -348,6 +359,8 @@ def patch_material(material_id: str, body: MaterialPatch, db: Session = Depends(
         elif k == "published_at":
             source_changed = source_changed or v != src.published_at
             src.published_at = v
+        elif k == "target_segment":
+            setattr(m, k, _check_target_segment(v))
         else:
             setattr(m, k, v)
             if k == "title":
@@ -710,11 +723,28 @@ def patch_claim(claim_id: str, body: ClaimPatch, db: Session = Depends(get_db), 
 def fact_out(row: FactRow) -> dict:
     f = Fact.model_validate(row.data)
     fmt = UNIT_FORMATTER.get(f.unit, "int")
-    return {"id": row.fact_id, "origin": row.origin, "metric": f.metric, "label": f.label, "entity": f.entity,
-            "value": str(f.value) if f.value is not None else None, "unit": f.unit,
+    return {"id": row.fact_id, "origin": row.origin, "metric": f.metric, "label": f.label, "brand_id": f.brand_id,
+            "entity": f.entity, "value": str(f.value) if f.value is not None else None, "unit": f.unit,
             "display": format_value(fmt, f.value) if f.value is not None else None, "measured_at": f.measured_at,
-            "source": f.source, "verification_status": row.verification_status, "superseded_by": row.superseded_by,
+            "dims": f.dims, "period_start": f.period_start, "period_end": f.period_end, "source": f.source,
+            "verification_status": row.verification_status, "superseded_by": row.superseded_by,
             "review_note": row.review_note, "token": "{{" + row.fact_id + "}}"}
+
+
+@router.get("/projects/{project_id}/facts")
+def list_facts(project_id: str, metric: Optional[str] = None, status: Optional[str] = None,
+              db: Session = Depends(get_db)):
+    """Facts with no material card (e.g. search-index rows from Naver DataLab) — the material-less
+    counterpart to a material's embedded `facts` list, so these still have a review surface."""
+    get_project(db, project_id)
+    q = select(FactRow).where(FactRow.project_id == project_id, FactRow.material_id.is_(None),
+                              FactRow.superseded_by.is_(None))
+    if status:
+        q = q.where(FactRow.verification_status == status)
+    rows = [fact_out(r) for r in db.scalars(q.order_by(FactRow.created_at))]
+    if metric:
+        rows = [r for r in rows if r["metric"] == metric]
+    return rows
 
 
 class ManualFactIn(BaseModel):

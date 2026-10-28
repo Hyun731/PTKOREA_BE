@@ -14,7 +14,9 @@ import httpx
 from integrations.base import CallResult, ProviderError, request_json
 
 BASE = "https://api.scrapecreators.com/v1"
+BASE_V2 = "https://api.scrapecreators.com/v2"
 EST_COST_PER_CREDIT = 0.002  # plan price not confirmed: estimate, units recorded as credits
+SHORTS_MAX_SECONDS = 60  # YouTube's own Shorts definition
 
 
 def _key() -> str:
@@ -24,8 +26,8 @@ def _key() -> str:
     return key
 
 
-def _get(path: str, params: dict, transport) -> dict:
-    return request_json("ScrapeCreators", "GET", f"{BASE}{path}", headers={"x-api-key": _key()}, params=params,
+def _get(path: str, params: dict, transport, base: str = BASE) -> dict:
+    return request_json("ScrapeCreators", "GET", f"{base}{path}", headers={"x-api-key": _key()}, params=params,
                         transport=transport)
 
 
@@ -109,4 +111,45 @@ def youtube_channel(*, url: Optional[str] = None, handle: Optional[str] = None,
     params = {"url": url} if url else {"handle": (handle or "").lstrip("@")}
     data = _get("/youtube/channel", params, transport)
     return CallResult(data={"subscribers": _int(data.get("subscriberCount")), "name": data.get("name")},
+                      usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
+def instagram_user_posts(handle: str, *, next_max_id: Optional[str] = None,
+                         transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """One page of the account's own feed (채널 인벤토리 2-1/2-4) — not a single post lookup."""
+    params = {"handle": handle.lstrip("@"), "trim": "true"}
+    if next_max_id:
+        params["next_max_id"] = next_max_id
+    data = _get("/instagram/user/posts", params, transport, base=BASE_V2)
+    posts = []
+    for m in data.get("items") or []:
+        ts = m.get("taken_at")
+        posted = datetime.fromtimestamp(int(ts), tz=timezone.utc).date().isoformat() if ts else None
+        posts.append({"post_id": m.get("code") or m.get("id"), "posted_at": posted,
+                      "likes": _int(m.get("like_count")), "comments": _int(m.get("comment_count")),
+                      "views": _int(m.get("play_count")), "url": m.get("url")})
+    return CallResult(data={"posts": posts, "next_max_id": data.get("next_max_id"),
+                            "more_available": bool(data.get("more_available"))},
+                      usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
+def youtube_channel_videos(*, channel_id: Optional[str] = None, handle: Optional[str] = None,
+                           continuation_token: Optional[str] = None,
+                           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """One page of the channel's own upload list (2-5 YouTube 채널 성과) — not a single video lookup."""
+    params: dict = {"sort": "latest"}
+    if channel_id:
+        params["channelId"] = channel_id
+    else:
+        params["handle"] = (handle or "").lstrip("@")
+    if continuation_token:
+        params["continuationToken"] = continuation_token
+    data = _get("/youtube/channel-videos", params, transport)
+    videos = []
+    for v in data.get("videos") or []:
+        length = _int(v.get("lengthSeconds"))
+        videos.append({"id": v.get("id"), "url": v.get("url"), "title": (v.get("title") or "")[:200],
+                       "views": _int(v.get("viewCountInt")), "published_at": str(v.get("publishedTime") or "")[:10] or None,
+                       "length_seconds": length, "is_short": length is not None and length <= SHORTS_MAX_SECONDS})
+    return CallResult(data={"videos": videos, "continuation_token": data.get("continuationToken")},
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)

@@ -13,6 +13,12 @@ from core.schemas.slidespec import Crop, Part
 
 ReviewStatus = Literal["candidate", "accepted", "excluded"]
 
+# 1-6 타겟·채널별 캠페인 매트릭스의 고정 행 (02_보고서_표준목차_장표명세.md §1-6). AI 추출이나 사람이
+# 자료 카드에 다는 분류 태그 — 추측이 아니라 원문에 실제로 드러난 타겟일 때만 붙는다.
+TARGET_SEGMENTS: tuple[str, ...] = (
+    "대학생·Gen Z", "20~30대", "직장인", "30~40대·가족", "외국인 관광객", "팝업·OOH·PR",
+)
+
 
 class SourceRef(BaseModel):
     id: str
@@ -73,3 +79,4 @@ class CaseMaterial(BaseModel):
     # Person-picked for a one-slide deep dive instead of the card grid (PRD 11 case_spotlight).
     featured: bool = False
     order: int = 0
+    target_segment: Optional[str] = None  # one of TARGET_SEGMENTS, or None if not evident in the source

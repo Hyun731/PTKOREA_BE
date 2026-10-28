@@ -12,8 +12,11 @@ from typing import Optional
 from core.schemas.project import Project
 
 SECTIONS = [
+    {"id": "owned", "label": "자사 채널 점검", "templates": ["2-1"],
+     "data": "공식 Instagram·YouTube 계정 전체 게시물(ScrapeCreators, Brand.official_profiles 필요)",
+     "default_window": "프로젝트 기간"},
     {"id": "search", "label": "검색 경쟁", "templates": ["2-8a", "2-8b", "2-8c", "2-8d"],
-     "data": "사용자가 보유한 검색 지수 CSV (자동 수집 없음)", "default_window": "9M (+12M 비교 창)"},
+     "data": "네이버 데이터랩 검색어트렌드(브랜드명, 자동) 또는 보유한 검색 지수 CSV(조합어·키 타겟)", "default_window": "9M (+12M 비교 창)"},
     {"id": "influencer", "label": "인플루언서", "templates": ["3-1"],
      "data": "공개 게시물 관측값(ScrapeCreators) 또는 posts CSV", "default_window": "프로젝트 기간"},
     {"id": "campaign", "label": "캠페인 사례", "templates": ["C1", "C2"],
@@ -24,15 +27,31 @@ SECTIONS = [
     {"id": "appendix", "label": "출처 표", "templates": ["A-source"], "data": "사용 자료 출처", "default_window": "-"},
 ]
 FRAMES = ["cover", "index", "divider", "end"]
-# Search-index slides (2-8a~d) and the search-driven Recap are opt-in: there is no search-index provider
-# (Naver APIs cannot be issued), so they only work from a search CSV the planner already has.
-DEFAULT_SLIDES = ["cover", "index", "divider", "3-1", "C1", "C2", "M1", "A-source", "end"]
+# Search-index slides (2-8a~d) stay opt-in by default even though 2-8a/2-8b (brand-name search,
+# seg=all) now auto-collect via Naver DataLab: 2-8c(조합어)/2-8d(키 타겟) still need a search CSV,
+# so turning the whole section on by default would silently leave two of four slides needs_input.
+# 1-1 (브랜드·카테고리·타겟 매핑) needs no collector — it reads straight from the project's own
+# brand/category/target config — so it is on by default for every project, unlike the search slides.
+# 1-6 (캠페인 매트릭스) reuses already-collected, already-accepted campaign materials (same
+# prerequisite C1/C2 already have), degrading to needs_input like they do until some are
+# AI-tagged with a target_segment — on by default for the same reason.
+# 2-1 (채널 인벤토리) is opt-in like the search slides: it needs Brand.official_profiles set
+# explicitly (which handle is the brand's own account), not something every project has.
+DEFAULT_SLIDES = ["cover", "index", "divider", "1-1", "1-6", "3-1", "C1", "C2", "M1", "A-source", "end"]
 # The synthetic sample ships its own search CSV, so it keeps the search slides on.
-SAMPLE_SLIDES = ["cover", "index", "divider", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "5-recap", "A-source", "end"]
+SAMPLE_SLIDES = ["cover", "index", "divider", "1-1", "1-6", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "5-recap",
+                 "A-source", "end"]
 
 # Channel support must match what can actually be collected (MVP_SITE_REVIEW 6).
 CHANNELS = {
-    "search_csv": {"label": "검색 지수 CSV (보유 자료)", "support": "manual_only", "provider": None},
+    # Full own-account history (2-1 채널 인벤토리), not the single-post/hashtag-discovery
+    # channels below. Needs the brand's handle in Brand.official_profiles.
+    "instagram_owned": {"label": "Instagram 공식 계정 전체 게시물", "support": "auto", "provider": "scrapecreators"},
+    "youtube_owned": {"label": "YouTube 공식 채널 전체 영상", "support": "auto", "provider": "scrapecreators"},
+    # Brand-name search share/trend (2-8a, 2-8b; seg=all). Combination keywords (2-8c) and
+    # target-segment filters (2-8d) have no config surface yet, so they stay CSV-only.
+    "search_naver": {"label": "네이버 데이터랩 검색어트렌드 (브랜드명)", "support": "auto", "provider": "naver"},
+    "search_csv": {"label": "검색 지수 CSV (보유 자료 · 조합어·키 타겟)", "support": "manual_only", "provider": None},
     "web": {"label": "웹 기사·공식 자료", "support": "auto", "provider": "perplexity"},
     "instagram": {"label": "Instagram 공개 게시물", "support": "auto", "provider": "scrapecreators"},
     "youtube": {"label": "YouTube 공개 영상", "support": "auto", "provider": "scrapecreators"},
@@ -42,7 +61,8 @@ CHANNELS = {
     "sales": {"label": "판매·매출 데이터", "support": "unsupported", "provider": None},
 }
 SECTION_CHANNELS = {
-    "search": ["search_csv"],
+    "owned": ["instagram_owned", "youtube_owned"],
+    "search": ["search_naver", "search_csv"],
     "influencer": ["instagram", "youtube"],
     "campaign": ["web", "instagram", "youtube"],
     "market": ["web"],
@@ -84,7 +104,11 @@ def generate_items(project: Project) -> list[dict]:
         for sec in active:
             sid = sec["id"]
             start, end = section_window(project, sid)
-            if sid == "search":
+            if sid == "owned":
+                add(brand_id=brand.id, entity=brand.name, role="self", section_id=sid,
+                    question=f"{brand.name} 공식 Instagram·YouTube 채널 전체 게시물(팔로워·게시 빈도·반응)",
+                    period_start=start, period_end=end, channels=SECTION_CHANNELS[sid], required=True)
+            elif sid == "search":
                 add(brand_id=brand.id, entity=brand.name, role="self", section_id=sid,
                     question=f"{brand.name}·경쟁사({', '.join(brand.competitors)}) 브랜드명·조합어 검색 상대 지수",
                     period_start=start, period_end=end, channels=SECTION_CHANNELS[sid], required=True)

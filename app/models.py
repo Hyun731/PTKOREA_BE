@@ -155,6 +155,7 @@ class Material(Base):
     duplicate_of: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     duplicate_reason: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     event_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # AI's short name for the activity
+    target_segment: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # one of core.schemas.materials.TARGET_SEGMENTS
     # Person-picked for a one-slide deep dive (full image + period + numbered insights) instead of the card grid.
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     order: Mapped[int] = mapped_column(Integer, default=0)

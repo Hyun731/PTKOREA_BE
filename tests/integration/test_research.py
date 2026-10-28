@@ -90,16 +90,31 @@ class Fakes:
         self._hit("youtube_channel")
         return CallResult(data={"subscribers": 200000, "name": "유튜버"}, cost_usd=0.002)
 
+    def search_trend(self, groups, start, end, **kw):
+        self._hit("search_trend")
+        # One ratio per month in [start, end], distinct per group so shares aren't tied.
+        months = []
+        y, m = start.year, start.month
+        while (y, m) <= (end.year, end.month):
+            months.append(f"{y:04d}-{m:02d}-01")
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        base = {name: 20 + 10 * i for i, (name, _) in enumerate(groups)}
+        return CallResult(data={"results": [
+            {"group": name, "points": [{"period": period, "ratio": float(base[name] + i)} for i, period in enumerate(months)]}
+            for name, _ in groups
+        ]}, usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
+
 
 @pytest.fixture
 def fakes(monkeypatch):
     f = Fakes()
     research.PROVIDERS.clear()
     research.PROVIDERS.update(search=f.search, fetch_page=f.fetch_page, fetch_image=f.fetch_image, structured=f.structured,
-                              instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video, youtube_channel=f.youtube_channel)
+                              instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video,
+                              youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend)
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
-    for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY"):
+    for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"):
         monkeypatch.setenv(k, "test-key")
     monkeypatch.setenv("ANTHROPIC_MODEL", "fake-model")
     monkeypatch.setenv("RUN_BUDGET_USD", "5")
@@ -207,12 +222,34 @@ def test_influencer_urls_become_candidate_batch(client, fakes):
     assert next(s for s in sp["plan"] if s["slot_id"] == "3-1-B1")["readiness"] == "ready"
 
 
-def test_search_items_are_csv_only(client, fakes):
+def test_search_items_auto_collect_via_naver(client, fakes):
     pid, plan = setup_project(client)
     it = item(plan, "search")
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
-    assert res["status"] == "needs_review" and res["errors"][0]["code"] == "NOT_IN_STAGE"
+    assert res["status"] == "succeeded" and res["facts"] > 0
+    assert fakes.calls["search_trend"] == 1  # one DataLab call covers 12M and 9M alike (same scale_id)
+
+    facts = ok(client.get(f"/v1/projects/{pid}/facts"))
+    assert facts and all(f["verification_status"] == "candidate" and f["origin"] == "auto" for f in facts)
+    windows = {f["dims"]["window"] for f in facts if f["metric"] == "search_group_sum"}
+    assert windows == {"12M", "9M"}
+    for f in facts:
+        ok(client.patch(f"/v1/facts/{f['id']}/review?project_id={pid}", json={"action": "confirm"}))
+
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    assert next(s for s in sp["plan"] if s["slot_id"] == "2-8a")["readiness"] == "ready"
+    assert next(s for s in sp["plan"] if s["slot_id"] == "2-8b")["readiness"] == "ready"
+
+
+def test_search_items_need_naver_key(client, fakes, monkeypatch):
+    monkeypatch.delenv("NAVER_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NAVER_CLIENT_SECRET", raising=False)
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    r = client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]})
+    assert r.status_code == 503
+    assert r.json()["error"]["detail"]["providers"] == ["naver"]
 
 
 def test_lead_proposal_rewrite_then_accept(client, fakes):
