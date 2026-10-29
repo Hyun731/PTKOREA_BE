@@ -18,7 +18,7 @@ from app.models import Project, utcnow
 from app.services import insights
 from app.services.inputs import load_inputs
 from app.services.ledger import RunLedger
-from core.composition.build import SECTIONS, build_deck
+from core.composition.build import CHAPTERS, build_deck
 from core.composition.chrome import PartFactory
 from core.schemas.slidespec import SlideSpec, TableBlock, TextBlock
 
@@ -62,7 +62,7 @@ def _bare(text: str) -> str:
 def _slide_out(slide: SlideSpec, slot_of: dict, overrides: dict) -> dict:
     slot = slot_of.get(slide.slide_id) or slot_of.get(slide.parent_slide_id or "")
     return {"slide_id": slide.slide_id, "page_no": slide.page_no, "title": slide.title, "page_role": slide.page_role,
-            "section": SECTIONS.get(slide.section_id or "", ("", slide.section_id or ""))[1],
+            "section": CHAPTERS.get(slide.chapter or "", ("", slide.chapter or ""))[1],
             "lead": _text(slide, "lead"), "points": _points(slide), "source": _text(slide, "footnote"),
             "slot_id": slot.slot_id if slot else None, "edited": slide.slide_id in overrides,
             "continued": bool(slide.parent_slide_id)}
