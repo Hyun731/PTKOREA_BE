@@ -208,19 +208,60 @@ def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get
     bad = set(body.changes) - allowed
     if bad:
         raise ApiError(422, "INVALID_PROJECT", f"수정할 수 없는 필드: {', '.join(sorted(bad))}")
-    cfg = {**p.config, **body.changes}
-    core = _with_scope(cfg) if {"scope", "period", "enabled_slides"} & set(body.changes) else _validate(cfg)
+    _save_config(db, p, body.changes, who)
+    db.commit()
+    return project_out(db, p)
+
+
+def _save_config(db: Session, p: Project, changes: dict, who: str, action: str = "update") -> CoreProject:
+    """Validate and store config changes; a change that moves research items regenerates the plan."""
+    cfg = {**p.config, **changes}
+    core = _with_scope(cfg) if {"scope", "period", "enabled_slides"} & set(changes) else _validate(cfg)
     before = p.config
     p.config = json.loads(core.model_dump_json())
     p.name, p.client = core.name, core.client
     p.version += 1
-    if {"brands", "enabled_slides", "section_windows", "scope", "period"} & set(body.changes):
+    if {"brands", "enabled_slides", "section_windows", "scope", "period"} & set(changes):
         plan = db.scalar(select(ResearchPlan).where(ResearchPlan.project_id == p.id).order_by(ResearchPlan.version.desc()))
         old_items = list(db.scalars(select(ResearchItem).where(ResearchItem.plan_id == plan.id))) if plan else []
         _create_plan(db, p, core, old_items, (plan.version + 1) if plan else 1)
-    audit(db, p.id, "project", p.id, "update", before=before, after=p.config, actor=who)
+    audit(db, p.id, "project", p.id, action, before=before, after=p.config, actor=who)
+    return core
+
+
+class DirectionRequest(BaseModel):
+    base_version: int
+    message: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/projects/{project_id}/scope/{item_id}/direction")
+def revise_direction(project_id: str, item_id: str, body: DirectionRequest, db: Session = Depends(get_db),
+                     who: str = Depends(actor)):
+    """The planner asks for a change in words; the AI rewrites this item's scope and the plan follows."""
+    from app.services import direction
+    from app.services.ledger import RunLedger
+    from integrations.base import ProviderError
+
+    p = get_project(db, project_id)
+    if body.base_version != p.version:
+        raise stale_version(p.version, project_out(db, p))
+    if item_id not in scope.BY_ID:
+        raise not_found("조사 범위 항목")
+    if not settings.provider_configured("anthropic"):
+        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "AI 키가 설정되지 않아 조사 방향을 고칠 수 없습니다")
+    core = CoreProject.model_validate(p.config)
+    try:
+        setting, reply = direction.revise(core, item_id, body.message, RunLedger(db, p.id, None))
+    except ProviderError as exc:
+        raise ApiError(502, exc.code, f"AI 응답을 받지 못했습니다: {exc.message}", "잠시 뒤 다시 요청하세요")
+    except (ValidationError, ValueError):
+        raise ApiError(422, "DIRECTION_INVALID", "요청을 설정으로 바꾸지 못했습니다", "기간이나 대상을 조금 더 구체적으로 말해 주세요")
+    others = [s for s in p.config.get("scope", []) if s["item_id"] != item_id]
+    core = _save_config(db, p, {"scope": others + [json.loads(setting.model_dump_json())]}, who, "scope_direction")
     db.commit()
-    return project_out(db, p)
+    r = scope.setting_for(core, item_id)
+    return {"reply": reply, "scope": {**r, "direction": scope.direction(scope.BY_ID[item_id], r, core)},
+            "project_version": p.version}
 
 
 # ------------------------------------------------------------------ research plan

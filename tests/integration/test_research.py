@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall
-from app.services import case_commentary, insights, research
+from app.services import case_commentary, direction, insights, research
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -51,6 +51,12 @@ class Fakes:
 
     def structured(self, system, user, schema, **kw):
         self._hit("structured")
+        if "keywords" in schema["properties"]:  # 조사 방향 대화
+            return CallResult(data={
+                "reply": "기간을 최근 12개월로 바꾸고 팝업 사례를 먼저 보게 했습니다.", "enabled": True, "period": "months",
+                "months": 12, "start": None, "end": None, "channels": ["web", "instagram", "없는채널"],
+                "targets": ["경쟁X"], "max_items": 4, "focus": "팝업·오프라인 행사 사례를 먼저 봅니다.",
+                "keywords": ["팝업스토어"]}, usage={"input_tokens": 300, "output_tokens": 80, "model": "fake"}, cost_usd=0.002)
         if "detail" in schema["properties"]:  # P4 case commentary
             if "이전 답의 문제" not in user:
                 return CallResult(data={"detail": "3일 만에 완판된 협업 캡슐 컬렉션", "implication": "자사도 한정판 캡슐로 화제성 확보"},
@@ -144,6 +150,8 @@ def fakes(monkeypatch):
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
     case_commentary.STRUCTURED.append(f.structured)
+    direction.STRUCTURED.clear()
+    direction.STRUCTURED.append(f.structured)
     for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"):
         monkeypatch.setenv(k, "test-key")
     monkeypatch.setenv("ANTHROPIC_MODEL", "fake-model")
@@ -152,6 +160,7 @@ def fakes(monkeypatch):
     research.PROVIDERS.clear()
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
+    direction.STRUCTURED.clear()
 
 
 def ok(r, status=200):
@@ -643,3 +652,20 @@ def test_project_list_shows_total_cost(client):
         db.commit()
     row = next(p for p in ok(client.get("/v1/projects")) if p["id"] == pid)
     assert row["total_cost_usd"] == 0.0175
+
+
+def test_direction_chat_rewrites_the_item_and_the_plan(client, fakes):
+    pid, plan = setup_project(client)
+    version = ok(client.get(f"/v1/projects/{pid}"))["version"]
+    out = ok(client.post(f"/v1/projects/{pid}/scope/3-7/direction",
+                         json={"base_version": version, "message": "경쟁X만, 1년치 팝업 위주로 4개씩"}))
+    assert out["reply"].startswith("기간을") and out["project_version"] == version + 1
+    sc = out["scope"]
+    assert sc["period"] == "months" and sc["months"] == 12 and sc["channels"] == ["web", "instagram"]  # unknown dropped
+    assert sc["targets"] == ["경쟁X"] and sc["max_items"] == 4 and sc["keywords"] == ["팝업스토어"]
+    assert sc["direction"][-1] == "팝업·오프라인 행사 사례를 먼저 봅니다."
+    items = [i for i in ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"] if i["scope_id"] == "3-7"]
+    assert [i["entity"] for i in items] == ["경쟁X"] and items[0]["period_start"] == "2025-10-01"
+    # A stale version is refused instead of overwriting someone else's change.
+    r = client.post(f"/v1/projects/{pid}/scope/3-7/direction", json={"base_version": version, "message": "x"})
+    assert r.status_code == 409
