@@ -237,19 +237,18 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
 
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
     article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
-    # In by default: the card, its checked sentences, its quoted numbers and its image go in together.
-    assert article["input_path"] == "auto" and article["review_status"] == "accepted" and res["adopted"] >= 1
+    assert article["input_path"] == "auto" and article["review_status"] == "candidate"  # a person reviews every card
     assert article["scope_id"] == "3-7" and article["role"] == "competitor"  # its place in the 3C plan
     assert article["summary"].startswith("성수동 팝업")  # 해석 요약 comes with the extraction, no extra call
     with SessionLocal() as db:
         assert "방문객" in (db.get(Source, article["source"]["id"]).text or "")  # page text kept for later AI help
     assert article["source"]["publisher"] == "예시뉴스" and article["source"]["published_at"] == "2026-03-05"
-    assert article["assets"][0]["review_status"] == "accepted" and article["assets"][0]["usage_basis"] == "source_reference"
+    assert article["assets"][0]["review_status"] == "candidate" and article["assets"][0]["usage_basis"] == "source_reference"
     ai = [c for c in article["claims"] if c["author"] == "ai"]
-    assert all(c["review_status"] == "accepted" and c["quote"] for c in ai)
+    assert all(c["review_status"] == "pending" and c["quote"] for c in ai)
     interp = next(c for c in ai if c["kind"] == "interpretation")
     assert "12,000" in interp["text"] and interp["fact_ids"]  # number bound to an extracted fact
-    assert article["facts"][0]["verification_status"] == "eligible" and article["facts"][0]["origin"] == "auto"
+    assert article["facts"][0]["verification_status"] == "candidate" and article["facts"][0]["origin"] == "auto"
     social = next(m for m in mats if "youtube" in (m["source"]["url"] or ""))
     assert social["source"]["source_type"] == "social" and social["assets"] == []
 
@@ -555,7 +554,7 @@ def test_research_keeps_to_the_period(client, fakes):
 
     mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials"))}
     assert "https://p.example.com/old" not in mats
-    assert mats["https://p.example.com/in"]["review_status"] == "accepted"
+    assert mats["https://p.example.com/in"]["review_status"] == "candidate"
     past = mats["https://q.example.org/past"]
     assert past["review_status"] == "excluded" and past["review_reason"].startswith("조사 기간 밖")
 

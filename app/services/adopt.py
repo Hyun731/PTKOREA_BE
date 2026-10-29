@@ -1,9 +1,9 @@
-"""Adoption by default: collected material goes into the deck unless something says it shouldn't.
+"""모두 채택: after reviewing, a person adopts the waiting cards in one step.
 
 A card is adopted together with what makes it usable on a slide — its AI sentences (already checked
-against the page), the numbers quoted verbatim from it, and the image it shows. Cards the system
-itself has doubts about stay out until a person looks: not relevant, outside the period, period
-unclear, page not fetched, or another source of an activity already on a card.
+against the page), the numbers quoted verbatim from it, and the image it shows. Cards the system has
+doubts about are left for a closer look: not relevant, outside the period, period unclear, page not
+fetched, or another source of an activity already on a card. Nothing is adopted without a person.
 """
 from __future__ import annotations
 

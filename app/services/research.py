@@ -24,7 +24,7 @@ from app.config import settings
 from app.jobs import register
 from app.models import PostRow, Asset, Claim, FactRow, Job, Material, OwnedPost, Project, ResearchItem, Source, new_id, utcnow
 from app.services.assets import inspect_upload, normalized_derivative
-from app.services import adopt, period, scope
+from app.services import period, scope
 from app.services.audit import audit
 from app.services.dedupe import find_duplicate, merge, primaries, usable
 from app.services.inputs import core_project
@@ -521,13 +521,6 @@ def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Mate
         out.setdefault("dropped", []).extend(issues[:10])
     if period.apply(m, item, src) == "out":
         out["out_of_period"] = out.get("out_of_period", 0) + 1
-    # In by default; the person only takes out what doesn't belong. Not relevant → out with its reason.
-    if m.review_status == "candidate":
-        if not data.get("relevant"):
-            m.review_status = "excluded"
-        elif not adopt.doubt(m, src):
-            adopt.adopt(db, m, period.AUTO_ADOPTER)
-            out["adopted"] = out.get("adopted", 0) + 1
 
 
 def _safe_date(v) -> Optional[date]:
