@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.config import settings
+from app.services import scope
 from app.services.catalog import CHANNELS, DEFAULT_SLIDES, FRAMES, SECTIONS, channel_status
 from core.composition.build import TEMPLATE_LABEL
 from core.composition.tokens import tokens
@@ -19,6 +20,7 @@ def meta():
         # P0 UI shows only implemented profiles (PRD 3).
         "profiles": [{"id": "diagnostic", "label": "진단형 · 세션 1 활동 점검"}],
         "sections": SECTIONS,
+        "scope": scope.catalog(),
         "frames": FRAMES,
         "default_slides": DEFAULT_SLIDES,
         "template_labels": TEMPLATE_LABEL,
