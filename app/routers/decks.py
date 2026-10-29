@@ -237,13 +237,10 @@ class ProposalsIn(BaseModel):
 @router.post("/projects/{project_id}/insight-proposals", status_code=202)
 def start_proposals(project_id: str, body: ProposalsIn, db: Session = Depends(get_db), who: str = Depends(actor)):
     from app.config import settings
-    from app.services.ledger import run_budget_usd
 
     p = get_project(db, project_id)
     if not settings.provider_configured("anthropic"):
         raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "Anthropic 키·모델이 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY·ANTHROPIC_MODEL을 확인하세요")
-    if run_budget_usd() <= 0:
-        raise ApiError(409, "BUDGET_EXCEEDED", "실행 예산(RUN_BUDGET_USD)이 설정되지 않았습니다")
     running = db.scalar(select(Job).where(Job.project_id == project_id, Job.kind == "insight_proposals",
                                           Job.state.in_(("queued", "running"))))
     if running:
@@ -317,13 +314,10 @@ class CaseCommentaryIn(BaseModel):
 @router.post("/projects/{project_id}/case-commentary", status_code=202)
 def start_case_commentary(project_id: str, body: CaseCommentaryIn, db: Session = Depends(get_db), who: str = Depends(actor)):
     from app.config import settings
-    from app.services.ledger import run_budget_usd
 
     p = get_project(db, project_id)
     if not settings.provider_configured("anthropic"):
         raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "Anthropic 키·모델이 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY·ANTHROPIC_MODEL을 확인하세요")
-    if run_budget_usd() <= 0:
-        raise ApiError(409, "BUDGET_EXCEEDED", "실행 예산(RUN_BUDGET_USD)이 설정되지 않았습니다")
     running = db.scalar(select(Job).where(Job.project_id == project_id, Job.kind == "case_commentary",
                                           Job.state.in_(("queued", "running"))))
     if running:

@@ -1,6 +1,7 @@
 """Per-run usage ledger and response cache (PRD 13; DEVELOPMENT_PLAN 9 초기 설정과 비용 관리).
 
-Every paid call is reserved against the run budget before it starts and settled after.
+Every paid call is reserved before it starts and settled after, so the project total stays exact.
+RUN_BUDGET_USD is an optional per-run cap; unset means no cap (cost is reported, not gated).
 A cached response is reused at zero cost, so retrying a run never re-bills finished work.
 A call whose outcome is unknown (timeout) keeps its estimated cost as `unknown`.
 """
@@ -43,9 +44,7 @@ class RunLedger:
     def __init__(self, db: Session, project_id: str, job_id: Optional[str], budget_usd: Optional[float] = None):
         self.db, self.project_id, self.job_id = db, project_id, job_id
         self._bind = db.get_bind()
-        self.budget = run_budget_usd() if budget_usd is None else budget_usd
-        if self.budget <= 0:
-            raise ProviderError("BUDGET_EXCEEDED", "실행 예산(RUN_BUDGET_USD)이 설정되지 않아 유료 호출을 시작하지 않습니다")
+        self.budget = run_budget_usd() if budget_usd is None else budget_usd  # 0 = no cap
 
     def _session(self) -> Session:
         return Session(bind=self._bind, expire_on_commit=False)
@@ -76,7 +75,7 @@ class RunLedger:
                     s.commit()
                     return CallResult(data=hit.data, usage=hit.usage, cost_usd=0.0, cost_is_estimate=False, cached=True)
             with _BUDGET_LOCK:
-                if self.spent(s) + est_cost > self.budget:
+                if self.budget > 0 and self.spent(s) + est_cost > self.budget:
                     raise ProviderError("BUDGET_EXCEEDED", f"실행 예산 ${self.budget:.2f}에 도달해 남은 호출을 멈췄습니다")
                 row = ProviderCall(project_id=self.project_id, job_id=self.job_id, provider=provider, endpoint=endpoint,
                                    fingerprint=key, status="reserved", est_cost_usd=est_cost)

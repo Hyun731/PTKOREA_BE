@@ -620,3 +620,14 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     job2 = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job2['id']}"))["result"]["items"][it["id"]]["status"] == "skipped"
     assert len(ok(client.get(f"/v1/projects/{pid}/owned-posts"))) == 2
+
+
+def test_research_runs_without_a_run_budget(client, fakes, monkeypatch):
+    """No RUN_BUDGET_USD = no cap: the run goes ahead and its cost is still recorded."""
+    monkeypatch.delenv("RUN_BUDGET_USD", raising=False)
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁Y")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] != "blocked_budget" and fakes.calls.get("search", 0) > 0
+    assert any(r.status == "settled" for r in ledger_rows(pid))

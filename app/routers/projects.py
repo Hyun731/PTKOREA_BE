@@ -307,7 +307,6 @@ def start_run(project_id: str, body: RunIn, db: Session = Depends(get_db), who: 
     """Run automatic research for the chosen items (server job; survives a closed browser)."""
     from app.jobs import create_job, dispatch
     from app.models import Job
-    from app.services.ledger import run_budget_usd
 
     p = get_project(db, project_id)
     items = [db.get(ResearchItem, i) for i in body.item_ids]
@@ -318,8 +317,6 @@ def start_run(project_id: str, body: RunIn, db: Session = Depends(get_db), who: 
     if missing:
         raise ApiError(503, "PROVIDER_NOT_CONFIGURED", f"자동 수집 키가 설정되지 않았습니다({', '.join(missing)})",
                        "자료 수집 탭에서 직접 추가하거나 CSV를 업로드하세요", {"providers": missing})
-    if run_budget_usd() <= 0:
-        raise ApiError(409, "BUDGET_EXCEEDED", "실행 예산(RUN_BUDGET_USD)이 설정되지 않았습니다", ".env에 RUN_BUDGET_USD를 넣으세요")
     # Runs may overlap in time; only the same item cannot be researched by two runs at once.
     busy: dict[str, str] = {}
     for running in db.scalars(select(Job).where(Job.project_id == project_id, Job.kind == "research_run",
