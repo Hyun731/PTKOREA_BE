@@ -237,18 +237,19 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
 
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
     article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
-    assert article["input_path"] == "auto" and article["review_status"] == "candidate"
+    # In by default: the card, its checked sentences, its quoted numbers and its image go in together.
+    assert article["input_path"] == "auto" and article["review_status"] == "accepted" and res["adopted"] >= 1
     assert article["scope_id"] == "3-7" and article["role"] == "competitor"  # its place in the 3C plan
     assert article["summary"].startswith("성수동 팝업")  # 해석 요약 comes with the extraction, no extra call
     with SessionLocal() as db:
         assert "방문객" in (db.get(Source, article["source"]["id"]).text or "")  # page text kept for later AI help
     assert article["source"]["publisher"] == "예시뉴스" and article["source"]["published_at"] == "2026-03-05"
-    assert article["assets"][0]["review_status"] == "candidate" and article["assets"][0]["usage_basis"] == "source_reference"
+    assert article["assets"][0]["review_status"] == "accepted" and article["assets"][0]["usage_basis"] == "source_reference"
     ai = [c for c in article["claims"] if c["author"] == "ai"]
-    assert all(c["review_status"] == "pending" and c["quote"] for c in ai)
+    assert all(c["review_status"] == "accepted" and c["quote"] for c in ai)
     interp = next(c for c in ai if c["kind"] == "interpretation")
     assert "12,000" in interp["text"] and interp["fact_ids"]  # number bound to an extracted fact
-    assert article["facts"][0]["verification_status"] == "candidate" and article["facts"][0]["origin"] == "auto"
+    assert article["facts"][0]["verification_status"] == "eligible" and article["facts"][0]["origin"] == "auto"
     social = next(m for m in mats if "youtube" in (m["source"]["url"] or ""))
     assert social["source"]["source_type"] == "social" and social["assets"] == []
 
@@ -554,7 +555,7 @@ def test_research_keeps_to_the_period(client, fakes):
 
     mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials"))}
     assert "https://p.example.com/old" not in mats
-    assert mats["https://p.example.com/in"]["review_status"] == "candidate"
+    assert mats["https://p.example.com/in"]["review_status"] == "accepted"
     past = mats["https://q.example.org/past"]
     assert past["review_status"] == "excluded" and past["review_reason"].startswith("조사 기간 밖")
 
@@ -775,3 +776,19 @@ def test_outline_reads_the_deck_and_slide_feedback_changes_it(client, fakes):
     after = ok(client.get(f"/v1/projects/{pid}/outline"))
     assert "2-8a" not in [x.get("slide_id") for x in after["flow"]] and after["omitted"][0]["slot_id"] == "2-8a"
     assert client.post(f"/v1/projects/{pid}/outline/nope/feedback", json={"message": "x"}).status_code == 404
+
+
+def test_accept_all_takes_waiting_cards_and_leaves_doubtful_ones(client, fakes):
+    pid, _ = setup_project(client)
+    plain = ok(client.post(f"/v1/projects/{pid}/materials", json={"title": "직접 넣은 사례", "section_id": "campaign"}), 201)
+    doubtful = ok(client.post(f"/v1/projects/{pid}/materials", json={"title": "기간 애매", "section_id": "campaign"}), 201)
+    with SessionLocal() as db:
+        from app.models import Material
+        db.get(Material, doubtful["id"]).review_reason = "기간 확인 필요: 활동일·발행일 미확인"
+        db.commit()
+    c = ok(client.post(f"/v1/materials/{plain['id']}/claims", json={"kind": "fact", "text": "팝업 운영"}), 201)
+    out = ok(client.post(f"/v1/projects/{pid}/materials/accept-all"))
+    assert out == {"accepted": 1, "left": 1}
+    m = ok(client.get(f"/v1/materials/{plain['id']}"))
+    assert m["review_status"] == "accepted" and m["claims"][0]["review_status"] == "accepted" and m["claims"][0]["id"] == c["id"]
+    assert ok(client.get(f"/v1/materials/{doubtful['id']}"))["review_status"] == "candidate"
