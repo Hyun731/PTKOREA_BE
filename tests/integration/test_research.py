@@ -843,5 +843,7 @@ def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
     flow = ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]
     ids = [x.get("slide_id") for x in flow if x["kind"] == "slide"]
     assert ids[0] == "ES" and ids.index("SWOT") > ids.index("5-recap") and "NEXT" in ids
+    issues = ok(client.get(f"/v1/projects/{pid}/slide-plan"))["qc"]["issues"]
+    assert not [i for i in issues if i["slide_id"] in ("ES", "SWOT", "NEXT") and i["severity"] == "block"], issues
     ok(client.delete(f"/v1/projects/{pid}/synthesis"))
     assert "ES" not in [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]]

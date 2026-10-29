@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from core.composition.chrome import P, T, footnote_block, lead_block, text_block, title_block
+from core.composition.chrome import M, N, P, T, footnote_block, lead_block, text_block, title_block
 from core.schemas.slidespec import Block, Region, ShapeBlock, SlideSpec
 
 C_LABELS = [("company", "Company · 자사"), ("competitor", "Competitor · 경쟁사"), ("customer", "Customer · 소비자")]
@@ -16,7 +16,7 @@ SWOT_LABELS = [("S", "Strength · 강점"), ("W", "Weakness · 약점"), ("O", "
 
 
 def _panel(i: int, x: float, y: float, w: float, h_head: float, h_body: float, head: str, lines: list[str],
-           numbered: bool = False) -> list[Block]:
+           numbered: bool = False, no: str = "") -> list[Block]:
     head_r, body_r = Region(x=x, y=y, w=w, h=h_head), Region(x=x, y=y + h_head + 8, w=w, h=h_body)
     paras = []
     for k, line in enumerate(lines):
@@ -25,7 +25,9 @@ def _panel(i: int, x: float, y: float, w: float, h_head: float, h_body: float, h
         p.space_before = 8 if k else 0
         paras.append(p)
     return [ShapeBlock(block_id=f"panel{i}_head_bg", region=head_r, fill="navy"),
-            text_block(f"panel{i}_head", "panel_header", head_r, [P(T(head))], spec="pillar_header", align="c",
+            # A panel number is a label (meta part), not a figure that needs a source.
+            text_block(f"panel{i}_head", "panel_header", head_r, [P(*([M(no, "item_no"), T(" ")] if no else []), T(head))],
+                       spec="pillar_header", align="c",
                        valign="m", color="white", bold=True),
             ShapeBlock(block_id=f"panel{i}_body_bg", region=body_r, fill="pillar_body"),
             text_block(f"panel{i}_body", "body", Region(x=x + 16, y=body_r.y + 12, w=w - 32, h=h_body - 24), paras,
@@ -74,7 +76,7 @@ def es_page(es: dict) -> Optional[SlideSpec]:
 def swot_page(swot: dict) -> Optional[SlideSpec]:
     if not any(swot.get(k) for k, _ in SWOT_LABELS):
         return None
-    blocks: list[Block] = [title_block("SWOT", "3C 종합 진단")]
+    blocks: list[Block] = [title_block("SWOT", sub_parts=[N("3C"), T(" 종합 진단")])]
     if swot.get("lead"):
         blocks.append(lead_block([P(T(swot["lead"]))]))
     w, gap = 580, 20
@@ -102,7 +104,7 @@ def next_page(nxt: dict) -> Optional[SlideSpec]:
     h = max(_body_h([it.get("body", "")], w - 32) for it in items[:3])
     y = _top(60 + 8 + h)
     for i, it in enumerate(items[:3]):
-        blocks += _panel(i, x0 + i * (w + gap), y, w, 60, h, f"{i + 1}. {it.get('title', '')}", [it.get("body", "")])
+        blocks += _panel(i, x0 + i * (w + gap), y, w, 60, h, it.get("title", ""), [it.get("body", "")], no=f"{i + 1}.")
     blocks.append(_note())
     return SlideSpec(slide_id="NEXT", template_id="next_steps.v1", page_role="recap", section_id="recap",
                      title="다음 단계 제언", blocks=blocks, is_data=False)
