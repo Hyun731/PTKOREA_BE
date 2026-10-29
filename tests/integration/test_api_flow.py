@@ -96,12 +96,9 @@ def test_full_manual_flow(client):
 
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     assert next(s for s in sp["plan"] if s["slot_id"] == "C1")["readiness"] == "ready"
-    blocking = [i for i in sp["qc"]["issues"] if i["severity"] == "block"]
-    # M1 has no accepted market evidence: the person omits it explicitly.
-    for i in blocking:
-        assert i["code"] == "SLOT_NEEDS_INPUT", i
-        ok(client.put(f"/v1/projects/{pid}/slot-omissions/{i['block_id']}", json={"reason": "이번 보고서 범위 외"}))
-    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    # Slides still without accepted data stay out of the deck as warnings; they never block the export.
+    empty = [i for i in sp["qc"]["issues"] if i["code"] == "SLOT_NEEDS_INPUT"]
+    assert empty and all(i["severity"] == "warn" for i in empty)
     assert sp["qc"]["blocks"] == 0, sp["qc"]
 
     # Deck build (job) -> state recoverable from the DB.
