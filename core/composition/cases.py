@@ -360,7 +360,7 @@ def _section_head(block_id: str, x: float, y: float, w: float, label: str, note:
     return out
 
 
-def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block]) -> list[SlideSpec]:
+def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block], prefix: str = "C2") -> list[SlideSpec]:
     """v6 'CASE' page per accepted case: big image left; summary box, key figure, 진행 방식 and verbatim
     source excerpts right. Everything shown is an accepted claim, a confirmed fact or a verbatim quote."""
     pages: list[SlideSpec] = []
@@ -470,7 +470,7 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
         foot += [T(" · 문장은 채택된 근거, 수치는 원문과 대조해 확인한 값")]
         blocks.append(footnote_block([P(*foot)]))
         blocks += badge
-        pages.append(SlideSpec(slide_id=f"C2-{n}", template_id="case_detail.v1", page_role="content",
+        pages.append(SlideSpec(slide_id=f"{prefix}-{n}", template_id="case_detail.v1", page_role="content",
                                section_id="campaign", brand_id=m.brand_id, title=_card_label(m),
                                blocks=blocks, asset_ids=[m.asset.id], source_ids=[m.source.id], needs_review=False,
                                is_data=True))

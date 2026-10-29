@@ -49,6 +49,27 @@ TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타�
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
                   "M1": "시장·타겟 근거", "5-recap": "Recap", "A-source": "출처 표"}
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "recap", "appendix"]
+# The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
+# A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
+CHAPTERS: dict[str, tuple[str, str, str, str]] = {
+    "company": ("1", "자사 분석", "Company", "자사 채널 · 인플루언서 · 캠페인"),
+    "competitor": ("2", "경쟁사 분석", "Competitor", "시장 · 검색 경쟁 · 경쟁사와 벤치마크 사례"),
+    "customer": ("3", "소비자 분석", "Customer", "인식 · 구매 여정"),
+    "summary": ("4", "종합", "Insight", "3C Recap"),
+    "appendix": ("A", "Appendix", "Appendix", "출처"),
+}
+CHAPTER_ORDER = list(CHAPTERS)
+TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
+                    "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
+                    "2-8a": "competitor", "2-8b": "competitor", "2-8c": "competitor", "2-8d": "competitor",
+                    "5-recap": "summary", "A-source": "appendix"}
+# Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
+PAGE_ORDER = ["1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "2-8a", "2-8b", "2-8c", "2-8d",
+              "C1c", "C2c", "C1b", "C2b", "5-recap", "A-source"]
+# (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
+CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
+               ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
+               ("benchmark", "competitor", "C1b", "C2b", "Benchmark", "벤치마크 사례")]
 TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1",
                   "5-recap", "A-source"]
 FRAME_TEMPLATES = {"cover", "index", "divider", "end"}
@@ -109,8 +130,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     plan: list[SlotPlan] = []
     by_template: dict[str, list[SlideSpec]] = {}
 
+    built: list[tuple[int, int, SlideSpec]] = []  # (page order rank, call order, slide)
+
     def slot(slot_id: str, template: str, slides: list[SlideSpec], missing_reason: str, brand_id: Optional[str] = None,
-             label: Optional[str] = None):
+             label: Optional[str] = None, chapter: Optional[str] = None, key: Optional[str] = None):
         if slot_id in inputs.omitted_slots:
             plan.append(SlotPlan(slot_id=slot_id, section_id=TEMPLATE_SECTION[template], template_id=template,
                                  brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="omitted",
@@ -121,6 +144,9 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                                  brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="ready",
                                  slide_ids=[s.slide_id for s in slides]))
             by_template.setdefault(template, []).extend(slides)
+            for s in slides:
+                s.chapter = chapter or TEMPLATE_CHAPTER[template]
+                built.append((PAGE_ORDER.index(key or template), len(built), s))
         else:
             plan.append(SlotPlan(slot_id=slot_id, section_id=TEMPLATE_SECTION[template], template_id=template,
                                  brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="needs_input",
@@ -171,30 +197,36 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             slot(f"3-1-{b.id}", "3-1", quant.creator_pages(ctx, b.id), "기간 내 채택된 creator 게시물 없음", b.id,
                  f"크리에이터 게시물 · {b.name}")
     campaign_ordered = _case_order(project, [m for m in inputs.materials if m.section_id == "campaign"])
-    if "C1" in enabled:
-        campaign = campaign_ordered
-        lead_fn = _case_lead
-        # Case/market/source pages carry the synthetic badge only if their own facts are synthetic.
-        case_badge = badge if _uses_synthetic(campaign, metrics) else []
-        # A person-picked case gets its own deep-dive slide instead of a grid card; the rest
-        # keep the existing grid untouched (QUALITY_BASELINE p54/p68 pin its exact card count).
-        featured = sorted((m for m in campaign if m.featured), key=lambda m: (m.order, m.id))
-        grid = [m for m in campaign if not m.featured]
-        # With C2 on, featured cases get their full detail page there instead (each case appears once).
-        spotlights = [] if "C2" in enabled and featured else [s for i, m in enumerate(featured)
-                     if (s := cases.case_spotlight_page(m, pf, title_main="Campaign", title_sub="캠페인 사례",
-                                                        slide_id=f"C1-spot{i + 1}", badge=case_badge))]
-        pages = spotlights + cases.case_pages(grid, pf, title_main="Campaign", title_sub="캠페인 사례", slide_prefix="C1",
-                                              lead_for=lead_fn, badge=case_badge)
-        blocked = [f"{m.title}: {cases.eligible_case(m)}" for m in campaign if cases.eligible_case(m)]
-        reason = "채택된 사례 자료 없음" if not campaign else "사례 카드 조건 미충족 — " + "; ".join(blocked[:3])
-        slot("C1", "C1", pages, reason)
-    if "C2" in enabled:
-        campaign = campaign_ordered
-        if "C1" in enabled and any(m.featured for m in campaign):
-            campaign = [m for m in campaign if m.featured]  # the rest are on the C1 grid
-        detail = cases.case_detail_pages(campaign, pf, badge if _uses_synthetic(campaign, metrics) else [])
-        slot("C2", "C2", detail, "채택된 사례 자료 없음 (이미지·근거 문장 채택 필요)")
+    roles = _case_roles(project)
+    for role, chapter, card_id, detail_id, title_main, title_sub in CASE_GROUPS:
+        campaign = [m for m in campaign_ordered if roles.get(m.entity or "", "self") == role]
+        if role != "self" and not campaign and not any(_has_role(project, role)):
+            continue  # no benchmark set: no empty benchmark slot either
+        what = {"self": "사례", "competitor": "경쟁사 사례", "benchmark": "벤치마크 사례"}[role]
+        if "C1" in enabled:
+            # Case/market/source pages carry the synthetic badge only if their own facts are synthetic.
+            case_badge = badge if _uses_synthetic(campaign, metrics) else []
+            # A person-picked case gets its own deep-dive slide instead of a grid card; the rest
+            # keep the existing grid untouched (QUALITY_BASELINE p54/p68 pin its exact card count).
+            featured = sorted((m for m in campaign if m.featured), key=lambda m: (m.order, m.id))
+            grid = [m for m in campaign if not m.featured]
+            # With C2 on, featured cases get their full detail page there instead (each case appears once).
+            spotlights = [] if "C2" in enabled and featured else [s for i, m in enumerate(featured)
+                         if (s := cases.case_spotlight_page(m, pf, title_main=title_main, title_sub=title_sub,
+                                                            slide_id=f"{card_id}-spot{i + 1}", badge=case_badge))]
+            pages = spotlights + cases.case_pages(grid, pf, title_main=title_main, title_sub=title_sub, slide_prefix=card_id,
+                                                  lead_for=_case_lead, badge=case_badge)
+            blocked = [f"{m.title}: {cases.eligible_case(m)}" for m in campaign if cases.eligible_case(m)]
+            reason = f"채택된 {what} 자료 없음" if not campaign else "사례 카드 조건 미충족 — " + "; ".join(blocked[:3])
+            slot(card_id, "C1", pages, reason, label=f"{title_sub} 카드", chapter=chapter, key=card_id)
+        if "C2" in enabled:
+            detail_cases = campaign
+            if "C1" in enabled and any(m.featured for m in campaign):
+                detail_cases = [m for m in campaign if m.featured]  # the rest are on the C1 grid
+            detail = cases.case_detail_pages(detail_cases, pf, badge if _uses_synthetic(detail_cases, metrics) else [],
+                                             prefix=detail_id)
+            slot(detail_id, "C2", detail, f"채택된 {what} 자료 없음 (이미지·근거 문장 채택 필요)", label=f"{title_sub} 상세",
+                 chapter=chapter, key=detail_id)
     if "M1" in enabled:
         market = [m for m in inputs.materials if m.section_id == "market"]
         slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
@@ -215,7 +247,8 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                         b.paragraphs = [_refresh_facts(p, pf) for p in inputs.lead_overrides[s.slide_id]]
                 s.needs_review = False
 
-    ordered = _assemble(project, by_template, enabled, inputs.generated_on or date.today(), synthetic)
+    ordered = _assemble(project, [s for _, _, s in sorted(built, key=lambda x: (x[0], x[1]))], enabled,
+                        inputs.generated_on or date.today(), synthetic)
     for s in ordered:
         s.bindings = _bindings(s, metrics, pf)
         s.notes = _notes(s, metrics)
@@ -230,6 +263,23 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                     template_version=project.template_version, synthetic_data=synthetic, slides=ordered, plan=plan,
                     input_fingerprint=fingerprint(inputs))
     return BuildResult(deck, metrics, findings, assets, sources)
+
+
+def _case_roles(project: Project) -> dict[str, str]:
+    """Whose case a card is, by its entity: a self brand, a competitor, or a benchmark."""
+    roles: dict[str, str] = {}
+    for b in project.brands:
+        for c in b.competitors:
+            roles.setdefault(c, "competitor")
+        for x in b.benchmarks:
+            roles.setdefault(x, "benchmark")
+    for b in project.brands:
+        roles[b.name] = "self"
+    return roles
+
+
+def _has_role(project: Project, role: str):
+    return (x for b in project.brands for x in (b.competitors if role == "competitor" else b.benchmarks))
 
 
 def _uses_synthetic(materials: list[CaseMaterial], metrics: MetricsResult) -> bool:
@@ -272,11 +322,10 @@ def _used_sources(by_template: dict[str, list[SlideSpec]], materials: list[CaseM
     return out
 
 
-def _assemble(project: Project, by_template: dict[str, list[SlideSpec]], enabled: set[str], generated_on: date,
+def _assemble(project: Project, pages: list[SlideSpec], enabled: set[str], generated_on: date,
               synthetic: bool) -> list[SlideSpec]:
-    pages_by_section = {section: [s for t in TEMPLATE_ORDER if TEMPLATE_SECTION[t] == section for s in by_template.get(t, [])]
-                        for section in SECTION_ORDER}
-    sections_present = [section for section in SECTION_ORDER if pages_by_section[section]]
+    pages_by_section = {ch: [s for s in pages if s.chapter == ch] for ch in CHAPTER_ORDER}
+    sections_present = [ch for ch in CHAPTER_ORDER if pages_by_section[ch]]
     shown = _shown_numbers(sections_present)
     content: list[SlideSpec] = []
     for section in sections_present:
@@ -307,14 +356,14 @@ def _assemble(project: Project, by_template: dict[str, list[SlideSpec]], enabled
 
 def _korean_breadcrumb(slide: SlideSpec, shown: dict[str, str]) -> None:
     """v6 breadcrumb starts with the part number and name ('1. 인플루언서 · …'), not the English template title."""
-    sec = slide.section_id if slide.section_id in shown else ("appendix" if slide.page_role == "appendix" else None)
+    sec = slide.chapter if slide.chapter in shown else ("appendix" if slide.page_role == "appendix" else None)
     if not sec or sec not in shown:
         return
     for b in slide.blocks:
         if isinstance(b, TextBlock) and b.block_id == "title" and b.paragraphs and b.paragraphs[0].parts:
             first = b.paragraphs[0].parts[0]
             b.paragraphs[0].parts[0] = first.model_copy(update={"type": "meta", "key": "section_no",
-                                                                "text": f"{shown[sec]}. {SECTIONS[sec][1]}"})
+                                                                "text": f"{shown[sec]}. {CHAPTERS[sec][1]}"})
             return
 
 
@@ -366,11 +415,11 @@ def _shown_numbers(sections: list[str]) -> dict[str, str]:
     """Numbers as printed: consecutive over the sections actually in the deck (no gap when one is left out)."""
     out, n = {}, 0
     for s in sections:
-        if SECTIONS[s][0].isdigit():
+        if CHAPTERS[s][0].isdigit():
             n += 1
             out[s] = str(n)
         else:
-            out[s] = SECTIONS[s][0]
+            out[s] = CHAPTERS[s][0]
     return out
 
 
@@ -418,7 +467,7 @@ def _index(project: Project, sections: list[str], shown: dict[str, str], pages: 
     cap = _index_row_cap(sections, all_rows, top, bottom)
     x, y = 48.0, float(top)
     for s in sections:
-        label = SECTIONS[s][1]
+        label = CHAPTERS[s][1]
         rows = all_rows[s]
         if len(rows) > cap:  # long parts (many case pages) keep their first rows and summarize the rest
             rest = rows[cap - 1:]
@@ -449,7 +498,7 @@ def _index(project: Project, sections: list[str], shown: dict[str, str], pages: 
 
 def _divider(section: str, shown_num: str, pages: list[SlideSpec]) -> SlideSpec:
     """v6 PART page: big part number, gold label, description, and the pages in this part on the right."""
-    num, label, _, sub = SECTIONS[section]  # slide id keeps the canonical number; the title shows shown_num
+    num, label, _, sub = CHAPTERS[section]  # slide id keeps the canonical number; the title shows shown_num
     blocks = [
         text_block("divider_title", "divider_title", Region(x=80, y=80, w=533, h=93),
                    [P(T("PART "), M(shown_num, "section_no"))], spec="divider_title", valign="m", color="white"),

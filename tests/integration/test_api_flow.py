@@ -95,7 +95,8 @@ def test_full_manual_flow(client):
     assert m["readiness"] == []
 
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
-    assert next(s for s in sp["plan"] if s["slot_id"] == "C1")["readiness"] == "ready"
+    # A competitor's case sits in the 경쟁사 분석 chapter, on its own case pages.
+    assert next(s for s in sp["plan"] if s["slot_id"] == "C1c")["readiness"] == "ready"
     # Slides still without accepted data stay out of the deck as warnings; they never block the export.
     empty = [i for i in sp["qc"]["issues"] if i["code"] == "SLOT_NEEDS_INPUT"]
     assert empty and all(i["severity"] == "warn" for i in empty)
@@ -109,8 +110,9 @@ def test_full_manual_flow(client):
     assert again["reused"] and again["deck_id"] == start["deck_id"]
     deck = ok(client.get(f"/v1/decks/{start['deck_id']}"))
     ids = [s["slide_id"] for s in deck["spec"]["slides"]]
-    assert "C1" in ids and "A-source" in ids and deck["qc"]["blocks"] == 0 and not deck["stale"]
-    c1 = next(s for s in deck["spec"]["slides"] if s["slide_id"] == "C1")
+    assert "C1c" in ids and "A-source" in ids and deck["qc"]["blocks"] == 0 and not deck["stale"]
+    c1 = next(s for s in deck["spec"]["slides"] if s["slide_id"] == "C1c")
+    assert c1["chapter"] == "competitor"
     assert c1["asset_ids"] == [a["id"]] and m["source"]["id"] in c1["source_ids"]
 
     if HAS_RENDER:
@@ -122,7 +124,7 @@ def test_full_manual_flow(client):
         assert {"report.pptx", "factbook.csv", "sources.csv", "assets.csv", "build_report.json"} <= set(exports[0]["files"])
         pptx = client.get(f"/v1/exports/{exports[0]['id']}/files/report.pptx")
         prs = Presentation(io.BytesIO(pptx.content))
-        slide = prs.slides[ids.index("C1")]
+        slide = prs.slides[ids.index("C1c")]
         pic = next(s for s in slide.shapes if s.name == "card0_image")
         assert abs(pic.crop_left - 0.1) < 1e-6 and abs(pic.crop_right - 0.1) < 1e-6  # same crop as the editor
         texts = " ".join(s.text_frame.text for s in slide.shapes if s.has_text_frame)

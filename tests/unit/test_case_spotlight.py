@@ -17,11 +17,11 @@ def test_featured_case_gets_spotlight_slide(tmp_path):
     qc = run_qc(r.deck, r.metrics.registry, lambda a: r.assets.get(a))
     assert qc.blocks == 0, [i for i in qc.issues if i.severity == "block"]
 
-    spot = next(s for s in r.deck.slides if s.slide_id == "C1-spot1")
+    spot = next(s for s in r.deck.slides if s.slide_id == "C1c-spot1")  # competitors' cases: C1c
     assert spot.template_id == "case_spotlight.v1"
     assert spot.asset_ids == [campaign[0].asset.id]
 
-    grid_slides = [s for s in r.deck.slides if s.slide_id.startswith("C1") and s.slide_id != "C1-spot1"]
+    grid_slides = [s for s in r.deck.slides if s.slide_id.startswith("C1c") and s.slide_id != "C1c-spot1"]
     grid_assets = {a for s in grid_slides for a in s.asset_ids}
     assert campaign[0].asset.id not in grid_assets
     assert sum(len(s.asset_ids) for s in grid_slides) == len(campaign) - 1

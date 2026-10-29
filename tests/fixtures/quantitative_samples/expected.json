@@ -160,14 +160,14 @@
   "quantitative_deck_order": [
     "cover",
     "index",
+    "section-01",
+    "3-1-B1",
     "section-02",
     "2-8a",
     "2-8b",
     "2-8c",
     "2-8d",
-    "section-03",
-    "3-1-B1",
-    "section-05",
+    "section-04",
     "5-recap",
     "end"
   ],

@@ -204,6 +204,7 @@ class SlideSpec(BaseModel):
     template_version: str = "1.0"
     page_role: PageRole
     section_id: Optional[str] = None
+    chapter: Optional[str] = None  # 3C part the page sits in (company/competitor/customer/summary/appendix)
     brand_id: Optional[str] = None
     title: str
     blocks: list[Block]

@@ -73,9 +73,10 @@ def test_p40_image_plus_table(result):
 
 def test_p54_p68_case_cards(result):
     r, _ = result
-    assert slide(r, "C1").template_id == "case_card_4col.v1"
-    assert slide(r, "C1-p2").template_id == "case_card_3col.v1"
-    for sid in ("C1", "C1-p2"):
+    # The fixture's cases are competitors': their card pages are the 경쟁사 분석 chapter's C1c.
+    assert slide(r, "C1c").template_id == "case_card_4col.v1"
+    assert slide(r, "C1c-p2").template_id == "case_card_3col.v1"
+    for sid in ("C1c", "C1c-p2"):
         s = slide(r, sid)
         frames = [b for b in s.blocks if getattr(b, "block_id", "").endswith("_frame")]
         assert len({round(f.region.h) for f in frames}) == 1  # aligned card heights
