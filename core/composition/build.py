@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional
 
@@ -146,18 +146,21 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     if "2-5" in enabled:
         s = owned.youtube_performance_page(ctx)
         slot("2-5", "2-5", [s] if s else [], "YouTube 채널 데이터 없음(Brand.official_profiles 확인)")
+    # The search slides put brands side by side in at most 3 panels: more brands continue on the next page.
+    groups = _brand_groups(ctx)
     if "2-8a" in enabled:
-        s = quant.search_share(ctx)
-        slot("2-8a", "2-8a", [s] if s else [], "12M 브랜드명 검색 세트(자사+경쟁사 전원) 미확보")
+        pages = [_page_n(s, n) for n, c in groups if (s := quant.search_share(c))]
+        slot("2-8a", "2-8a", pages, "12M 브랜드명 검색 세트(자사+경쟁사 전원) 미확보")
     if "2-8b" in enabled:
-        s = quant.search_trend(ctx)
-        slot("2-8b", "2-8b", [s] if s else [], "공통 스케일 월별 검색 지수 미확보")
+        pages = [_page_n(s, n) for n, c in groups if (s := quant.search_trend(c))]
+        slot("2-8b", "2-8b", pages, "공통 스케일 월별 검색 지수 미확보")
     if "2-8c" in enabled:
-        pages = quant.combo_share_pages(ctx)
+        pages = [(n, p) for n, c in groups for p in quant.combo_share_pages(c)]
         if pages:
-            for p in pages:
+            for n, p in pages:
                 cat = p.slide_id.removeprefix("2-8c-")
-                slot(p.slide_id, "2-8c", [p], "", label=f"조합어 검색 점유 · +{cat}")
+                p = _page_n(p, n)
+                slot(p.slide_id, "2-8c", [p], "", label=f"조합어 검색 점유 · +{cat}" + (f" ({n})" if n > 1 else ""))
         else:
             slot("2-8c", "2-8c", [], "카테고리 조합어(cat) 검색 세트 미확보")
     if "2-8d" in enabled:
@@ -369,6 +372,22 @@ def _shown_numbers(sections: list[str]) -> dict[str, str]:
         else:
             out[s] = SECTIONS[s][0]
     return out
+
+
+PANEL_BRANDS = 3  # side-by-side panels one search slide holds
+
+
+def _brand_groups(ctx: quant.QuantContext) -> list[tuple[int, quant.QuantContext]]:
+    """(page number, context limited to that page's brands) — one page when there are 3 brands or fewer."""
+    brands = ctx.project.brands
+    if len(brands) <= PANEL_BRANDS:
+        return [(1, ctx)]
+    return [(k // PANEL_BRANDS + 1, replace(ctx, project=ctx.project.model_copy(update={"brands": brands[k:k + PANEL_BRANDS]})))
+            for k in range(0, len(brands), PANEL_BRANDS)]
+
+
+def _page_n(s: SlideSpec, n: int) -> SlideSpec:
+    return s if n == 1 else s.model_copy(update={"slide_id": f"{s.slide_id}-{n}"})
 
 
 def _index_row_cap(sections: list[str], rows: dict[str, list], top: float, bottom: float, columns: int = 3) -> int:

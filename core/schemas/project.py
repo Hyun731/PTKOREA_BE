@@ -127,7 +127,7 @@ class Project(BaseModel):
     client: str = Field(min_length=1)
     timezone: str = "Asia/Seoul"
     period: Period
-    brands: list[Brand] = Field(min_length=1, max_length=3)
+    brands: list[Brand] = Field(min_length=1)  # no upper bound: side-by-side slides continue on more pages
     enabled_slides: list[str]
     template_version: str = "1.0"
     budget_policy: BudgetPolicy = Field(default_factory=BudgetPolicy)

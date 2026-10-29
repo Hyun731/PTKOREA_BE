@@ -324,3 +324,11 @@ def test_excluding_an_item_needs_no_reason(client):
     out = ok(client.patch(f"/v1/research-items/{it['id']}/review", json={"review_status": "excluded"}))
     assert out["review_status"] == "excluded" and out["omission_reason"] == "사용자가 제외"
     assert ok(client.patch(f"/v1/research-items/{it['id']}/review", json={"review_status": "pending"}))["omission_reason"] is None
+
+
+def test_more_than_three_self_brands(client):
+    brands = [{"id": f"B{i}", "name": f"자사{i}", "competitors": [f"경쟁{i}"]} for i in range(1, 6)]
+    body = ok(client.post("/v1/projects", json={"name": "다브랜드", "client": "고객",
+                                                "period": {"start": "2026-01-01", "end": "2026-09-30"}, "brands": brands}), 201)
+    assert len(body["config"]["brands"]) == 5
+    ok(client.get(f"/v1/projects/{body['id']}/slide-plan"))
