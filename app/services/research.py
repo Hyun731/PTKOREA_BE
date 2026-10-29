@@ -87,6 +87,26 @@ class RunState:
 
 # ------------------------------------------------------------------ queries
 
+def _key(s: str) -> str:
+    return re.sub(r"\s+", "", s or "").lower()
+
+
+def subject_names(item: ResearchItem, project: Project) -> list[str]:
+    """Ways a result can name the item's subject: its name, the self brand's aliases, and the search
+    keywords set for that entity (often the Latin spelling, e.g. 리모와 → RIMOWA)."""
+    brand = core_project(project).brand(item.brand_id)
+    names = [item.entity]
+    if item.entity == brand.name:
+        names += brand.aliases
+    names += [k for g in brand.keyword_groups if g.entity == item.entity for k in g.keywords]
+    return [n for n in dict.fromkeys(_key(n) for n in names) if len(n) >= 2]
+
+
+def mentions(text: str, names: list[str]) -> bool:
+    t = _key(text)
+    return any(n in t for n in names)
+
+
 def build_queries(item: ResearchItem, project: Project) -> list[str]:
     core = core_project(project)
     brand = core.brand(item.brand_id)
@@ -325,6 +345,15 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             if r and r["url"] not in seen_urls:
                 seen_urls.add(r["url"])
                 results.append(r)
+    # Generic words in a query ("이벤트 프로모션 2026") pull in other brands' promotions. A result that never
+    # names the subject would only use up a card slot before the AI rejects it: drop it here, and look
+    # at results naming it in the title before those naming it only in the snippet.
+    if item.section_id != "market":
+        names = subject_names(item, project)
+        named = [(mentions(r.get("title", ""), names), r) for r in results]
+        kept = [r for t, r in named if t] + [r for t, r in named if not t and mentions(r.get("snippet", ""), names)]
+        out["off_topic"] = len(results) - len(kept)
+        results = kept
 
     # 1. card rows for new URLs (cheap, ordered)
     existing_urls = {s.original_url for s in db.scalars(select(Source).join(Material, Material.source_id == Source.id)

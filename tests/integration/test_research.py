@@ -467,8 +467,10 @@ def test_items_of_one_run_are_researched_in_parallel(client, fakes, monkeypatch)
         with lock:
             active[0] -= 1
         res = original(queries, **kw)
-        tag = "x" if "경쟁X" in queries[0] else "y"  # each item finds its own articles
-        res.data = {**res.data, "results": [{**r, "url": r["url"] + f"?{tag}"} for r in res.data["results"]]}
+        tag = "x" if "경쟁X" in queries[0] else "y"  # each item finds its own articles, naming its own brand
+        name = "경쟁X" if tag == "x" else "경쟁Y"
+        res.data = {**res.data, "results": [{**r, "url": r["url"] + f"?{tag}", "title": r["title"].replace("경쟁X", name)}
+                                            for r in res.data["results"]]}
         return res
 
     research.PROVIDERS["search"] = slow_search
@@ -523,7 +525,7 @@ def test_research_keeps_to_the_period(client, fakes):
         return CallResult(data={"id": "s3", "results": [
             {"title": "경쟁X 기간 안 팝업", "url": "https://p.example.com/in", "snippet": "", "date": str(start + timedelta(days=20))},
             {"title": "경쟁X 오래된 기사", "url": "https://p.example.com/old", "snippet": "", "date": str(start - timedelta(days=400))},
-            {"title": "지난해 겨울 한정판 회고 인터뷰", "url": "https://q.example.org/past", "snippet": "", "date": str(start + timedelta(days=90))},
+            {"title": "경쟁X 지난해 겨울 한정판 회고 인터뷰", "url": "https://q.example.org/past", "snippet": "", "date": str(start + timedelta(days=90))},
         ]}, cost_usd=0.005)
 
     def structured(system, user, schema, **kw):
@@ -791,3 +793,27 @@ def test_accept_all_takes_waiting_cards_and_leaves_doubtful_ones(client, fakes):
     m = ok(client.get(f"/v1/materials/{plain['id']}"))
     assert m["review_status"] == "accepted" and m["claims"][0]["review_status"] == "accepted" and m["claims"][0]["id"] == c["id"]
     assert ok(client.get(f"/v1/materials/{doubtful['id']}"))["review_status"] == "candidate"
+
+
+def test_results_that_never_name_the_brand_are_dropped_before_fetching(client, fakes):
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+    with SessionLocal() as db:
+        db.query(ProviderCache).delete()
+        db.commit()
+    original = fakes.search
+
+    def noisy(queries, **kw):
+        res = original(queries, **kw)
+        res.data = {**res.data, "results": [
+            {"title": "코웨이, 연중 최대 프로모션 개최", "url": "https://n.example.com/coway", "snippet": "렌탈료 할인", "date": "2026-03-01"},
+            {"title": "패션 브리핑", "url": "https://n.example.com/brief", "snippet": "경쟁 X 가 새 컬렉션을 공개", "date": "2026-03-02"},
+            *res.data["results"]]}
+        return res
+
+    research.PROVIDERS["search"] = noisy
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    urls = [m["source"]["url"] for m in ok(client.get(f"/v1/projects/{pid}/materials"))]
+    assert "https://n.example.com/coway" not in urls and res["off_topic"] >= 1
+    assert "https://n.example.com/brief" in urls  # named in the snippet (spacing ignored) still counts
