@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall, Source
-from app.services import case_commentary, direction, insights, material_ai, outline, research
+from app.services import case_commentary, direction, insights, material_ai, outline, research, synthesis
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -53,6 +53,17 @@ class Fakes:
     def structured(self, system, user, schema, **kw):
         self._hit("structured")
         props = schema["properties"]
+        if "es_company" in props:  # 종합 장표: one line has a number and one points at a page that doesn't exist
+            ref = re.search(r'"id": "([^"]+)"', user).group(1)
+            return CallResult(data={
+                "es_company": [{"text": "크리에이터 게시물 중심의 자사 관측", "ref": ref}],
+                "es_competitor": [{"text": "경쟁 세트 안 검색 점유 우위 축소", "ref": "2-8a"},
+                                  {"text": "점유 12퍼센트 하락", "ref": "2-8a"}, {"text": "없는 장 근거", "ref": "Z-9"}],
+                "es_customer": [], "task": "검색 점유 방어를 위한 접점 확대 필요",
+                "swot_lead": "자사 접점은 넓고 검색 점유는 낮은 편", "S": ["크리에이터 협업 접점"], "W": ["검색 점유 우위 축소"],
+                "O": ["카테고리 조합어 검색 수요"], "T": ["경쟁사 검색 점유 상승"], "next_lead": "검색 점유 회복 중심의 다음 단계",
+                "next": [{"title": "검색 접점 확대", "body": "크리에이터 콘텐츠에 브랜드명 검색 유도 문구 배치"}]},
+                usage={"model": "fake"}, cost_usd=0.01)
         if "action" in props:  # 초안 흐름 장표 피드백
             fb = user.split("<feedback>")[-1]
             if "빼" in fb:
@@ -190,6 +201,8 @@ def fakes(monkeypatch):
     material_ai.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     outline.STRUCTURED.clear()
     outline.STRUCTURED.append(f.structured)
+    synthesis.STRUCTURED.clear()
+    synthesis.STRUCTURED.append(f.structured)
     for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"):
         monkeypatch.setenv(k, "test-key")
     monkeypatch.setenv("ANTHROPIC_MODEL", "fake-model")
@@ -202,6 +215,7 @@ def fakes(monkeypatch):
     material_ai.STRUCTURED.clear()
     material_ai.SEARCH.clear()
     outline.STRUCTURED.clear()
+    synthesis.STRUCTURED.clear()
 
 
 def ok(r, status=200):
@@ -817,3 +831,17 @@ def test_results_that_never_name_the_brand_are_dropped_before_fetching(client, f
     urls = [m["source"]["url"] for m in ok(client.get(f"/v1/projects/{pid}/materials"))]
     assert "https://n.example.com/coway" not in urls and res["off_topic"] >= 1
     assert "https://n.example.com/brief" in urls  # named in the snippet (spacing ignored) still counts
+
+
+def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
+    pid, _ = setup_project(client)
+    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+        ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
+    out = ok(client.post(f"/v1/projects/{pid}/synthesis", json={"instruction": "검색 위주로"}))
+    assert out["es"]["competitor"] == ["경쟁 세트 안 검색 점유 우위 축소"]  # the line with a number and the bad ref are out
+    assert any("숫자" in d for d in out["dropped"]) and any("Z-9" in d for d in out["dropped"])
+    flow = ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]
+    ids = [x.get("slide_id") for x in flow if x["kind"] == "slide"]
+    assert ids[0] == "ES" and ids.index("SWOT") > ids.index("5-recap") and "NEXT" in ids
+    ok(client.delete(f"/v1/projects/{pid}/synthesis"))
+    assert "ES" not in [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]]

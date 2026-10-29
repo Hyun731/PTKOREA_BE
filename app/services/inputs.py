@@ -88,5 +88,6 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}
     leads = {k: [Paragraph.model_validate(p) for p in v] for k, v in (project.lead_overrides or {}).items()}
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
-                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, generated_on=date.today(),
+                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, synthesis=project.synthesis or {},
+                       generated_on=date.today(),
                        deck_id=project.id)

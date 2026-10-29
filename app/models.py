@@ -29,6 +29,7 @@ class Project(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     omitted_slots: Mapped[dict] = mapped_column(JSON, default=dict)  # slot_id -> {reason, by, at}
     lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [Paragraph]
+    synthesis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # ES / SWOT / NEXT written from the deck
     owner: Mapped[str] = mapped_column(String(120), default="dev")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

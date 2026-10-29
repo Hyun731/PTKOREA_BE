@@ -85,6 +85,43 @@ def slide_feedback(project_id: str, slide_id: str, body: SlideFeedbackIn, db: Se
     return out
 
 
+class SynthesisIn(BaseModel):
+    instruction: str = Field(default="", max_length=400)
+
+
+@router.post("/projects/{project_id}/synthesis")
+def make_synthesis(project_id: str, body: SynthesisIn, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """Write Executive Summary, SWOT and 다음 단계 from the deck's body pages (again, when asked)."""
+    from app.config import settings
+    from app.services import synthesis
+    from integrations.base import ProviderError
+
+    p = get_project(db, project_id)
+    if not settings.provider_configured("anthropic"):
+        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "AI 키가 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY를 확인하세요")
+    try:
+        out = synthesis.generate(db, p, body.instruction)
+    except ValueError as exc:
+        raise ApiError(409, "NO_BODY_PAGES", str(exc), "자료 확인에서 자료를 채택하세요")
+    except ProviderError as exc:
+        raise ApiError(502, exc.code, f"AI 응답을 받지 못했습니다: {exc.message}", "잠시 뒤 다시 시도하세요")
+    dropped = out.pop("dropped")
+    p.synthesis = out
+    audit(db, project_id, "project", project_id, "synthesis", after={"instruction": body.instruction, "dropped": dropped}, actor=who)
+    db.commit()
+    return {**out, "dropped": dropped}
+
+
+@router.delete("/projects/{project_id}/synthesis")
+def clear_synthesis(project_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """Take the summary pages out of the deck."""
+    p = get_project(db, project_id)
+    p.synthesis = None
+    audit(db, project_id, "project", project_id, "synthesis_clear", actor=who)
+    db.commit()
+    return {"ok": True}
+
+
 class OmitIn(BaseModel):
     reason: str = Field(min_length=2, max_length=300)
 
