@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional
 
-from core.composition import cases, overview, owned, quant
+from core.composition import cases, overview, owned, quant, synthesis
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
 )
@@ -42,30 +42,32 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
 TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-4": "owned",
                     "2-5": "owned", "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search",
                     "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "5-recap": "recap",
-                    "A-source": "appendix"}
+                    "A-source": "appendix", "ES": "recap", "SWOT": "recap", "NEXT": "recap"}
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
-                  "M1": "시장·타겟 근거", "5-recap": "Recap", "A-source": "출처 표"}
+                  "M1": "시장·타겟 근거", "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary",
+                  "SWOT": "SWOT", "NEXT": "다음 단계 제언"}
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
 # A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
 CHAPTERS: dict[str, tuple[str, str, str, str]] = {
+    "exec": ("ES", "Executive Summary", "Summary", "핵심 요약"),
     "company": ("1", "자사 분석", "Company", "자사 채널 · 인플루언서 · 캠페인"),
     "competitor": ("2", "경쟁사 분석", "Competitor", "시장 · 검색 경쟁 · 경쟁사와 벤치마크 사례"),
     "customer": ("3", "소비자 분석", "Customer", "인식 · 구매 여정"),
-    "summary": ("4", "종합", "Insight", "3C Recap"),
+    "summary": ("4", "종합", "Insight", "3C Recap · SWOT · 다음 단계"),
     "appendix": ("A", "Appendix", "Appendix", "출처"),
 }
 CHAPTER_ORDER = list(CHAPTERS)
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
                     "2-8a": "competitor", "2-8b": "competitor", "2-8c": "competitor", "2-8d": "competitor",
-                    "5-recap": "summary", "A-source": "appendix"}
+                    "5-recap": "summary", "A-source": "appendix", "ES": "exec", "SWOT": "summary", "NEXT": "summary"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
-PAGE_ORDER = ["1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "2-8a", "2-8b", "2-8c", "2-8d",
-              "C1c", "C2c", "C1b", "C2b", "5-recap", "A-source"]
+PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "2-8a", "2-8b", "2-8c", "2-8d",
+              "C1c", "C2c", "C1b", "C2b", "5-recap", "SWOT", "NEXT", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
@@ -84,6 +86,7 @@ class BuildInputs:
     owned_posts: list[OwnedPostRef] = field(default_factory=list)
     omitted_slots: dict[str, str] = field(default_factory=dict)  # slot_id -> reason
     lead_overrides: dict[str, list[Paragraph]] = field(default_factory=dict)
+    synthesis: dict = field(default_factory=dict)  # ES / SWOT / NEXT text written from the deck (app.services.synthesis)
     generated_on: Optional[date] = None
     deck_id: str = "deck"
     deck_version: int = 1
@@ -234,6 +237,11 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     if "5-recap" in enabled:
         s = quant.recap(ctx)
         slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음")
+    # Written from the other pages on request, so they exist only once written (no empty slot otherwise).
+    for key, page in (("ES", synthesis.es_page), ("SWOT", synthesis.swot_page), ("NEXT", synthesis.next_page)):
+        part = inputs.synthesis.get(key.lower())
+        if part and (s := page(part)):
+            slot(key, key, [s], "")
     if "A-source" in enabled:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
@@ -329,7 +337,7 @@ def _assemble(project: Project, pages: list[SlideSpec], enabled: set[str], gener
     shown = _shown_numbers(sections_present)
     content: list[SlideSpec] = []
     for section in sections_present:
-        if "divider" in enabled and section != "appendix":
+        if "divider" in enabled and section not in ("appendix", "exec"):
             content.append(_divider(section, shown[section], pages_by_section[section]))
         content += pages_by_section[section]
     out: list[SlideSpec] = []
@@ -376,6 +384,8 @@ def _chip(slide: SlideSpec) -> str:
         return "INDEX"
     if slide.template_id.startswith("market"):
         return "MARKET"
+    if slide.slide_id in ("ES", "SWOT", "NEXT"):
+        return {"ES": "SUMMARY", "SWOT": "SWOT", "NEXT": "NEXT"}[slide.slide_id]
     if slide.section_id == "campaign":
         return "CASE"
     return CHIPS.get(slide.section_id or "", "FACTBOOK")
@@ -592,5 +602,6 @@ def fingerprint(inputs: BuildInputs) -> str:
         "materials": sorted(json.dumps(m.model_dump(mode="json"), sort_keys=True, ensure_ascii=False) for m in inputs.materials),
         "omitted": inputs.omitted_slots,
         "leads": {k: [p.model_dump(mode="json") for p in v] for k, v in sorted(inputs.lead_overrides.items())},
+        **({"synthesis": inputs.synthesis} if inputs.synthesis else {}),  # absent = same hash as before it existed
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
