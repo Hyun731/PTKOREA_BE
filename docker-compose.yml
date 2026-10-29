@@ -9,6 +9,7 @@ services:
     env_file: [.env]
     environment:
       JOB_BACKEND: thread
+      MAX_IMAGES_PER_PROJECT: "300"
     ports: ["8000:8000"]
     volumes: ["./var:/app/var"]
     restart: unless-stopped

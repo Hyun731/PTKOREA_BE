@@ -36,7 +36,7 @@ class Settings:
     # address cannot be used to call the API directly. Empty = local use, no check.
     backend_token: str = field(default_factory=lambda: _env("BACKEND_TOKEN"))
     max_image_bytes: int = 10 * 1024 * 1024
-    max_images_per_project: int = 100
+    max_images_per_project: int = field(default_factory=lambda: int(_env("MAX_IMAGES_PER_PROJECT", "100")))
     max_image_pixels: int = 40_000_000
     max_csv_bytes: int = 5 * 1024 * 1024
 
