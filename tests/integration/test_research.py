@@ -224,6 +224,7 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
     article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
     assert article["input_path"] == "auto" and article["review_status"] == "candidate"
+    assert article["scope_id"] == "3-7" and article["role"] == "competitor"  # its place in the 3C plan
     assert article["summary"].startswith("성수동 팝업")  # 해석 요약 comes with the extraction, no extra call
     with SessionLocal() as db:
         assert "방문객" in (db.get(Source, article["source"]["id"]).text or "")  # page text kept for later AI help

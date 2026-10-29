@@ -240,6 +240,7 @@ class MaterialPatch(BaseModel):
 
 def material_out(db: Session, m: Material, detail: bool = False) -> dict:
     src = db.get(Source, m.source_id)
+    item = db.get(ResearchItem, m.research_item_id) if m.research_item_id else None  # its place in the 3C plan
     assets = list(db.scalars(select(Asset).where(Asset.material_id == m.id).order_by(Asset.created_at)))
     claims = list(db.scalars(select(Claim).where(Claim.material_id == m.id).order_by(Claim.created_at)))
     facts = list(db.scalars(select(FactRow).where(FactRow.material_id == m.id).order_by(FactRow.created_at)))
@@ -259,6 +260,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
         "readiness": _readiness(m, assets, claims),
         "duplicate_of": m.duplicate_of, "duplicate_reason": m.duplicate_reason, "event_name": m.event_name,
         "summary": m.summary,
+        "scope_id": item.scope_id if item else None, "role": item.role if item else None,
         "duplicates": [{"id": d.id, "title": d.title, "reason": d.duplicate_reason, "url": s.original_url,
                         "publisher": s.publisher, "published_at": s.published_at, "review_status": d.review_status}
                        for d, s in db.execute(select(Material, Source).join(Source, Source.id == Material.source_id)
