@@ -89,8 +89,8 @@ def test_full_manual_flow(client):
     assert c_int["fact_ids"] == [f["id"]] and "116,799" in c_int["text"]
     for c in (c_fact, c_int):
         ok(client.patch(f"/v1/claims/{c['id']}", json={"base_version": c["version"], "review_status": "accepted"}))
-    r = client.patch(f"/v1/materials/{m['id']}/review", json={"status": "excluded"})
-    assert r.status_code == 422  # exclusion needs a reason
+    ex = ok(client.patch(f"/v1/materials/{m['id']}/review", json={"status": "excluded"}))
+    assert ex["review_status"] == "excluded" and ex["review_reason"] == "사용자가 제외"  # one click, reversible
     m = ok(client.patch(f"/v1/materials/{m['id']}/review", json={"status": "accepted"}))
     assert m["readiness"] == []
 

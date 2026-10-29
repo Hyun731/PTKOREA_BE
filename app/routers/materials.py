@@ -387,7 +387,7 @@ class ReviewIn(BaseModel):
 def review_material(material_id: str, body: ReviewIn, db: Session = Depends(get_db), who: str = Depends(actor)):
     m = get_material(db, material_id)
     if body.status == "excluded" and not (body.reason or "").strip():
-        raise ApiError(422, "REASON_REQUIRED", "제외 사유를 입력하세요")
+        body.reason = "사용자가 제외"  # one click; the card moves to "제외된 자료" and can come back
     if body.status == "accepted" and m.duplicate_of:
         raise ApiError(409, "IS_DUPLICATE", "같은 사례로 묶인 추가 출처입니다",
                        "대표 자료를 채택하거나, 별개 사례라면 먼저 분리하세요")
