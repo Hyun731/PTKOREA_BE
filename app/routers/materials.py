@@ -450,6 +450,17 @@ def dedupe_materials(project_id: str, db: Session = Depends(get_db), who: str = 
     return {"merged": merged}
 
 
+@router.post("/projects/{project_id}/materials/accept-all")
+def accept_all_materials(project_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """모두 채택: waiting cards go in with their sentences, numbers and image; doubtful ones stay for a look."""
+    from app.services import adopt
+    p = get_project(db, project_id)
+    out = adopt.accept_all(db, p, who)
+    audit(db, p.id, "materials", p.id, "accept_all", after={"accepted": out["ids"]}, actor=who)
+    db.commit()
+    return {"accepted": out["accepted"], "left": out["left"]}
+
+
 @router.post("/projects/{project_id}/materials/period-check")
 def period_check(project_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
     """Re-apply the research period rule to auto-collected candidates (no paid calls)."""
