@@ -688,7 +688,7 @@ def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: 
 
 # ------------------------------------------------------------------ owned (2-1 채널 인벤토리)
 
-MAX_OWNED_PAGES = 5  # per channel per item — bounds calls/cost, enough for a few months of a brand feed
+MAX_OWNED_PAGES = 40  # per channel per item — paging starts at today, so it must reach back past period_start
 
 
 def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
@@ -758,6 +758,8 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
             cursor = res.data.get("next_max_id")
             if not batch or not res.data.get("more_available") or not oldest or oldest < start_s or not cursor:
                 break
+        else:
+            out["errors"].append({"code": "PARTIAL", "message": f"IG 게시물: {MAX_OWNED_PAGES}페이지 상한으로 {start_s}까지 닿지 못함"})
         if followers is not None and add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_followers",
                                                      value=Decimal(followers), channel="instagram",
                                                      period_start=item.period_start, period_end=item.period_end,
@@ -833,6 +835,8 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
             cursor = res.data.get("continuation_token")
             if not batch or not oldest or oldest < start_s or not cursor:
                 break
+        else:
+            out["errors"].append({"code": "PARTIAL", "message": f"YouTube 영상: {MAX_OWNED_PAGES}페이지 상한으로 {start_s}까지 닿지 못함"})
         if subs is not None and add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_followers",
                                                 value=Decimal(subs), channel="youtube", period_start=item.period_start,
                                                 period_end=item.period_end, measured_at=today, label="YouTube 구독자")):
