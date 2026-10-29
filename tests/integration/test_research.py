@@ -631,3 +631,15 @@ def test_research_runs_without_a_run_budget(client, fakes, monkeypatch):
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
     assert res["status"] != "blocked_budget" and fakes.calls.get("search", 0) > 0
     assert any(r.status == "settled" for r in ledger_rows(pid))
+
+
+def test_project_list_shows_total_cost(client):
+    pid, _ = setup_project(client)
+    with SessionLocal() as db:  # cached responses cost nothing, so record spend directly
+        db.add_all([ProviderCall(project_id=pid, provider="perplexity", endpoint="search", fingerprint="a",
+                                 status="settled", cost_usd=0.005),
+                    ProviderCall(project_id=pid, provider="anthropic", endpoint="extract", fingerprint="b",
+                                 status="settled", cost_usd=0.0125)])
+        db.commit()
+    row = next(p for p in ok(client.get("/v1/projects")) if p["id"] == pid)
+    assert row["total_cost_usd"] == 0.0175

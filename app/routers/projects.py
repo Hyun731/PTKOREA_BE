@@ -15,7 +15,8 @@ from app.config import ROOT, settings
 from app.db import get_db
 from app.errors import ApiError, not_found, stale_version
 from app.models import (
-    Claim, Deck, Export, FactRow, ImportBatch, Material, Project, ResearchItem, ResearchPlan, new_id, utcnow,
+    Claim, Deck, Export, FactRow, ImportBatch, Material, Project, ProviderCall, ResearchItem, ResearchPlan, new_id,
+    utcnow,
 )
 from app.services.audit import audit
 from app.services import scope
@@ -144,8 +145,12 @@ def project_out(db: Session, p: Project) -> dict:
 @router.get("/projects")
 def list_projects(db: Session = Depends(get_db)):
     rows = db.scalars(select(Project).order_by(Project.updated_at.desc()))
+    # What each factbook has cost so far (AI, search, posts) — for the owner on the list, not in the flow.
+    spent = dict(db.execute(select(ProviderCall.project_id, func.coalesce(func.sum(ProviderCall.cost_usd), 0.0))
+                            .group_by(ProviderCall.project_id)).all())
     return [{"id": p.id, "name": p.name, "client": p.client, "version": p.version, "updated_at": p.updated_at,
-             "brands": [b["name"] for b in p.config.get("brands", [])]} for p in rows]
+             "brands": [b["name"] for b in p.config.get("brands", [])],
+             "total_cost_usd": round(float(spent.get(p.id, 0.0)), 4)} for p in rows]
 
 
 @router.post("/projects", status_code=201)
