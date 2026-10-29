@@ -680,6 +680,8 @@ def claim_out(c: Claim) -> dict:
 class ClaimIn(BaseModel):
     kind: Literal["fact", "interpretation", "recommendation"]
     text: str = Field(min_length=1, max_length=400)
+    quote: Optional[str] = Field(default=None, max_length=600)  # set when the sentence came from an AI suggestion
+    accept: bool = False  # the person picked it: adopt right away
 
 
 @router.post("/materials/{material_id}/claims", status_code=201)
@@ -689,7 +691,8 @@ def create_claim(material_id: str, body: ClaimIn, db: Session = Depends(get_db),
     if any(i.startswith("없는 Fact") for i in issues):
         raise ApiError(422, "INVALID_FACT", "; ".join(issues))
     c = Claim(id=new_id("CL"), project_id=m.project_id, material_id=m.id, kind=body.kind, parts=parts,
-              evidence_ids=[m.id], fact_ids=fact_ids, author="user")
+              evidence_ids=[m.id], fact_ids=fact_ids, author="ai" if body.quote else "user", quote=body.quote,
+              review_status="accepted" if body.accept and not issues else "pending")
     db.add(c)
     audit(db, m.project_id, "claim", c.id, "create", after={"kind": body.kind, "text": body.text}, actor=who)
     db.commit()
