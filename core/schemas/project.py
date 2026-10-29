@@ -90,6 +90,31 @@ class SectionWindow(BaseModel):
         return self
 
 
+class ScopeSetting(BaseModel):
+    """Override for one research-scope item (팩트북 표준 목차 §3.5). Unset fields use the catalog default."""
+    item_id: str
+    enabled: bool = True
+    period: Literal["inherit", "months", "custom"] = "inherit"
+    months: Optional[int] = Field(default=None, ge=1, le=60)
+    start: Optional[date] = None
+    end: Optional[date] = None
+    channels: Optional[list[str]] = None
+    targets: Optional[list[str]] = None  # competitor/benchmark items: which of them to look at
+    max_items: Optional[int] = Field(default=None, ge=1, le=30)
+    focus: Optional[str] = Field(default=None, max_length=300)  # what to look at first, written by the AI on request
+
+    @model_validator(mode="after")
+    def _period(self) -> "ScopeSetting":
+        if self.period == "months" and self.months is None:
+            raise ValueError(f"{self.item_id}: 최근 몇 개월인지 입력하세요")
+        if self.period == "custom":
+            if self.start is None or self.end is None:
+                raise ValueError(f"{self.item_id}: 시작일과 종료일을 모두 입력하세요")
+            if self.start > self.end:
+                raise ValueError(f"{self.item_id} 기간의 시작일이 종료일보다 늦습니다")
+        return self
+
+
 class BudgetPolicy(BaseModel):
     mode: Literal["offline", "live"] = "offline"
     external_calls_enabled: bool = False
@@ -108,6 +133,7 @@ class Project(BaseModel):
     report_profile: ReportProfile = "diagnostic"
     collection_cutoff: Optional[date] = None
     section_windows: list[SectionWindow] = Field(default_factory=list)
+    scope: list[ScopeSetting] = Field(default_factory=list)
     target_hypothesis: Optional[str] = None
     # Which fields were filled by explicit legacy-import defaults (PRD 8 project.json).
     import_defaults_applied: list[str] = Field(default_factory=list)

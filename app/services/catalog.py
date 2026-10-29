@@ -59,6 +59,16 @@ CHANNELS = {
     "naver_blog": {"label": "네이버 블로그·카페", "support": "manual_only", "provider": None},
     "offline": {"label": "오프라인·팝업", "support": "manual_only", "provider": None},
     "sales": {"label": "판매·매출 데이터", "support": "unsupported", "provider": None},
+    # Sources the AE factbook scope names (팩트북 표준 목차 §4) that have no collector yet: a person
+    # enters or uploads what they find there.
+    "dart": {"label": "DART 공시·감사보고서", "support": "manual_only", "provider": None},
+    "tvcf": {"label": "TVCF 광고 아카이브", "support": "manual_only", "provider": None},
+    "community": {"label": "커뮤니티 (클리앙·더쿠·네이버 카페 등)", "support": "manual_only", "provider": None},
+    "commerce_review": {"label": "커머스 리뷰 (무신사·29CM·네이버쇼핑)", "support": "manual_only", "provider": None},
+    "commerce_rank": {"label": "커머스 랭킹", "support": "manual_only", "provider": None},
+    "app_review": {"label": "앱스토어·구글플레이 리뷰", "support": "manual_only", "provider": None},
+    "report": {"label": "리서치·협회 리포트 (메조미디어·나스미디어·KOSIS)", "support": "manual_only", "provider": None},
+    "upload": {"label": "내부 자료 업로드 (패널 조사·트래커·매체 리포트)", "support": "manual_only", "provider": None},
 }
 SECTION_CHANNELS = {
     "owned": ["instagram_owned", "youtube_owned"],
