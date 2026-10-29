@@ -52,6 +52,7 @@ class ResearchItem(Base):
     entity: Mapped[str] = mapped_column(String(120))
     role: Mapped[str] = mapped_column(String(20))  # self | competitor | benchmark | market
     section_id: Mapped[str] = mapped_column(String(40))
+    scope_id: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # 조사 범위 항목 (app.services.scope)
     question: Mapped[str] = mapped_column(Text)
     period_start: Mapped[date] = mapped_column(Date)
     period_end: Mapped[date] = mapped_column(Date)

@@ -1,7 +1,6 @@
-"""Diagnostic-profile catalog: sections, channel support, ResearchPlan generation (PRD 3, 4, R05).
+"""Diagnostic-profile catalog: sections, channel support, comparison window (PRD 3, 4).
 
-The client MVP's 24 items / 53 slides are not hard-coded: items follow the brands and
-sections the planner actually selected.
+Research items themselves come from the scope catalog (app.services.scope).
 """
 from __future__ import annotations
 
@@ -70,13 +69,6 @@ CHANNELS = {
     "report": {"label": "리서치·협회 리포트 (메조미디어·나스미디어·KOSIS)", "support": "manual_only", "provider": None},
     "upload": {"label": "내부 자료 업로드 (패널 조사·트래커·매체 리포트)", "support": "manual_only", "provider": None},
 }
-SECTION_CHANNELS = {
-    "owned": ["instagram_owned", "youtube_owned"],
-    "search": ["search_naver", "search_csv"],
-    "influencer": ["instagram", "youtube"],
-    "campaign": ["web", "instagram", "youtube"],
-    "market": ["web"],
-}
 
 
 def shift_months(d: date, months: int) -> date:
@@ -90,59 +82,6 @@ def comparison_window(project: Project) -> tuple[date, date]:
     end = project.period.end
     start = shift_months(date(end.year, end.month, 1), -11)
     return start, end
-
-
-def section_window(project: Project, section_id: str) -> tuple[date, date]:
-    w = project.window_for(section_id)
-    if w:
-        return w.start, w.end
-    return project.period.start, project.period.end
-
-
-def generate_items(project: Project) -> list[dict]:
-    enabled = set(project.enabled_slides)
-    active = [s for s in SECTIONS if set(s["templates"]) & enabled and s["id"] in SECTION_CHANNELS]
-    items: list[dict] = []
-    order = 0
-
-    def add(**kw):
-        nonlocal order
-        order += 1
-        items.append({"order": order, **kw})
-
-    for brand in project.brands:
-        for sec in active:
-            sid = sec["id"]
-            start, end = section_window(project, sid)
-            if sid == "owned":
-                add(brand_id=brand.id, entity=brand.name, role="self", section_id=sid,
-                    question=f"{brand.name} 공식 Instagram·YouTube 채널 전체 게시물(팔로워·게시 빈도·반응)",
-                    period_start=start, period_end=end, channels=SECTION_CHANNELS[sid], required=True)
-            elif sid == "search":
-                add(brand_id=brand.id, entity=brand.name, role="self", section_id=sid,
-                    question=f"{brand.name}·경쟁사({', '.join(brand.competitors)}) 브랜드명·조합어 검색 상대 지수",
-                    period_start=start, period_end=end, channels=SECTION_CHANNELS[sid], required=True)
-            elif sid == "influencer":
-                add(brand_id=brand.id, entity=brand.name, role="self", section_id=sid,
-                    question=f"{brand.name} 관련 크리에이터 공개 게시물(조회·반응·게시일)",
-                    period_start=start, period_end=end, channels=SECTION_CHANNELS[sid], required=True)
-            elif sid == "campaign":
-                add(brand_id=brand.id, entity=brand.name, role="self", section_id=sid,
-                    question=f"{brand.name} 캠페인·활동 사례", period_start=start, period_end=end,
-                    channels=SECTION_CHANNELS[sid], required=True)
-                for comp in brand.competitors:
-                    add(brand_id=brand.id, entity=comp, role="competitor", section_id=sid,
-                        question=f"경쟁사 {comp} 캠페인·활동 사례", period_start=start, period_end=end,
-                        channels=SECTION_CHANNELS[sid], required=False)
-                for bench in brand.benchmarks:
-                    add(brand_id=brand.id, entity=bench, role="benchmark", section_id=sid,
-                        question=f"벤치마크 {bench} 참고 사례 (경쟁 분모 제외)", period_start=start, period_end=end,
-                        channels=SECTION_CHANNELS[sid], required=False)
-            elif sid == "market":
-                add(brand_id=brand.id, entity=brand.categories[0] if brand.categories else brand.name, role="market",
-                    section_id=sid, question=f"{'·'.join(brand.categories) or brand.name} 시장·타겟 공식 자료",
-                    period_start=start, period_end=end, channels=SECTION_CHANNELS[sid], required=False)
-    return items
 
 
 def channel_status(provider: Optional[str], configured: bool) -> str:

@@ -18,10 +18,8 @@ from app.models import (
     Claim, Deck, Export, FactRow, ImportBatch, Material, Project, ResearchItem, ResearchPlan, new_id, utcnow,
 )
 from app.services.audit import audit
-from app.services.catalog import (
-    CHANNELS, DEFAULT_SLIDES, SAMPLE_SLIDES, channel_status, comparison_window, generate_items,
-)
-from core.ingestion.csv_import import window_months
+from app.services import scope
+from app.services.catalog import CHANNELS, DEFAULT_SLIDES, SAMPLE_SLIDES, channel_status, comparison_window
 from core.schemas.project import Project as CoreProject
 from core.schemas.project import load_project
 
@@ -48,6 +46,7 @@ class ProjectIn(BaseModel):
     enabled_slides: Optional[list[str]] = None
     collection_cutoff: Optional[date] = None
     section_windows: Optional[list[dict]] = None
+    scope: Optional[list[dict]] = None
     target_hypothesis: Optional[str] = None
     timezone: str = "Asia/Seoul"
     report_profile: Literal["diagnostic"] = "diagnostic"
@@ -56,19 +55,6 @@ class ProjectIn(BaseModel):
 class ProjectPatch(BaseModel):
     base_version: int
     changes: dict[str, Any]
-
-
-def _default_windows(cfg: dict) -> list[dict]:
-    start, end = date.fromisoformat(cfg["period"]["start"]), date.fromisoformat(cfg["period"]["end"])
-    months = window_months(start, end)
-    label = f"{months}M" if months else "기간"
-    slides = set(cfg.get("enabled_slides", []))
-    windows = []
-    for sid, templates in (("search", {"2-8a", "2-8b", "2-8c", "2-8d"}), ("influencer", {"3-1"}),
-                           ("campaign", {"C1", "C2"}), ("market", {"M1"})):
-        if slides & templates:
-            windows.append({"section_id": sid, "label": label, "start": str(start), "end": str(end), "source": "user"})
-    return windows
 
 
 def _validate(cfg: dict) -> CoreProject:
@@ -81,14 +67,28 @@ def _validate(cfg: dict) -> CoreProject:
         raise ApiError(422, "INVALID_PROJECT", str(exc), "표시된 입력을 수정하세요")
 
 
+def _with_scope(cfg: dict) -> CoreProject:
+    """Validate, then let the scope items set the section windows the deck reads."""
+    core = _validate(cfg)
+    try:
+        scope.validate(core)
+    except ValueError as exc:
+        raise ApiError(422, "INVALID_PROJECT", str(exc), "조사 범위를 확인하세요")
+    cfg["section_windows"] = scope.section_windows(core)
+    return _validate(cfg)
+
+
 def _create_plan(db: Session, project: Project, core: CoreProject, previous: Optional[list[ResearchItem]] = None,
                  version: int = 1) -> ResearchPlan:
     plan = ResearchPlan(id=new_id("PLAN"), project_id=project.id, project_version=project.version, version=version)
     db.add(plan)
     db.flush()
-    keep = {(i.brand_id, i.entity, i.section_id): i for i in (previous or [])}
-    for spec in generate_items(core):
-        old = keep.get((spec["brand_id"], spec["entity"], spec["section_id"]))
+    keep = {(i.brand_id, i.entity, i.scope_id): i for i in (previous or []) if i.scope_id}
+    # Items made before the scope existed match on their section (only collector sections had items).
+    legacy = {(i.brand_id, i.entity, i.section_id): i for i in (previous or []) if not i.scope_id}
+    for spec in scope.generate_items(core):
+        old = keep.get((spec["brand_id"], spec["entity"], spec["scope_id"])) or legacy.pop(
+            (spec["brand_id"], spec["entity"], spec["section_id"]), None)
         item = ResearchItem(id=new_id("RI"), plan_id=plan.id, project_id=project.id, **spec)
         if old:  # keep the person's decisions when the plan is regenerated
             item.selected, item.review_status, item.omission_reason = old.selected, old.review_status, old.omission_reason
@@ -136,6 +136,7 @@ def project_out(db: Session, p: Project) -> dict:
         "id": p.id, "name": p.name, "client": p.client, "version": p.version, "config": p.config,
         "omitted_slots": p.omitted_slots or {}, "updated_at": p.updated_at,
         "comparison_window": {"label": "12M", "start": cmp_start, "end": cmp_end},
+        "scope": scope.resolve(core),
         "counts": counts,
     }
 
@@ -153,9 +154,9 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db), who: str = De
     cfg["enabled_slides"] = cfg.get("enabled_slides") or DEFAULT_SLIDES
     cfg["template_version"] = "1.0"
     cfg["budget_policy"] = {"mode": "offline", "external_calls_enabled": False}
-    if not cfg.get("section_windows"):
-        cfg["section_windows"] = _default_windows(cfg)
-    core = _validate(cfg)
+    cfg["section_windows"] = cfg.get("section_windows") or []
+    cfg["scope"] = cfg.get("scope") or []
+    core = _with_scope(cfg)
     p = Project(id=new_id("PRJ"), name=core.name, client=core.client, config=json.loads(core.model_dump_json()),
                 owner=who, omitted_slots={}, lead_overrides={})
     db.add(p)
@@ -198,17 +199,17 @@ def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get
     if body.base_version != p.version:
         raise stale_version(p.version, project_out(db, p))
     allowed = {"name", "client", "period", "brands", "enabled_slides", "collection_cutoff", "section_windows",
-               "target_hypothesis"}
+               "scope", "target_hypothesis"}
     bad = set(body.changes) - allowed
     if bad:
         raise ApiError(422, "INVALID_PROJECT", f"수정할 수 없는 필드: {', '.join(sorted(bad))}")
     cfg = {**p.config, **body.changes}
-    core = _validate(cfg)
+    core = _with_scope(cfg) if {"scope", "period", "enabled_slides"} & set(body.changes) else _validate(cfg)
     before = p.config
     p.config = json.loads(core.model_dump_json())
     p.name, p.client = core.name, core.client
     p.version += 1
-    if {"brands", "enabled_slides", "section_windows", "period"} & set(body.changes):
+    if {"brands", "enabled_slides", "section_windows", "scope", "period"} & set(body.changes):
         plan = db.scalar(select(ResearchPlan).where(ResearchPlan.project_id == p.id).order_by(ResearchPlan.version.desc()))
         old_items = list(db.scalars(select(ResearchItem).where(ResearchItem.plan_id == plan.id))) if plan else []
         _create_plan(db, p, core, old_items, (plan.version + 1) if plan else 1)
@@ -232,6 +233,7 @@ def item_out(db: Session, i: ResearchItem) -> dict:
     accepted = [m for m in mats if m.review_status == "accepted"]
     return {
         "id": i.id, "brand_id": i.brand_id, "entity": i.entity, "role": i.role, "section_id": i.section_id,
+        "scope_id": i.scope_id,
         "question": i.question, "period_start": i.period_start, "period_end": i.period_end, "channels": [
             {"id": c, **CHANNELS[c], "status": channel_status(CHANNELS[c]["provider"],
                                                              bool(CHANNELS[c]["provider"]) and settings.provider_configured(CHANNELS[c]["provider"]))}
@@ -245,11 +247,14 @@ def item_out(db: Session, i: ResearchItem) -> dict:
 
 @router.get("/projects/{project_id}/research-plan")
 def read_plan(project_id: str, db: Session = Depends(get_db)):
-    get_project(db, project_id)
+    p = get_project(db, project_id)
     plan = latest_plan(db, project_id)
     items = db.scalars(select(ResearchItem).where(ResearchItem.plan_id == plan.id).order_by(ResearchItem.order))
+    core = CoreProject.model_validate(p.config)
+    # One entry per scope item, in 3C order, with the direction the planner okays before anything runs.
+    directions = [{**r, "direction": scope.direction(scope.BY_ID[r["item_id"]], r, core)} for r in scope.resolve(core)]
     return {"id": plan.id, "version": plan.version, "project_version": plan.project_version,
-            "confirmed_at": plan.confirmed_at, "items": [item_out(db, i) for i in items]}
+            "confirmed_at": plan.confirmed_at, "scope": directions, "items": [item_out(db, i) for i in items]}
 
 
 class PlanItemPatch(BaseModel):

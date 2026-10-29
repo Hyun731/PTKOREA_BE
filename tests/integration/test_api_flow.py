@@ -282,3 +282,31 @@ def test_backend_token_required_when_set(client, monkeypatch):
     assert client.get("/openapi.json").status_code == 401
     assert client.get("/v1/meta", headers={"X-Backend-Token": "s3cret"}).status_code == 200
     assert client.get("/healthz").status_code == 200
+
+
+def test_scope_change_regenerates_plan_and_keeps_decisions(client):
+    body = ok(client.post("/v1/projects", json={
+        "name": "범위", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "자사", "competitors": ["경쟁1", "경쟁2"], "categories": ["가방"]}]}), 201)
+    pid = body["id"]
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    assert [s["item_id"] for s in plan["scope"]][:2] == ["2-1", "2-2"]  # 3C order: 자사 first
+    assert plan["scope"][0]["direction"][0].endswith("조사합니다.")
+    comp = next(i for i in plan["items"] if i["scope_id"] == "3-7" and i["entity"] == "경쟁2")
+    ok(client.patch(f"/v1/research-items/{comp['id']}/review", json={"review_status": "accepted"}))
+    settings = [{k: r[k] for k in ("item_id", "enabled", "period", "months", "channels", "targets", "max_items")}
+                for r in body["scope"]]
+    for s in settings:
+        if s["item_id"] == "4-2":
+            s.update(enabled=True, period="months", months=3)
+        if s["item_id"] == "2-7":
+            s.update(period="custom", start="2026-06-01", end="2026-09-30")
+    p = ok(client.patch(f"/v1/projects/{pid}", json={"base_version": body["version"], "changes": {"scope": settings}}))
+    assert next(w for w in p["config"]["section_windows"] if w["section_id"] == "influencer")["start"] == "2026-06-01"
+    items = ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"]
+    issue = next(i for i in items if i["scope_id"] == "4-2")
+    assert issue["period_start"] == "2026-07-01" and issue["section_id"] == "company"
+    assert next(i for i in items if i["scope_id"] == "3-7" and i["entity"] == "경쟁2")["review_status"] == "accepted"
+    bad = [{**s, "channels": ["tvcf"]} if s["item_id"] == "4-1" else s for s in settings]
+    r = client.patch(f"/v1/projects/{pid}", json={"base_version": p["version"], "changes": {"scope": bad}})
+    assert r.status_code == 422
