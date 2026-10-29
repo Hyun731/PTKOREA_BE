@@ -20,6 +20,7 @@ from core.quality.qc import FORBIDDEN_WORDS, OVERCLAIMS
 from integrations.base import ProviderError
 
 PAGE_CHARS = 12000
+MAX_TOKENS = 3000  # room for the model's reasoning as well as the short answer; a cut-off reply is an error
 
 # Indirection so tests can stub the model call and the search.
 STRUCTURED: list[Callable] = []
@@ -84,7 +85,7 @@ SUMMARY_SCHEMA = {"type": "object", "additionalProperties": False, "required": [
 def summarize(db: Session, project: Project, m: Material, ledger: RunLedger) -> str:
     user = _card(db, project, m)
     res = ledger.call("anthropic", "material_summary", {"material": m.id, "text": user[-2000:]}, 0.01,
-                      lambda: _structured()(SUMMARY_SYSTEM, user, SUMMARY_SCHEMA, max_tokens=400))
+                      lambda: _structured()(SUMMARY_SYSTEM, user, SUMMARY_SCHEMA, max_tokens=MAX_TOKENS))
     return _norm(res.data.get("summary", ""))[:800]
 
 
@@ -110,7 +111,7 @@ def suggest(db: Session, project: Project, m: Material, ledger: RunLedger) -> li
     page = _norm(source_text(db, m))
     user = _card(db, project, m)
     res = ledger.call("anthropic", "claim_suggestions", {"material": m.id, "text": user[-2000:]}, 0.02,
-                      lambda: _structured()(SUGGEST_SYSTEM, user, SUGGEST_SCHEMA, max_tokens=700))
+                      lambda: _structured()(SUGGEST_SYSTEM, user, SUGGEST_SCHEMA, max_tokens=MAX_TOKENS))
     out = []
     for s in res.data.get("suggestions") or []:
         text, quote = _norm(s.get("text", "")), _norm(s.get("quote", ""))
@@ -134,7 +135,7 @@ TOKENS = re.compile(r"\{\{[^}]+\}\}|\[\[[^\]]+\]\]")
 def polish(text: str, ledger: RunLedger) -> Optional[str]:
     """The polished sentence, or None when the model changed a number, a fact token or used a banned word."""
     res = ledger.call("anthropic", "claim_polish", {"text": text}, 0.005,
-                      lambda: _structured()(POLISH_SYSTEM, f"<sentence>\n{text}\n</sentence>", POLISH_SCHEMA, max_tokens=200))
+                      lambda: _structured()(POLISH_SYSTEM, f"<sentence>\n{text}\n</sentence>", POLISH_SCHEMA, max_tokens=MAX_TOKENS))
     new = _norm(res.data.get("text", ""))
     bare = lambda s: re.findall(r"\d+", TOKENS.sub("", s))
     if not new or sorted(TOKENS.findall(new)) != sorted(TOKENS.findall(text)) or bare(new) != bare(text) or _banned(new):
@@ -146,7 +147,8 @@ CHAT_SYSTEM = f"""당신은 기획자와 함께 자료 하나를 파고드는 �
 기획자의 질문에 <page>(이 자료의 원문)와, 있으면 <search>(추가 검색 결과)만 근거로 짧게(3문장 안팎) 답합니다.
 - 근거에 없는 내용은 추측하지 말고 "원문에서 확인되지 않습니다"라고 말합니다.
 - <search>가 없고 원문으로 답할 수 없으며 웹에서 더 찾을 만하면, search_query에 한국어 검색어 하나를 넣습니다. 그 외에는 null.
-- <search>가 있으면 search_query는 null이고, 답에 쓴 결과의 번호를 used에 넣습니다."""
+- <search>가 있으면 search_query는 null이고, 답의 근거가 된 결과의 번호만 used에 넣습니다. 관련 없다고 본 결과는 넣지 않습니다.
+- 답에는 [1] 같은 번호를 쓰지 않습니다. 출처 링크는 화면이 used로 따로 보여 줍니다."""
 CHAT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["answer", "search_query", "used"],
                "properties": {"answer": {"type": "string"},
                               "search_query": {"anyOf": [{"type": "string"}, {"type": "null"}]},
@@ -158,7 +160,7 @@ def chat(db: Session, project: Project, m: Material, message: str, history: list
     turns = "\n".join(f"{'기획자' if h.get('role') == 'user' else 'AI'}: {_norm(h.get('text', ''))[:400]}" for h in history[-6:])
     base = f"{_card(db, project, m)}\n<history>\n{turns}\n</history>\n<question>\n{message.strip()[:500]}\n</question>"
     first = ledger.call("anthropic", "material_chat", {"material": m.id, "q": message, "h": turns}, 0.02,
-                        lambda: _structured()(CHAT_SYSTEM, base, CHAT_SCHEMA, max_tokens=600), cache_days=None).data
+                        lambda: _structured()(CHAT_SYSTEM, base, CHAT_SCHEMA, max_tokens=MAX_TOKENS), cache_days=None).data
     query = (first.get("search_query") or "").strip()
     if not query or not can_search:
         return {"answer": _norm(first.get("answer", "")), "sources": [], "searched": None}
@@ -167,7 +169,7 @@ def chat(db: Session, project: Project, m: Material, message: str, history: list
     listing = "\n".join(f"[{i}] {r['title']} ({r['url']})\n{_norm(r.get('snippet', ''))[:600]}" for i, r in enumerate(found, 1))
     second = ledger.call("anthropic", "material_chat", {"material": m.id, "q": message, "search": query}, 0.02,
                          lambda: _structured()(CHAT_SYSTEM, f"{base}\n<search>\n{listing}\n</search>", CHAT_SCHEMA,
-                                               max_tokens=600), cache_days=None).data
+                                               max_tokens=MAX_TOKENS), cache_days=None).data
     used = [found[i - 1] for i in second.get("used") or [] if 1 <= i <= len(found)]
     return {"answer": _norm(second.get("answer", "")), "searched": query,
             "sources": [{"title": r["title"], "url": r["url"]} for r in used]}

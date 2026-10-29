@@ -83,7 +83,7 @@ def revise(project: Project, item_id: str, message: str, ledger: RunLedger) -> t
             f"</allowed_channels>\n<allowed_targets>\n{json.dumps(pool, ensure_ascii=False)}\n</allowed_targets>\n"
             f"<request>\n{message.strip()[:500]}\n</request>")
     res = ledger.call("anthropic", "scope_direction", {"item": item_id, "current": current, "message": message}, 0.01,
-                      lambda: _structured()(SYSTEM, user, schema_for(spec, pool), max_tokens=600), cache_days=None)
+                      lambda: _structured()(SYSTEM, user, schema_for(spec, pool), max_tokens=3000), cache_days=None)
     d = res.data
     channels = [c for c in d.get("channels") or [] if c in spec["channels"]]
     targets = d.get("targets")
