@@ -138,7 +138,7 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
                 add(Issue("FORBIDDEN_WORD", "block", f"고객용 금지어 '{word}'", "문구 수정", sid, block_id))
         if INTERNAL_ID.search(text):
             add(Issue("INTERNAL_ID", "block", "내부 ID 노출", "ID를 문구에서 제거", sid, block_id))
-        for phrase in OVERCLAIMS:
+        for phrase in OVERCLAIMS if part.type not in ("name", "link") else []:  # quoted titles are not our claims
             if phrase in text:
                 add(Issue("OVERCLAIM", "block", f"근거보다 강한 단정 '{phrase}'", "허용 표현 범위로 수정", sid, block_id))
 
