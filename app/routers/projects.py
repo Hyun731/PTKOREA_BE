@@ -407,6 +407,20 @@ def review_item(item_id: str, body: ItemReview, db: Session = Depends(get_db), w
     return item_out(db, item)
 
 
+@router.post("/projects/{project_id}/research-plan/accept-all")
+def accept_all_items(project_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """확인 완료 for every item still waiting in the latest plan, in one step (excluded items stay excluded)."""
+    get_project(db, project_id)
+    plan = latest_plan(db, project_id)
+    items = list(db.scalars(select(ResearchItem).where(ResearchItem.plan_id == plan.id, ResearchItem.selected.is_(True),
+                                                       ResearchItem.review_status.in_(("pending", "stale")))))
+    for i in items:
+        i.review_status = "accepted"
+    audit(db, project_id, "research_plan", plan.id, "accept_all", after={"items": [i.id for i in items]}, actor=who)
+    db.commit()
+    return {"accepted": len(items)}
+
+
 @router.get("/projects/{project_id}/history")
 def history(project_id: str, db: Session = Depends(get_db)):
     from app.models import AuditLog

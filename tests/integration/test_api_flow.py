@@ -310,3 +310,12 @@ def test_scope_change_regenerates_plan_and_keeps_decisions(client):
     bad = [{**s, "channels": ["tvcf"]} if s["item_id"] == "4-1" else s for s in settings]
     r = client.patch(f"/v1/projects/{pid}", json={"base_version": p["version"], "changes": {"scope": bad}})
     assert r.status_code == 422
+
+
+def test_accept_all_leaves_excluded_items_alone(client):
+    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
+    items = ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"]
+    ok(client.patch(f"/v1/research-items/{items[0]['id']}/review", json={"review_status": "excluded", "omission_reason": "불필요"}))
+    assert ok(client.post(f"/v1/projects/{pid}/research-plan/accept-all"))["accepted"] == len(items) - 1
+    after = {i["id"]: i["review_status"] for i in ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"]}
+    assert after[items[0]["id"]] == "excluded" and list(after.values()).count("accepted") == len(items) - 1
