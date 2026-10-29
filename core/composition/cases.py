@@ -382,8 +382,9 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
         # P4 사례 카드 해설이 채택돼 있으면(경쟁사·벤치마크 사례만 해당) 그 쪽이 리드로 우선한다 —
         # 원문 그대로의 claim보다 '무엇을 했고 왜 통했나'로 다듬은 문장이 낫다.
         lead_parts = [T(m.ai_detail)] if m.ai_detail else _claim_parts(head, pf)
+        l_size, l_line = (19, 25) if height_at([P(*lead_parts)], 1184, 19, 25) <= 50 else (15, 20)
         blocks.append(text_block("lead", "lead", Region(x=48, y=84, w=1184, h=50), [P(*lead_parts)],
-                                 spec="lead", color="navy", size=19, line=25, editable=True))
+                                 spec="lead", color="navy", size=l_size, line=l_line, editable=True))
         # left: the image with its source caption
         img = Region(x=48, y=146, w=560, h=315)
         blocks.append(ImageBlock(block_id="case_image", region=img, asset_id=m.asset.id, crop=m.asset.crop))
@@ -400,9 +401,13 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
                       pf.fact(fid, UNIT_FORMATTER.get(pf.registry.get(fid).unit, "int"), bold=True, color="white"),
                       bullet="▲") for fid in metric_ids[:3]]
                    or [P(*_claim_parts(c, pf), bullet="▲") for c in facts_claims[:3]])
+        # The box holds what fits; every claim still appears in full under 진행 방식 below.
+        while len(bullets) > 1 and height_at(summary + bullets, 372, 8.5, 13) > 84:
+            bullets = bullets[:-1]
+        s_size, s_line = (8.5, 13) if height_at(summary + bullets, 372, 8.5, 13) <= 84 else (7.5, 11)
         blocks.append(ShapeBlock(block_id="summary_bg", region=Region(x=rx, y=146, w=400, h=96), fill="navy"))
         blocks.append(text_block("summary", "body", Region(x=rx + 16, y=154, w=372, h=84), summary + bullets,
-                                 spec="card_body", color="summary_text", size=8.5, line=13))
+                                 spec="card_body", color="summary_text", size=s_size, line=s_line))
         tile = Region(x=rx + 410, y=146, w=rw - 410, h=96)
         blocks.append(ShapeBlock(block_id="figure_bg", region=tile, fill="tint"))
         inner = Region(x=tile.x + 12, y=tile.y + 10, w=tile.w - 24, h=tile.h - 20)
@@ -412,9 +417,10 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
             blocks.append(text_block("figure_label", "body", Region(x=inner.x, y=inner.y, w=inner.w, h=34),
                                      [P(N(_fit_lines(label, inner.w, 9, 2)))], spec="card_body", size=9, line=13,
                                      weight="semibold"))
-            blocks.append(text_block("figure", "body", Region(x=inner.x, y=inner.y + 38, w=inner.w, h=34),
-                                     [P(pf.fact(fid, UNIT_FORMATTER.get(pf.registry.get(fid).unit, "int"), color="navy"))],
-                                     spec="card_body", size=20, line=26, weight="heavy", valign="b"))
+            fig = [P(pf.fact(fid, UNIT_FORMATTER.get(pf.registry.get(fid).unit, "int"), color="navy"))]
+            f_size = next((sz for sz in (20, 16, 13, 11) if height_at(fig, inner.w, sz, sz * 1.3) <= 34), 11)
+            blocks.append(text_block("figure", "body", Region(x=inner.x, y=inner.y + 38, w=inner.w, h=34), fig,
+                                     spec="card_body", size=f_size, line=round(f_size * 1.3, 1), weight="heavy", valign="b"))
         else:
             blocks.append(text_block("figure_label", "body", Region(x=inner.x, y=inner.y, w=inner.w, h=18), [P(T("발행처"))],
                                      spec="card_body", size=9, line=13, color="muted"))
@@ -477,17 +483,20 @@ MARKET_INSIGHT_TYPE = (12.5, 18.0)  # size pt, line pt
 
 
 def market_page(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block]) -> Optional[SlideSpec]:
+    pages = market_pages(materials, pf, badge)
+    return pages[0] if pages else None
+
+
+def market_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block]) -> list[SlideSpec]:
+    """M1 market evidence, continued on as many pages as the accepted rows need (none is dropped)."""
     rows_src = [m for m in materials if m.review_status == "accepted"
                 and [c for c in m.claims if c.review_status == "accepted"]]
     if not rows_src:
-        return None
+        return []
     columns = [TableColumn(key="item", label="항목", width=0.22), TableColumn(key="body", label="내용", width=0.53, align="l"),
                TableColumn(key="src", label="출처", width=0.25)]
-    # Fewer rows than the table could hold, so a numbered "읽는 법" summary fits below it.
-    shown = rows_src[:6]
-    rows = []
-    cell_h = 0.0
-    for m in shown:
+    built = []
+    for m in rows_src:
         paras = [Paragraph(parts=_claim_parts(c, pf), bullet="▸" if c.kind == "fact" else "→",
                            color=None if c.kind == "fact" else "navy", bold=c.kind != "fact")
                  for c in m.claims if c.review_status == "accepted"]
@@ -497,27 +506,47 @@ def market_page(materials: list[CaseMaterial], pf: PartFactory, badge: list[Bloc
             src += [T(" "), D(m.source.published_at)]
         cells = [TableCell(paragraphs=[P(N(m.title))]), TableCell(paragraphs=paras + metric, align="l"),
                  TableCell(paragraphs=[P(*src)])]
-        for col, cell in zip(columns, cells):
-            cell_h = max(cell_h, _cell_height(cell.paragraphs, 1184 * col.width - 12, 10))
-        rows.append(TableRow(cells=cells, ref=m.id))
-    row_h = max(52, math.ceil(cell_h + 10))
-    table_h = 32 + row_h * len(rows)
-    table = TableBlock(block_id="table", region=Region(x=48, y=131, w=1184, h=table_h), columns=columns, rows=rows,
-                       row_height=row_h, header_height=32, size=10, header_size=10)
-    lead = lead_block([P(T("시장·타겟 근거 요약 — 공식 자료·보고서의 확인된 사실 중심"))])
-    blocks = [title_block("Market", "시장·타겟 근거"), lead, table]
-    insights = _market_insights(shown, pf)
-    if insights:
-        size, line = MARKET_INSIGHT_TYPE
-        y = 196 + table_h + 16
-        h = min(height_at(insights, 1160, size, line), 630 - y)
-        if h > 0:
-            blocks.append(text_block("insights", "body", Region(x=60, y=y, w=1160, h=h), insights, spec="card_body",
-                                     size=size, line=line, editable=True))
-    blocks += [footnote_block([P(*_market_footnote(rows_src))]), *badge]
-    return SlideSpec(slide_id="M1", template_id="market_evidence.v1", page_role="content", section_id="campaign",
-                     title="시장·타겟 근거", blocks=blocks, source_ids=[m.source.id for m in rows_src],
-                     needs_review=True, is_data=True)
+        h = max(_cell_height(cell.paragraphs, 1184 * col.width - 12, 10) for col, cell in zip(columns, cells))
+        built.append((m, TableRow(cells=cells, ref=m.id), max(52, math.ceil(h + 10))))
+    # Greedy pages: the table may use the body down to the footnote; the first page keeps room for insights.
+    limit_first, limit_next = 380, 470
+    chunks, cur, used = [], [], 0
+    for item in built:  # rows share one height (the tallest), so a page holds len × max
+        limit = limit_first if not chunks else limit_next
+        if cur and max(used, item[2]) * (len(cur) + 1) > limit:
+            chunks.append(cur)
+            cur, used = [], 0
+        cur.append(item)
+        used = max(used, item[2])
+    if cur:
+        chunks.append(cur)
+    slides = []
+    for i, chunk in enumerate(chunks):
+        row_h = max(r[2] for r in chunk)
+        table_h = 32 + row_h * len(chunk)
+        table = TableBlock(block_id="table", region=Region(x=48, y=131, w=1184, h=table_h), columns=columns,
+                           rows=[r[1] for r in chunk], row_height=row_h, header_height=32, size=10, header_size=10)
+        sub = "시장·타겟 근거"
+        sub_parts = [T(sub)]
+        if len(chunks) > 1:
+            sub_parts += [T(" "), Part(type="meta", key="page", text=f"({i + 1}/{len(chunks)})")]
+        lead = lead_block([P(T("시장·타겟 근거 요약 — 공식 자료·보고서의 확인된 사실 중심"))])
+        blocks = [title_block("Market", sub_parts=sub_parts), lead, table]
+        shown = [r[0] for r in chunk]
+        insights = _market_insights(shown, pf) if i == 0 else []
+        if insights:
+            size, line = MARKET_INSIGHT_TYPE
+            y = 196 + table_h + 16
+            h = height_at(insights, 1160, size, line)
+            if y + h <= 640:  # only when the whole summary fits; a clipped one reads as an error
+                blocks.append(text_block("insights", "body", Region(x=60, y=y, w=1160, h=h), insights, spec="card_body",
+                                         size=size, line=line, editable=True))
+        blocks += [footnote_block([P(*_market_footnote(shown))]), *badge]
+        slides.append(SlideSpec(slide_id="M1" + (f"-p{i + 1}" if i else ""), template_id="market_evidence.v1",
+                                page_role="content", section_id="campaign", title=sub, blocks=blocks,
+                                source_ids=[m.source.id for m in shown], needs_review=True, is_data=True,
+                                parent_slide_id="M1" if i else None))
+    return slides
 
 
 def _market_insights(rows: list[CaseMaterial], pf: PartFactory) -> list[Paragraph]:
