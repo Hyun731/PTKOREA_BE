@@ -58,7 +58,7 @@ ITEMS: list[dict] = [
      "output": "타깃 한 줄 + 니즈 3개 + 근거 원문 2개"},
     {"id": "2-6", "part": "company", "group": "채널과 활동", "title": "Owned 채널 운영 현황",
      "question": "{brand} 공식 Instagram·YouTube 채널 전체 게시물(팔로워·게시 빈도·반응)", "subject": "self",
-     "collector": "owned", "templates": ["2-1", "2-2"],
+     "collector": "owned", "templates": ["2-1", "2-2", "2-4", "2-5"],
      "channels": ["instagram_owned", "youtube_owned", "naver_blog"], "default_channels": ["instagram_owned", "youtube_owned"],
      "period": "inherit", "period_hint": "권장 최근 6개월", "needs": "브랜드 공식 계정 URL",
      "output": "계정마다 KPI 5개 + 조회일 + 인기 콘텐츠 3건"},
@@ -147,6 +147,9 @@ ITEMS: list[dict] = [
 ]
 BY_ID = {s["id"]: s for s in ITEMS}
 
+# Slides that belong to no single item: frames, the brand map (reads only the config), recap, sources.
+ALWAYS_SLIDES = ["cover", "index", "divider", "1-1", "5-recap", "A-source", "end"]
+
 # Sections the deck reads a window from (metrics, rules, footnotes) and the scope item that sets it.
 SECTION_ITEM = {"owned": "2-6", "influencer": "2-7", "campaign": "2-8", "search": "3-2", "market": "3-1"}
 
@@ -184,8 +187,7 @@ def _months_window(end: date, months: int) -> tuple[date, date]:
 
 
 def _default_setting(spec: dict, project: Project) -> ScopeSetting:
-    templates = set(spec.get("templates", []))
-    enabled = bool(templates & set(project.enabled_slides))
+    enabled = True  # everything is in by default; the planner only takes out what this project doesn't need
     section = next((sec for sec, iid in SECTION_ITEM.items() if iid == spec["id"]), None)
     w = project.window_for(section) if section else None
     if w and (w.start, w.end) != (project.period.start, project.period.end):  # a window set before scope existed
@@ -284,6 +286,15 @@ def validate(project: Project) -> None:
         bad = set(s.channels or []) - set(spec["channels"])
         if bad:
             raise ValueError(f"{s.item_id} {spec['title']}: 고를 수 없는 채널 {', '.join(sorted(bad))}")
+
+
+def slides(project: Project) -> list[str]:
+    """The deck's slides follow the items: an item that is in brings its slides (empty ones drop out at build)."""
+    out = list(ALWAYS_SLIDES)
+    for r in resolve(project):
+        if r["enabled"]:
+            out += [t for t in BY_ID[r["item_id"]].get("templates", []) if t not in out]
+    return out
 
 
 def section_windows(project: Project) -> list[dict]:

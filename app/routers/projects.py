@@ -69,13 +69,14 @@ def _validate(cfg: dict) -> CoreProject:
 
 
 def _with_scope(cfg: dict) -> CoreProject:
-    """Validate, then let the scope items set the section windows the deck reads."""
+    """Validate, then let the scope items set the deck's slides and the section windows it reads."""
     core = _validate(cfg)
     try:
         scope.validate(core)
     except ValueError as exc:
         raise ApiError(422, "INVALID_PROJECT", str(exc), "조사 범위를 확인하세요")
     cfg["section_windows"] = scope.section_windows(core)
+    cfg["enabled_slides"] = scope.slides(core)
     return _validate(cfg)
 
 

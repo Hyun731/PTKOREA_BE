@@ -28,11 +28,14 @@ def test_catalog_runs_company_competitor_customer():
     assert len(scope.ITEMS) >= 25
 
 
-def test_defaults_follow_enabled_slides_and_guide_periods():
-    r = by_id(project())
-    assert r["2-7"]["enabled"] and r["2-8"]["enabled"] and r["3-7"]["enabled"] and r["3-1"]["enabled"]
-    assert not r["2-6"]["enabled"] and not r["3-2"]["enabled"]  # their slides are off
-    assert not r["4-1"]["enabled"]  # items without a collector start off
+def test_everything_is_in_by_default_and_slides_follow_items():
+    p = project()
+    r = by_id(p)
+    assert all(x["enabled"] for x in r.values())
+    assert {"2-1", "2-4", "2-8a", "3-1", "C1", "M1", "cover", "A-source"} <= set(scope.slides(p))
+    off = project(scope=[{"item_id": "2-6", "enabled": False}, {"item_id": "2-8", "enabled": False}])
+    left = set(scope.slides(off))
+    assert "2-1" not in left and "1-6" not in left and "C1" in left  # 3-7 still brings the case cards
     assert (r["4-1"]["start"], r["4-1"]["end"]) == (date(2026, 4, 1), date(2026, 9, 30))  # 최근 6개월
     assert r["2-8"]["automation"] == "auto" and r["2-1"]["automation"] == "manual"
 

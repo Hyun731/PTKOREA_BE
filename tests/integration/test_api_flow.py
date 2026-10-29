@@ -162,9 +162,9 @@ def test_project_validation(client):
     body = ok(r, 201)
     assert body["comparison_window"]["start"] == "2025-10-01"
     assert {w["section_id"] for w in body["config"]["section_windows"]} >= {"influencer", "campaign", "market"}
-    # No search-index provider: search slides are opt-in, never planned by default.
-    assert not any(t.startswith("2-8") for t in body["config"]["enabled_slides"])
-    assert "search" not in {i["section_id"] for i in ok(client.get(f"/v1/projects/{body['id']}/research-plan"))["items"]}
+    # Everything is in by default; a slide without data later drops out instead of blocking.
+    assert {"2-8a", "M1", "C1"} <= set(body["config"]["enabled_slides"])
+    assert "search" in {i["section_id"] for i in ok(client.get(f"/v1/projects/{body['id']}/research-plan"))["items"]}
     meta = ok(client.get("/v1/meta"))
     assert [p["id"] for p in meta["profiles"]] == ["diagnostic"]  # proposal not exposed in P0
 
