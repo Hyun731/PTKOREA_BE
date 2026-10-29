@@ -44,6 +44,7 @@ RESULTS_PER_QUERY = 5
 MAX_PAGES_PER_RUN = 150
 MAX_POSTS_PER_RUN = 40
 MAX_NEW_MATERIALS_PER_ITEM = 10
+SOURCE_TEXT_CHARS = 20000  # kept on the Source so summary, sentence ideas and chat read the same page later
 PAGE_WORKERS = 6  # concurrent page fetches / AI extractions within one item
 ITEM_WORKERS = 3  # items researched at the same time within one run
 PAGE_CHARS_FOR_AI = 12_000
@@ -111,10 +112,11 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
 EXTRACT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["relevant", "relevance_note", "activity_date", "activity_date_end", "event_name", "same_as",
+    "required": ["relevant", "relevance_note", "summary", "activity_date", "activity_date_end", "event_name", "same_as",
                 "target_segment", "facts", "claims"],
     "properties": {
         "relevant": {"type": "boolean"},
+        "summary": {"type": "string"},
         "relevance_note": {"type": "string"},
         "activity_date": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}]},
         "activity_date_end": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}]},
@@ -137,6 +139,7 @@ EXTRACT_SYSTEM = """당신은 브랜드 마케팅 진단 보고서를 돕는 리
 
 할 일: 조사 대상과 질문에 관련된 내용만 원문에서 뽑아 후보로 제안합니다. 사람이 검토해 채택합니다.
 - relevant: 원문이 대상 브랜드의 해당 활동을 실제로 다루면 true.
+- summary: 기획자가 이 원문을 읽지 않고도 이해하도록 2~3문장으로 씁니다 — 무엇을 했고, 왜 했고(목적), 어떻게 통했는지(성과·반응). 원문에 있는 내용만 쓰고, 성과가 원문에 없으면 "성과는 원문에 나오지 않음"이라고 씁니다.
 - facts: 원문에 숫자로 명시된 성과·규모만. value는 원문 숫자를 쉼표 없이 그대로(단위 변환·추정 금지). quote는 그 숫자가 들어 있는 원문 문장을 글자 그대로 복사.
 - claims: 최대 3개. kind=fact는 원문이 직접 말하는 활동 사실, kind=interpretation은 그 사실에서 바로 이어지는 제한된 시사점(원문 범위를 넘는 인과·전략 제언 금지).
   text는 명사형으로 끝나는 짧은 한 문장(40자 안팎). text에는 숫자를 쓰지 말고, 수치가 필요하면 facts 순서대로 {{1}}, {{2}}처럼 참조합니다.
@@ -406,6 +409,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             continue
         out["pages"] += 1
         src.access_status, src.content_hash = "ok", page.content_hash
+        src.text = page.text[:SOURCE_TEXT_CHARS] if page.text else None
         src.publisher = page.publisher or src.publisher
         src.published_at = src.published_at or _safe_date(page.published)
         if page.title:
@@ -477,6 +481,7 @@ def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Mate
     m.activity_date = m.activity_date or _safe_date(data.get("activity_date"))
     m.activity_date_end = m.activity_date_end or _safe_date(data.get("activity_date_end"))
     m.event_name = (data.get("event_name") or "")[:200] or None
+    m.summary = (data.get("summary") or "").strip()[:800] or m.summary
     if data.get("target_segment") in TARGET_SEGMENTS:
         m.target_segment = data["target_segment"]
     same_id = data.get("same_as")

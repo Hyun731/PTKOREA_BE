@@ -7,7 +7,7 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import ProviderCache, ProviderCall
+from app.models import ProviderCache, ProviderCall, Source
 from app.services import case_commentary, direction, insights, research
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
@@ -66,6 +66,7 @@ class Fakes:
         if "facts" in schema["properties"]:  # extraction
             return CallResult(data={
                 "relevant": True, "relevance_note": "", "activity_date": "2026-03-01",
+                "summary": "성수동 팝업에서 신제품 체험 공간을 열어 방문객을 모은 활동입니다.",
                 "facts": [{"label": "방문객", "metric": "count", "value": "12000", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
                           {"label": "가짜", "metric": "count", "value": "999", "quote": "원문에 없는 문장."}],
                 "claims": [{"kind": "fact", "text": "성수동 팝업에 신제품 체험 공간 배치", "quote": "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다."},
@@ -197,6 +198,9 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
     article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
     assert article["input_path"] == "auto" and article["review_status"] == "candidate"
+    assert article["summary"].startswith("성수동 팝업")  # 해석 요약 comes with the extraction, no extra call
+    with SessionLocal() as db:
+        assert "방문객" in (db.get(Source, article["source"]["id"]).text or "")  # page text kept for later AI help
     assert article["source"]["publisher"] == "예시뉴스" and article["source"]["published_at"] == "2026-03-05"
     assert article["assets"][0]["review_status"] == "candidate" and article["assets"][0]["usage_basis"] == "source_reference"
     ai = [c for c in article["claims"] if c["author"] == "ai"]

@@ -127,6 +127,7 @@ class Source(Base):
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="web")
     access_status: Mapped[str] = mapped_column(String(20), default="unknown")
+    text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # page text as fetched: grounds summary, sentences, chat
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -156,6 +157,7 @@ class Material(Base):
     duplicate_of: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     duplicate_reason: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     event_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # AI's short name for the activity
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 해석 요약: what was done, why, how it landed
     target_segment: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # one of core.schemas.materials.TARGET_SEGMENTS
     # P4 사례 카드 해설 (06_AI_프롬프트_템플릿.md): set only once a CaseCommentary proposal is accepted.
     ai_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

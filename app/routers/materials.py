@@ -258,6 +258,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
         "facts": [fact_out(f) for f in facts if f.superseded_by is None],
         "readiness": _readiness(m, assets, claims),
         "duplicate_of": m.duplicate_of, "duplicate_reason": m.duplicate_reason, "event_name": m.event_name,
+        "summary": m.summary,
         "duplicates": [{"id": d.id, "title": d.title, "reason": d.duplicate_reason, "url": s.original_url,
                         "publisher": s.publisher, "published_at": s.published_at, "review_status": d.review_status}
                        for d, s in db.execute(select(Material, Source).join(Source, Source.id == Material.source_id)
@@ -542,6 +543,7 @@ def fetch_source(material_id: str, db: Session = Depends(get_db), who: str = Dep
         m.selected_asset_id = saved[0].id
         research._prefer_specific_image(db, m, src, saved)
     src.access_status, src.content_hash = "ok", page.content_hash
+    src.text = page.text[:research.SOURCE_TEXT_CHARS] if page.text else src.text
     src.publisher = src.publisher or page.publisher
     src.published_at = src.published_at or research._safe_date(page.published)
     if not m.excerpt and page.text:
