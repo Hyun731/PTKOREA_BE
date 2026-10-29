@@ -24,7 +24,7 @@ from app.config import settings
 from app.jobs import register
 from app.models import PostRow, Asset, Claim, FactRow, Job, Material, OwnedPost, Project, ResearchItem, Source, new_id, utcnow
 from app.services.assets import inspect_upload, normalized_derivative
-from app.services import period
+from app.services import period, scope
 from app.services.audit import audit
 from app.services.dedupe import find_duplicate, merge, primaries, usable
 from app.services.inputs import core_project
@@ -91,12 +91,16 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     brand = core.brand(item.brand_id)
     cat = brand.categories[0] if brand.categories else ""
     year = item.period_start.year if item.period_start.year == item.period_end.year else f"{item.period_start.year} {item.period_end.year}"
+    # Words the planner asked for (via the direction chat) go first, so the per-item query cap keeps them.
+    asked = (scope.setting_for(core, item.scope_id) or {}).get("keywords") or []
     if item.section_id == "market":
         age = brand.target.label.split("·")[0].strip() if brand.target else ""
-        return [f"{cat} 시장 규모 {year}", f"{cat} 소비자 트렌드 조사 {year}", f"{age} {cat} 이용 조사 {year}".strip()]
+        return [f"{cat} {k} {year}" for k in asked] + [
+            f"{cat} 시장 규모 {year}", f"{cat} 소비자 트렌드 조사 {year}", f"{age} {cat} 이용 조사 {year}".strip()]
     # Different kinds of activity surface different articles (PRD 13: 12 queries per run).
-    queries = [f"{item.entity} 캠페인 {year}", f"{item.entity} 광고 모델 {year}", f"{item.entity} 콜라보 {year}",
-               f"{item.entity} 이벤트 프로모션 {year}"]
+    queries = [f"{item.entity} {k} {year}" for k in asked] + [
+        f"{item.entity} 캠페인 {year}", f"{item.entity} 광고 모델 {year}", f"{item.entity} 콜라보 {year}",
+        f"{item.entity} 이벤트 프로모션 {year}"]
     if item.role == "self":  # the client's own activities carry the report: look wider
         queries += [f"{item.entity} 신메뉴 출시 {year}", f"{item.entity} 팝업 {year}"]
     return queries
@@ -288,6 +292,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
     p = _providers()
     out = {"created": 0, "pages": 0, "claims": 0, "facts": 0, "images": 0, "skipped_existing": 0, "duplicates": 0,
            "errors": []}
+    cap = (scope.setting_for(core_project(project), item.scope_id) or {}).get("max_items") or MAX_NEW_MATERIALS_PER_ITEM
     with state.lock:
         queries = build_queries(item, project)[:MAX_QUERIES_PER_ITEM][: max(0, MAX_QUERIES_PER_RUN - state.queries)]
         state.queries += len(queries)
@@ -323,7 +328,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
                                                          .where(Material.project_id == project.id))}
     cards: list[tuple[Source, Material]] = []
     for r in results:
-        if len(cards) >= MAX_NEW_MATERIALS_PER_ITEM * 2:
+        if len(cards) >= cap * 2:
             break
         url = r["url"]
         if url in existing_urls:
@@ -391,7 +396,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
     pending = {m.id for _, m in to_fetch}
     for (src, m), (page, err, images) in zip(to_fetch, fetched):
         pending.discard(m.id)
-        if kept >= MAX_NEW_MATERIALS_PER_ITEM:
+        if kept >= cap:
             break
         out["created"] += 1
         if err:
@@ -454,9 +459,11 @@ def _extract_prompt(db: Session, project: Project, item: ResearchItem, m: Materi
     brand = core.brand(item.brand_id)
     existing = [o for o in primaries(db, project.id, m.section_id, m.entity)
                 if o.id != m.id and usable(o) and o.id not in pending][:15]
+    focus = (scope.setting_for(core, item.scope_id) or {}).get("focus")
     listing = "\n".join(f"- {o.id} | {o.title[:80]} | {o.event_name or ''} | {o.activity_date or ''}" for o in existing)
     user = (f"조사 대상: {item.entity} (자사 브랜드 {brand.name}의 {'자사' if item.role == 'self' else '경쟁·참고'} 대상)\n"
             f"조사 질문: {item.question}\n조사 기간: {item.period_start} ~ {item.period_end}\n"
+            + (f"조사 방향: {focus}\n" if focus else "") +
             f"<existing>\n{listing or '(없음)'}\n</existing>\n"
             f"원문 URL: {src.original_url}\n<page>\n{text[:PAGE_CHARS_FOR_AI]}\n</page>")
     return user, [o.id for o in existing]

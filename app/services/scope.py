@@ -213,9 +213,13 @@ def resolve(project: Project) -> list[dict]:
             "item_id": spec["id"], "enabled": s.enabled, "period": s.period, "months": s.months,
             "start": start, "end": end, "channels": channels, "targets": s.targets,
             "max_items": (s.max_items or limit["default"]) if limit else None,
-            "automation": automation(spec, channels), "focus": s.focus,
+            "automation": automation(spec, channels), "focus": s.focus, "keywords": s.keywords,
         })
     return out
+
+
+def setting_for(project: Project, item_id: Optional[str]) -> Optional[dict]:
+    return next((r for r in resolve(project) if r["item_id"] == item_id), None) if item_id else None
 
 
 def _josa(word: str, pair: tuple[str, str]) -> str:

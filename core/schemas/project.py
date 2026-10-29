@@ -102,6 +102,7 @@ class ScopeSetting(BaseModel):
     targets: Optional[list[str]] = None  # competitor/benchmark items: which of them to look at
     max_items: Optional[int] = Field(default=None, ge=1, le=30)
     focus: Optional[str] = Field(default=None, max_length=300)  # what to look at first, written by the AI on request
+    keywords: list[str] = Field(default_factory=list, max_length=5)  # extra search words that go with `focus`
 
     @model_validator(mode="after")
     def _period(self) -> "ScopeSetting":

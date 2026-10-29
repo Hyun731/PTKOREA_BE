@@ -63,3 +63,15 @@ def test_unknown_item_and_channel_are_rejected():
         scope.validate(project(scope=[{"item_id": "4-1", "channels": ["instagram_owned"]}]))
     with pytest.raises(ValueError):
         project(scope=[{"item_id": "4-1", "period": "custom", "start": "2026-05-01"}])
+
+
+def test_requested_keywords_lead_the_search_queries():
+    from datetime import date as d
+    from types import SimpleNamespace as NS
+
+    from app.services.research import build_queries
+    p = project(scope=[{"item_id": "3-7", "keywords": ["팝업스토어"], "focus": "팝업을 먼저 봅니다."}])
+    item = NS(brand_id="B1", entity="투미", role="competitor", section_id="campaign", scope_id="3-7",
+              period_start=d(2026, 1, 1), period_end=d(2026, 9, 30))
+    queries = build_queries(item, NS(config=p.model_dump(mode="json")))
+    assert queries[0] == "투미 팝업스토어 2026" and "투미 캠페인 2026" in queries
