@@ -32,6 +32,21 @@ def _panel(i: int, x: float, y: float, w: float, h_head: float, h_body: float, h
                        spec="pillar_body", valign="t")]
 
 
+TOP, BOTTOM = 140, 630  # free band between the lead and the footnote
+
+
+def _body_h(lines: list[str], w: float, per_line: float = 22) -> float:
+    """Panel body height from its text: about 40 Korean characters per 372px line, plus padding."""
+    chars = max(1, int(w / 9.5))
+    rows = sum(max(1, -(-len(t) // chars)) for t in lines) + max(0, len(lines) - 1) * 0.4
+    return max(96, rows * per_line + 28)
+
+
+def _top(total_h: float) -> float:
+    """Panels start right under the lead, like the body pages; only an over-tall set moves up into the band."""
+    return max(TOP - 20, min(TOP, BOTTOM - total_h))
+
+
 def _note() -> Block:
     return footnote_block([P(T("본문 장표의 헤드라인과 근거를 종합한 요약 — 새 수치를 더하지 않음"))])
 
@@ -47,8 +62,10 @@ def es_page(es: dict) -> Optional[SlideSpec]:
     blocks: list[Block] = [title_block("Executive Summary", "핵심 요약")]
     if es.get("task"):
         blocks.append(lead_block([P(T(es["task"]))]))
+    h = max(_body_h(lines, w - 32) for _, _, lines in cols)
+    y = _top(48 + 8 + h)
     for i, (_, label, lines) in enumerate(cols):
-        blocks += _panel(i, x0 + i * (w + gap), 200, w, 48, 330, label, lines)
+        blocks += _panel(i, x0 + i * (w + gap), y, w, 48, h, label, lines)
     blocks.append(_note())
     return SlideSpec(slide_id="ES", template_id="exec_summary.v1", page_role="recap", section_id="recap",
                      title="Executive Summary", blocks=blocks, is_data=False)
@@ -60,10 +77,12 @@ def swot_page(swot: dict) -> Optional[SlideSpec]:
     blocks: list[Block] = [title_block("SWOT", "3C 종합 진단")]
     if swot.get("lead"):
         blocks.append(lead_block([P(T(swot["lead"]))]))
-    w, h_body, gap = 580, 150, 20
+    w, gap = 580, 20
+    h_body = max(_body_h(swot.get(k) or [], w - 32) for k, _ in SWOT_LABELS)
+    y = _top(2 * (32 + 8 + h_body) + gap)
     for i, (k, label) in enumerate(SWOT_LABELS):
         r, c = divmod(i, 2)
-        blocks += _panel(i, 48 + c * (w + gap), 190 + r * (h_body + 40 + gap), w, 32, h_body, label, swot.get(k) or [])
+        blocks += _panel(i, 48 + c * (w + gap), y + r * (h_body + 40 + gap), w, 32, h_body, label, swot.get(k) or [])
     blocks.append(_note())
     return SlideSpec(slide_id="SWOT", template_id="swot.v1", page_role="recap", section_id="recap", title="SWOT",
                      blocks=blocks, is_data=False)
@@ -80,8 +99,10 @@ def next_page(nxt: dict) -> Optional[SlideSpec]:
     blocks: list[Block] = [title_block("Next", "플래닝 제언")]
     if nxt.get("lead"):
         blocks.append(lead_block([P(T(nxt["lead"]))]))
+    h = max(_body_h([it.get("body", "")], w - 32) for it in items[:3])
+    y = _top(60 + 8 + h)
     for i, it in enumerate(items[:3]):
-        blocks += _panel(i, x0 + i * (w + gap), 200, w, 60, 300, f"{i + 1}. {it.get('title', '')}", [it.get("body", "")])
+        blocks += _panel(i, x0 + i * (w + gap), y, w, 60, h, f"{i + 1}. {it.get('title', '')}", [it.get("body", "")])
     blocks.append(_note())
     return SlideSpec(slide_id="NEXT", template_id="next_steps.v1", page_role="recap", section_id="recap",
                      title="다음 단계 제언", blocks=blocks, is_data=False)
