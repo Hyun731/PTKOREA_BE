@@ -1,6 +1,7 @@
 """Stage 2 with fake providers (no network): research runs, ledger/cache, budget, failures,
 influencer collection and AI lead proposals (DEVELOPMENT_PLAN 단계 2 완료 조건; PRD A10, A14)."""
 import io
+import re
 
 import pytest
 from PIL import Image
@@ -8,7 +9,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall, Source
-from app.services import case_commentary, direction, insights, research
+from app.services import case_commentary, direction, insights, material_ai, research
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -51,7 +52,26 @@ class Fakes:
 
     def structured(self, system, user, schema, **kw):
         self._hit("structured")
-        if "keywords" in schema["properties"]:  # 조사 방향 대화
+        props = schema["properties"]
+        if "suggestions" in props:  # 문장 추천: one verbatim quote, one made-up quote, one with a bare number
+            return CallResult(data={"suggestions": [
+                {"kind": "fact", "text": "성수동 팝업에 신제품 체험 공간 배치", "quote": "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다."},
+                {"kind": "interpretation", "text": "원문에 없는 관찰", "quote": "원문에 없는 문장."},
+                {"kind": "fact", "text": "방문객 12000명 집계", "quote": "행사 기간 방문객은 12000명으로 집계됐다."}]},
+                usage={"model": "fake"}, cost_usd=0.002)
+        if set(props) == {"text"}:  # 다듬기: keeps the fact token unless asked to break it
+            keep = re.search(r"\{\{[^}]+\}\}", user)
+            return CallResult(data={"text": ("조회 " + keep.group(0) + " 규모의 체험형 확산 확인") if keep and "깨기" not in user
+                                    else "체험형 팝업으로 화제성 확보 99"}, usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"summary"}:
+            return CallResult(data={"summary": "직접 만든 카드의 요약입니다."}, usage={"model": "fake"}, cost_usd=0.001)
+        if "search_query" in props:  # 자료 대화: asks for a search first, answers from it after
+            if "<search>" not in user:
+                return CallResult(data={"answer": "원문에서 확인되지 않습니다", "search_query": "경쟁X 팝업 방문객", "used": []},
+                                  usage={"model": "fake"}, cost_usd=0.002)
+            return CallResult(data={"answer": "추가 기사에 따르면 주말 방문이 많았습니다.", "search_query": None, "used": [1, 9]},
+                              usage={"model": "fake"}, cost_usd=0.002)
+        if "keywords" in props:  # 조사 방향 대화
             return CallResult(data={
                 "reply": "기간을 최근 12개월로 바꾸고 팝업 사례를 먼저 보게 했습니다.", "enabled": True, "period": "months",
                 "months": 12, "start": None, "end": None, "channels": ["web", "instagram", "없는채널"],
@@ -153,6 +173,10 @@ def fakes(monkeypatch):
     case_commentary.STRUCTURED.append(f.structured)
     direction.STRUCTURED.clear()
     direction.STRUCTURED.append(f.structured)
+    material_ai.STRUCTURED.clear()
+    material_ai.STRUCTURED.append(f.structured)
+    material_ai.SEARCH.clear()
+    material_ai.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"):
         monkeypatch.setenv(k, "test-key")
     monkeypatch.setenv("ANTHROPIC_MODEL", "fake-model")
@@ -162,6 +186,8 @@ def fakes(monkeypatch):
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
     direction.STRUCTURED.clear()
+    material_ai.STRUCTURED.clear()
+    material_ai.SEARCH.clear()
 
 
 def ok(r, status=200):
@@ -673,3 +699,36 @@ def test_direction_chat_rewrites_the_item_and_the_plan(client, fakes):
     # A stale version is refused instead of overwriting someone else's change.
     r = client.post(f"/v1/projects/{pid}/scope/3-7/direction", json={"base_version": version, "message": "x"})
     assert r.status_code == 409
+
+
+def test_card_ai_help_summary_suggestions_polish_chat(client, fakes):
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+    with SessionLocal() as db:  # an earlier test caches search results that point elsewhere
+        db.query(ProviderCache).delete()
+        db.commit()
+    ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
+    article = next(m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["source"]["url"] == "https://news.example.com/a1")
+
+    # A hand-made card gets its 해석 요약 on request (page fetched once and kept).
+    manual = ok(client.post(f"/v1/projects/{pid}/materials", json={"title": "직접", "url": "https://example.com/m",
+                                                                    "section_id": "campaign"}), 201)
+    assert ok(client.post(f"/v1/materials/{manual['id']}/summary"))["summary"] == "직접 만든 카드의 요약입니다."
+
+    # Sentence ideas: only the one quoting the page verbatim, with no bare number, survives.
+    sug = ok(client.post(f"/v1/materials/{article['id']}/claim-suggestions"))["suggestions"]
+    assert [s["text"] for s in sug] == ["성수동 팝업에 신제품 체험 공간 배치"]
+    c = ok(client.post(f"/v1/materials/{article['id']}/claims", json={**sug[0], "accept": True}), 201)
+    assert c["review_status"] == "accepted" and c["author"] == "ai" and c["quote"]
+
+    # 다듬기 keeps the fact token; a rewrite that changes numbers is refused.
+    fid = article["facts"][0]["id"]
+    text = "조회 {{" + fid + "}} 규모의 체험형 확산"
+    assert ok(client.post(f"/v1/materials/{article['id']}/polish", json={"text": text}))["text"].count(fid) == 1
+    r = client.post(f"/v1/materials/{article['id']}/polish", json={"text": text + " 깨기"})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "POLISH_CHANGED_FACTS"
+
+    # Chat: the page does not say, so it searches once and cites only results that exist.
+    out = ok(client.post(f"/v1/materials/{article['id']}/chat", json={"message": "방문객이 언제 몰렸어?"}))
+    assert out["searched"] == "경쟁X 팝업 방문객" and out["answer"].startswith("추가 기사")
+    assert out["sources"] == [{"title": "경쟁X 성수 팝업", "url": "https://news.example.com/a1"}]

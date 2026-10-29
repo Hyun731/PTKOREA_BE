@@ -844,3 +844,87 @@ def review_fact(fact_id: str, body: FactReview, project_id: str, db: Session = D
     audit(db, project_id, "fact", fact_id, body.action, reason=body.note, actor=who)
     db.commit()
     return fact_out(row)
+
+
+# ------------------------------------------------------------------ AI help on one card
+
+def _ai_ready() -> None:
+    if not settings.provider_configured("anthropic"):
+        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "AI 키가 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY를 확인하세요")
+
+
+def _ai_call(fn):
+    from integrations.base import ProviderError
+    try:
+        return fn()
+    except ProviderError as exc:
+        raise ApiError(502, exc.code, f"AI 응답을 받지 못했습니다: {exc.message}", "잠시 뒤 다시 시도하세요")
+
+
+@router.post("/materials/{material_id}/summary")
+def make_summary(material_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """해석 요약 for a card that has none yet (made by hand, or collected before summaries existed)."""
+    from app.services import material_ai
+    from app.services.ledger import RunLedger
+    _ai_ready()
+    m = get_material(db, material_id)
+    p = get_project(db, m.project_id)
+    m.summary = _ai_call(lambda: material_ai.summarize(db, p, m, RunLedger(db, p.id, None))) or m.summary
+    m.version += 1
+    audit(db, p.id, "material", m.id, "summary", after={"summary": m.summary}, actor=who)
+    db.commit()
+    return material_out(db, m)
+
+
+@router.post("/materials/{material_id}/claim-suggestions")
+def claim_suggestions(material_id: str, db: Session = Depends(get_db)):
+    """Sentence ideas quoted from this card's page; the person picks one and it is added as a sentence."""
+    from app.services import material_ai
+    from app.services.ledger import RunLedger
+    _ai_ready()
+    m = get_material(db, material_id)
+    p = get_project(db, m.project_id)
+    out = _ai_call(lambda: material_ai.suggest(db, p, m, RunLedger(db, p.id, None)))
+    db.commit()  # keeps page text fetched on the way
+    return {"suggestions": out}
+
+
+class PolishIn(BaseModel):
+    text: str = Field(min_length=1, max_length=400)
+
+
+@router.post("/materials/{material_id}/polish")
+def polish_sentence(material_id: str, body: PolishIn, db: Session = Depends(get_db)):
+    """다듬기: the same sentence in report tone; numbers and fact tokens stay exactly as written."""
+    from app.services import material_ai
+    from app.services.ledger import RunLedger
+    _ai_ready()
+    m = get_material(db, material_id)
+    new = _ai_call(lambda: material_ai.polish(body.text, RunLedger(db, m.project_id, None)))
+    if new is None:
+        raise ApiError(422, "POLISH_CHANGED_FACTS", "다듬은 문장이 숫자나 근거를 바꿔서 쓰지 않았습니다", "원래 문장을 그대로 쓰거나 직접 고치세요")
+    return {"text": new}
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "ai"]
+    text: str = Field(max_length=2000)
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/materials/{material_id}/chat")
+def material_chat(material_id: str, body: ChatIn, db: Session = Depends(get_db)):
+    """Ask about this card; when its page does not say, the AI searches the web once and cites what it used."""
+    from app.services import material_ai
+    from app.services.ledger import RunLedger
+    _ai_ready()
+    m = get_material(db, material_id)
+    p = get_project(db, m.project_id)
+    out = _ai_call(lambda: material_ai.chat(db, p, m, body.message, [h.model_dump() for h in body.history],
+                                            RunLedger(db, p.id, None), settings.provider_configured("perplexity")))
+    db.commit()
+    return out
