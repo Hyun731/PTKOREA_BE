@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall, Source
-from app.services import case_commentary, direction, insights, material_ai, research
+from app.services import case_commentary, direction, insights, material_ai, outline, research
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -53,6 +53,17 @@ class Fakes:
     def structured(self, system, user, schema, **kw):
         self._hit("structured")
         props = schema["properties"]
+        if "action" in props:  # 초안 흐름 장표 피드백
+            fb = user.split("<feedback>")[-1]
+            if "빼" in fb:
+                return CallResult(data={"reply": "이 장을 뺐습니다.", "action": "omit", "segments": []}, usage={"model": "fake"}, cost_usd=0.002)
+            if "순서" in fb:
+                return CallResult(data={"reply": "장 순서는 이 단계에서 바꿀 수 없습니다.", "action": "none", "segments": []},
+                                  usage={"model": "fake"}, cost_usd=0.002)
+            seg = [{"text": "브랜드 검색 점유 12% 우위 축소", "fact_ref": None, "bold": True}] if "깨기" in fb else \
+                  [{"text": "브랜드 검색 점유 우위가 줄어든 흐름", "fact_ref": None, "bold": True}]
+            return CallResult(data={"reply": "리드를 다시 썼습니다.", "action": "rewrite_lead", "segments": seg},
+                              usage={"model": "fake"}, cost_usd=0.002)
         if "suggestions" in props:  # 문장 추천: one verbatim quote, one made-up quote, one with a bare number
             return CallResult(data={"suggestions": [
                 {"kind": "fact", "text": "성수동 팝업에 신제품 체험 공간 배치", "quote": "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다."},
@@ -177,6 +188,8 @@ def fakes(monkeypatch):
     material_ai.STRUCTURED.append(f.structured)
     material_ai.SEARCH.clear()
     material_ai.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
+    outline.STRUCTURED.clear()
+    outline.STRUCTURED.append(f.structured)
     for k in ("PERPLEXITY_API_KEY", "ANTHROPIC_API_KEY", "SCRAPECREATORS_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"):
         monkeypatch.setenv(k, "test-key")
     monkeypatch.setenv("ANTHROPIC_MODEL", "fake-model")
@@ -188,6 +201,7 @@ def fakes(monkeypatch):
     direction.STRUCTURED.clear()
     material_ai.STRUCTURED.clear()
     material_ai.SEARCH.clear()
+    outline.STRUCTURED.clear()
 
 
 def ok(r, status=200):
@@ -733,3 +747,31 @@ def test_card_ai_help_summary_suggestions_polish_chat(client, fakes):
     out = ok(client.post(f"/v1/materials/{article['id']}/chat", json={"message": "방문객이 언제 몰렸어?"}))
     assert out["searched"] == "경쟁X 팝업 방문객" and out["answer"].startswith("추가 기사")
     assert out["sources"] == [{"title": "경쟁X 성수 팝업", "url": "https://news.example.com/a1"}]
+
+
+def test_outline_reads_the_deck_and_slide_feedback_changes_it(client, fakes):
+    pid, _ = setup_project(client)
+    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+        ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
+    flow = ok(client.get(f"/v1/projects/{pid}/outline"))
+    slides = [x for x in flow["flow"] if x["kind"] == "slide"]
+    assert any(x["kind"] == "section" for x in flow["flow"]) and flow["missing"]  # empty slides are listed, not shown
+    share = next(x for x in slides if x["slide_id"] == "2-8a")
+    assert share["lead"] and share["points"] and share["source"] and not share["edited"]
+
+    out = ok(client.post(f"/v1/projects/{pid}/outline/2-8a/feedback", json={"message": "리드를 좀 더 부드럽게"}))
+    assert out["action"] == "rewrite_lead"
+    share = next(x for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"] if x.get("slide_id") == "2-8a")
+    assert share["edited"] and share["lead"] == "브랜드 검색 점유 우위가 줄어든 흐름"
+
+    # A headline that breaks the rules (bare number) is retried, then left alone with a plain reason.
+    out = ok(client.post(f"/v1/projects/{pid}/outline/2-8a/feedback", json={"message": "깨기"}))
+    assert out["action"] == "none" and "규칙" in out["reply"]
+    out = ok(client.post(f"/v1/projects/{pid}/outline/2-8a/feedback", json={"message": "순서를 앞으로"}))
+    assert out["action"] == "none" and "순서" in out["reply"]
+
+    out = ok(client.post(f"/v1/projects/{pid}/outline/2-8a/feedback", json={"message": "이 장은 빼줘"}))
+    assert out["action"] == "omit" and out["slot_id"] == "2-8a"
+    after = ok(client.get(f"/v1/projects/{pid}/outline"))
+    assert "2-8a" not in [x.get("slide_id") for x in after["flow"]] and after["omitted"][0]["slot_id"] == "2-8a"
+    assert client.post(f"/v1/projects/{pid}/outline/nope/feedback", json={"message": "x"}).status_code == 404

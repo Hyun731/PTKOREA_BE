@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header
 from fastapi.responses import FileResponse
@@ -44,6 +44,45 @@ def slide_plan(project_id: str, db: Session = Depends(get_db)):
         "synthetic_data": result.deck.synthetic_data,
         "fingerprint": result.deck.input_fingerprint,
     }
+
+
+@router.get("/projects/{project_id}/outline")
+def read_outline(project_id: str, db: Session = Depends(get_db)):
+    """초안 흐름: the deck as text — sections, each slide's headline, body points and source."""
+    from app.services import outline
+    return outline.outline(db, get_project(db, project_id))
+
+
+class FeedbackTurn(BaseModel):
+    role: Literal["user", "ai"]
+    text: str = Field(max_length=2000)
+
+
+class SlideFeedbackIn(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+    history: list[FeedbackTurn] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/projects/{project_id}/outline/{slide_id}/feedback")
+def slide_feedback(project_id: str, slide_id: str, body: SlideFeedbackIn, db: Session = Depends(get_db),
+                   who: str = Depends(actor)):
+    """Feedback on one slide in words: the AI rewrites its headline or takes it out, or says why it can't."""
+    from app.config import settings
+    from app.services import outline
+    from integrations.base import ProviderError
+
+    p = get_project(db, project_id)
+    if not settings.provider_configured("anthropic"):
+        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "AI 키가 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY를 확인하세요")
+    try:
+        out = outline.feedback(db, p, slide_id, body.message, [h.model_dump() for h in body.history], who)
+    except KeyError:
+        raise not_found("장표")
+    except ProviderError as exc:
+        raise ApiError(502, exc.code, f"AI 응답을 받지 못했습니다: {exc.message}", "잠시 뒤 다시 시도하세요")
+    audit(db, project_id, "slide", slide_id, "feedback", after={"message": body.message, "action": out["action"]}, actor=who)
+    db.commit()
+    return out
 
 
 class OmitIn(BaseModel):
