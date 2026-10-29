@@ -75,3 +75,9 @@ def test_requested_keywords_lead_the_search_queries():
               period_start=d(2026, 1, 1), period_end=d(2026, 9, 30))
     queries = build_queries(item, NS(config=p.model_dump(mode="json")))
     assert queries[0] == "투미 팝업스토어 2026" and "투미 캠페인 2026" in queries
+
+
+def test_upload_line_only_when_an_upload_channel_is_chosen():
+    p = project()
+    assert not any("내부 자료" in x for x in scope.direction(scope.BY_ID["2-7"], by_id(p)["2-7"], p))
+    assert any("내부 자료" in x for x in scope.direction(scope.BY_ID["2-4"], by_id(p)["2-4"], p))

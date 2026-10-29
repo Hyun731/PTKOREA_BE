@@ -263,7 +263,7 @@ def direction(spec: dict, r: dict, project: Project) -> list[str]:
         lines.append("고른 수집 채널이 없습니다.")
     if r["max_items"]:
         lines.append(f"대상마다 새 사례 카드는 최대 {r['max_items']}개까지 모읍니다.")
-    if spec.get("uploads"):
+    if spec.get("uploads") and {"upload", "search_csv"} & set(r["channels"]):  # only when an upload is planned
         lines.append(f"필요한 내부 자료: {', '.join(spec['uploads'])}.")
     if spec.get("needs"):
         lines.append(f"필요한 입력: {spec['needs']}.")
