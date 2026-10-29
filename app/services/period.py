@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Literal, Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Material, Project, ResearchItem, Source
@@ -21,7 +21,6 @@ LEAD_DAYS = 30  # announcements published up to a month before the period may co
 TAIL_DAYS = 14  # reports shortly after the end may still describe an in-period activity
 OUT_PREFIX = "조사 기간 밖"
 CHECK_PREFIX = "기간 확인 필요"
-AUTO_ADOPTER = "AI 기본 채택"  # reviewed_by of cards that went in by default, not by a person
 
 Status = Literal["in", "check", "out"]
 
@@ -77,15 +76,12 @@ def classify(start: date, end: date, activity: Optional[date], activity_end: Opt
 
 def apply(m: Material, item: ResearchItem, src: Source) -> Status:
     """Mark a candidate card by the period rule. Never touches a card a person already reviewed."""
-    by_default = m.review_status == "accepted" and m.reviewed_by == AUTO_ADOPTER
-    if (m.review_status not in ("candidate", "excluded") and not by_default) or m.input_path != "auto":
+    if m.review_status not in ("candidate", "excluded") or m.input_path != "auto":
         return "in"
     status, reason = classify(item.period_start, item.period_end, m.activity_date, m.activity_date_end, src.published_at)
     if status == "out":
         m.review_status, m.review_reason = "excluded", reason
     elif status == "check":
-        if by_default:  # an unclear date is a doubt: back to waiting for a person
-            m.review_status = "candidate"
         if not (m.review_reason or "").startswith(CHECK_PREFIX):
             m.review_reason = reason + (f" · {m.review_reason}" if m.review_reason else "")
     elif m.review_status == "excluded" and (m.review_reason or "").startswith(OUT_PREFIX):
@@ -99,8 +95,7 @@ def recheck(db: Session, project: Project) -> dict:
                       .join(ResearchItem, ResearchItem.id == Material.research_item_id)
                       .join(Source, Source.id == Material.source_id)
                       .where(Material.project_id == project.id, Material.input_path == "auto",
-                             or_(Material.review_status.in_(("candidate", "excluded")),
-                                 Material.reviewed_by == AUTO_ADOPTER))).all()
+                             Material.review_status.in_(("candidate", "excluded")))).all()
     out = {"checked": 0, "excluded": [], "flagged": 0}
     for m, item, src in rows:
         before = m.review_status
