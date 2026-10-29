@@ -177,7 +177,8 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         # keep the existing grid untouched (QUALITY_BASELINE p54/p68 pin its exact card count).
         featured = sorted((m for m in campaign if m.featured), key=lambda m: (m.order, m.id))
         grid = [m for m in campaign if not m.featured]
-        spotlights = [s for i, m in enumerate(featured)
+        # With C2 on, featured cases get their full detail page there instead (each case appears once).
+        spotlights = [] if "C2" in enabled and featured else [s for i, m in enumerate(featured)
                      if (s := cases.case_spotlight_page(m, pf, title_main="Campaign", title_sub="캠페인 사례",
                                                         slide_id=f"C1-spot{i + 1}", badge=case_badge))]
         pages = spotlights + cases.case_pages(grid, pf, title_main="Campaign", title_sub="캠페인 사례", slide_prefix="C1",
@@ -187,12 +188,14 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         slot("C1", "C1", pages, reason)
     if "C2" in enabled:
         campaign = campaign_ordered
+        if "C1" in enabled and any(m.featured for m in campaign):
+            campaign = [m for m in campaign if m.featured]  # the rest are on the C1 grid
         detail = cases.case_detail_pages(campaign, pf, badge if _uses_synthetic(campaign, metrics) else [])
         slot("C2", "C2", detail, "채택된 사례 자료 없음 (이미지·근거 문장 채택 필요)")
     if "M1" in enabled:
         market = [m for m in inputs.materials if m.section_id == "market"]
-        s = cases.market_page(market, pf, badge if _uses_synthetic(market, metrics) else [])
-        slot("M1", "M1", [s] if s else [], "채택된 시장·타겟 근거 없음")
+        slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
+             "채택된 시장·타겟 근거 없음")
     if "5-recap" in enabled:
         s = quant.recap(ctx)
         slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음")
@@ -368,6 +371,22 @@ def _shown_numbers(sections: list[str]) -> dict[str, str]:
     return out
 
 
+def _index_row_cap(sections: list[str], rows: dict[str, list], top: float, bottom: float, columns: int = 3) -> int:
+    """Largest rows-per-section that lets every section fit in `columns` columns of the index page."""
+    longest = max((len(r) for r in rows.values()), default=0)
+    for cap in range(max(longest, 1), 1, -1):
+        col, y, fits = 1, float(top), True
+        for s in sections:
+            need = 35 + 3 + 25 * min(len(rows[s]), cap) + 12
+            if y + need > bottom and y > top:
+                col, y = col + 1, float(top)
+            y += need
+            fits = fits and y <= bottom + 12  # the trailing 12px gap may run past the bottom line
+        if col <= columns and fits:
+            return cap
+    return 2
+
+
 def _index(project: Project, sections: list[str], shown: dict[str, str], pages: dict[str, list[SlideSpec]],
            page_no: int) -> SlideSpec:
     """v6 index page: a navy bar per section, one tinted row per page with its page number."""
@@ -376,10 +395,15 @@ def _index(project: Project, sections: list[str], shown: dict[str, str], pages: 
         lead_block([P(N(project.name), T(" — "), M(str(len(sections)), "section_count"), T("개 장 구성"))]),
     ]
     col_w, gap, top, bottom = 370, 37, region("body").y, 650
+    all_rows = {s: [(sl.title, sl.page_no) for sl in pages[s] if sl.parent_slide_id is None] for s in sections}
+    cap = _index_row_cap(sections, all_rows, top, bottom)
     x, y = 48.0, float(top)
     for s in sections:
         label = SECTIONS[s][1]
-        rows = [(sl.title, sl.page_no) for sl in pages[s] if sl.parent_slide_id is None]
+        rows = all_rows[s]
+        if len(rows) > cap:  # long parts (many case pages) keep their first rows and summarize the rest
+            rest = rows[cap - 1:]
+            rows = rows[:cap - 1] + [(f"외 {len(rest)}장 (~{rest[-1][1]}쪽)", rest[0][1])]
         need = 35 + 3 + 25 * len(rows) + 12
         if y + need > bottom and y > top:
             x, y = x + col_w + gap, float(top)
