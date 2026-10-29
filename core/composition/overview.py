@@ -15,7 +15,7 @@ import math
 from typing import Optional
 
 from core.composition.cases import _cell_height, _fit_one_line
-from core.composition.chrome import N, P, PERIOD, T, footnote_block, lead_block, title_block
+from core.composition.chrome import M, N, P, PERIOD, T, footnote_block, lead_block, title_block
 from core.composition.quant import QuantContext
 from core.schemas.materials import TARGET_SEGMENTS, CaseMaterial
 from core.schemas.project import Project
@@ -92,10 +92,10 @@ def campaign_matrix_page(project: Project, materials: list[CaseMaterial]) -> Opt
             return [P(T("—", color="muted"))]
         out = []
         for m in items[:MAX_PER_CELL]:
-            name = _fit_one_line(m.event_name or m.title, width - 12, 10)
+            name = _fit_one_line(m.event_name or m.title, width - 12 - 40, 10)  # 40px: the "[외부] " prefix
             out.append(P(T("[외부] ", color="muted"), N(name)))
         if len(items) > MAX_PER_CELL:
-            out.append(P(T(f"외 {len(items) - MAX_PER_CELL}건", color="muted")))
+            out.append(P(T("외 ", color="muted"), M(str(len(items) - MAX_PER_CELL), "count"), T("건", color="muted")))
         return out
 
     counts: dict[str, int] = {seg: 0 for seg in TARGET_SEGMENTS}
@@ -114,6 +114,7 @@ def campaign_matrix_page(project: Project, materials: list[CaseMaterial]) -> Opt
     # TableBlock has one row_height for all rows: use the tallest. Uniform rows stay simple and
     # this matrix only ever has 6 rows, never enough for that to waste noticeable space.
     row_h = max(max(ROW_H, math.ceil(h + 14)) for _, h in rows)
+    row_h = min(row_h, (640 - 131 - HEADER_H) // len(rows))  # end above the footnote line
     table = TableBlock(block_id="table", region=Region(x=48, y=131, w=1184, h=HEADER_H + row_h * len(rows)),
                        columns=columns, rows=[r for r, _ in rows], row_height=row_h, header_height=HEADER_H,
                        size=10, header_size=10)

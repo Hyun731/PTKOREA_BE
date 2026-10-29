@@ -111,6 +111,6 @@ def height_at(paragraphs: list[Paragraph], width: float, size_pt: float, line_pt
     lines = 0
     extra = 0.0
     for p in paragraphs:
-        lines += line_count([(p.plain(), p.bold)], width, size_pt)
+        lines += line_count(paragraph_runs(p), width, size_pt)  # same runs QC measures (weight, bullet)
         extra += p.space_before
     return (lines * line_pt + extra) * PX_PER_PT
