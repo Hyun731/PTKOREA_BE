@@ -319,3 +319,11 @@ def test_accept_all_leaves_excluded_items_alone(client):
     assert ok(client.post(f"/v1/projects/{pid}/research-plan/accept-all"))["accepted"] == len(items) - 1
     after = {i["id"]: i["review_status"] for i in ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"]}
     assert after[items[0]["id"]] == "excluded" and list(after.values()).count("accepted") == len(items) - 1
+
+
+def test_excluding_an_item_needs_no_reason(client):
+    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
+    it = ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"][0]
+    out = ok(client.patch(f"/v1/research-items/{it['id']}/review", json={"review_status": "excluded"}))
+    assert out["review_status"] == "excluded" and out["omission_reason"] == "사용자가 제외"
+    assert ok(client.patch(f"/v1/research-items/{it['id']}/review", json={"review_status": "pending"}))["omission_reason"] is None

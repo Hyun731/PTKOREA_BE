@@ -396,11 +396,10 @@ def review_item(item_id: str, body: ItemReview, db: Session = Depends(get_db), w
     item = db.get(ResearchItem, item_id)
     if item is None:
         raise not_found("조사 항목")
-    if body.review_status == "excluded" and not (body.omission_reason or "").strip():
-        raise ApiError(422, "REASON_REQUIRED", "제외할 때는 사유를 입력하세요")
     before = {"review_status": item.review_status, "omission_reason": item.omission_reason}
     item.review_status = body.review_status
-    item.omission_reason = body.omission_reason if body.review_status == "excluded" else None
+    # Excluding is one click; the item moves to "제외된 항목" and can come back from there.
+    item.omission_reason = ((body.omission_reason or "").strip() or "사용자가 제외") if body.review_status == "excluded" else None
     audit(db, item.project_id, "research_item", item.id, "review", before=before,
           after=body.model_dump(), reason=body.omission_reason, actor=who)
     db.commit()
