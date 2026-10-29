@@ -9,6 +9,7 @@ done, so the reply says what this step cannot change.
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable
 
 from sqlalchemy.orm import Session
@@ -21,7 +22,8 @@ from core.composition.build import SECTIONS, build_deck
 from core.composition.chrome import PartFactory
 from core.schemas.slidespec import SlideSpec, TableBlock, TextBlock
 
-POINT_ROLES = ("body", "insight", "takeaway", "caption", "panel_header")
+POINT_ROLES = ("body", "insight", "takeaway", "caption")
+MIN_POINT_CHARS = 8  # shorter lines are layout labels ("성과 요약", "발행처"), not content
 MAX_POINTS = 6
 
 # Indirection so tests can stub the model call.
@@ -41,13 +43,20 @@ def _text(slide: SlideSpec, role: str) -> str:
 
 
 def _points(slide: SlideSpec) -> list[str]:
+    """What the body says, minus labels and lines that only repeat the title or the headline."""
+    seen = {_bare(slide.title), _bare(_text(slide, "lead"))}
     out: list[str] = []
     for b in slide.blocks:
         if isinstance(b, TextBlock) and b.role in POINT_ROLES:
             out += [p.plain().strip()[:160] for p in b.paragraphs if p.parts and p.plain().strip()]
         elif isinstance(b, TableBlock) and b.rows:
             out.append(f"표 {len(b.rows)}행 — {' · '.join(c.label for c in b.columns if c.label)}")
-    return list(dict.fromkeys(x for x in out if x))[:MAX_POINTS]
+    keep = [x for x in dict.fromkeys(out) if len(_bare(x)) >= MIN_POINT_CHARS and _bare(x) not in seen]
+    return keep[:MAX_POINTS]
+
+
+def _bare(text: str) -> str:
+    return re.sub(r"^[▲▸•·\-\s]+|\s+", "", text or "")
 
 
 def _slide_out(slide: SlideSpec, slot_of: dict, overrides: dict) -> dict:
@@ -71,7 +80,8 @@ def outline(db: Session, project: Project) -> dict:
     flow: list[dict] = []
     for s in result.deck.slides:
         if s.page_role == "divider":
-            flow.append({"kind": "section", "title": s.title, "subtitle": _text(s, "divider_sub"), "page_no": s.page_no})
+            sub = _text(s, "divider_sub")
+            flow.append({"kind": "section", "title": s.title, "subtitle": "" if sub == s.title else sub, "page_no": s.page_no})
         elif s.page_role in ("content", "recap", "appendix"):
             flow.append({"kind": "slide", **_slide_out(s, slot_of, overrides)})
     plan = result.deck.plan
