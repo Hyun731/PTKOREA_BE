@@ -602,6 +602,21 @@ def select_asset(material_id: str, body: SelectAsset, db: Session = Depends(get_
     return material_out(db, m)
 
 
+@router.get("/projects/{project_id}/owned-posts")
+def list_owned_posts(project_id: str, db: Session = Depends(get_db)):
+    """2-4 브랜드별 상위 게시물 후보 — 자료 카드가 없는 자산이라 /materials로는 안 보임.
+    PATCH /assets/{asset_id}로 이미지를 채택해야 2-4 슬라이드에 들어간다."""
+    from app.models import OwnedPost
+    get_project(db, project_id)
+    rows = db.scalars(select(OwnedPost).where(OwnedPost.project_id == project_id).order_by(OwnedPost.likes.desc()))
+    out = []
+    for r in rows:
+        asset = db.get(Asset, r.asset_id) if r.asset_id else None
+        out.append({"id": r.id, "brand_id": r.brand_id, "channel": r.channel, "url": r.url, "posted_at": r.posted_at,
+                   "likes": r.likes, "comments": r.comments, "asset": asset_out(asset) if asset else None})
+    return out
+
+
 @router.get("/assets/{asset_id}/file")
 def asset_file(asset_id: str, variant: Literal["original", "derived"] = "derived", db: Session = Depends(get_db)):
     a = get_asset(db, asset_id)

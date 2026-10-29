@@ -6,11 +6,11 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Asset, Claim, FactRow, ImportBatch, Material, PostRow, Project, Source
+from app.models import Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, Source
 from app.storage import get_storage
 from core.composition.build import BuildInputs
 from core.schemas.facts import Fact, Post
-from core.schemas.materials import AssetRef, CaseMaterial, ClaimRef, SourceRef
+from core.schemas.materials import AssetRef, CaseMaterial, ClaimRef, OwnedPostRef, SourceRef
 from core.schemas.project import Project as CoreProject
 from core.schemas.slidespec import Crop, Paragraph, Part
 
@@ -78,7 +78,15 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
             claims=[claim_ref(c) for c in sorted(claims_by_mat.get(m.id, []), key=lambda c: c.created_at)],
             comment=m.comment, review_status=m.review_status, input_path=m.input_path, featured=m.featured, order=m.order,
             target_segment=m.target_segment, ai_detail=m.ai_detail, ai_implication=m.ai_implication))
+    owned_posts: list[OwnedPostRef] = []
+    for op in db.scalars(select(OwnedPost).where(OwnedPost.project_id == project.id).order_by(OwnedPost.likes.desc())):
+        asset = assets.get(op.asset_id) if op.asset_id else None
+        owned_posts.append(OwnedPostRef(id=op.id, brand_id=op.brand_id, channel=op.channel, url=op.url,
+                                        posted_at=op.posted_at, likes=op.likes, comments=op.comments,
+                                        asset=asset_ref(asset) if asset else None))
+
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}
     leads = {k: [Paragraph.model_validate(p) for p in v] for k, v in (project.lead_overrides or {}).items()}
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
-                       omitted_slots=omitted, lead_overrides=leads, generated_on=date.today(), deck_id=project.id)
+                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, generated_on=date.today(),
+                       deck_id=project.id)

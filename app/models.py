@@ -271,6 +271,27 @@ class CaseCommentary(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class OwnedPost(Base):
+    """A brand's own top-performing Instagram post (2-4 브랜드별 상위 게시물) — the richer
+    per-post record that owned_posts_by_month's plain Fact counts can't carry (image, URL,
+    per-post likes). Unlike a campaign Material this never needs a human-written comment or
+    claim text; its image goes through the same Asset review gate everything else does."""
+    __tablename__ = "owned_posts"
+    __table_args__ = (UniqueConstraint("project_id", "channel", "post_id"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    brand_id: Mapped[str] = mapped_column(String(10), index=True)
+    channel: Mapped[str] = mapped_column(String(20))  # instagram (youtube: 2-5, not this slide)
+    post_id: Mapped[str] = mapped_column(String(100))
+    url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    posted_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    likes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    comments: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    asset_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    research_item_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Deck(Base):
     __tablename__ = "decks"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)

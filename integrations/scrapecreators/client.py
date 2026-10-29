@@ -127,7 +127,7 @@ def instagram_user_posts(handle: str, *, next_max_id: Optional[str] = None,
         posted = datetime.fromtimestamp(int(ts), tz=timezone.utc).date().isoformat() if ts else None
         posts.append({"post_id": m.get("code") or m.get("id"), "posted_at": posted,
                       "likes": _int(m.get("like_count")), "comments": _int(m.get("comment_count")),
-                      "views": _int(m.get("play_count")), "url": m.get("url")})
+                      "views": _int(m.get("play_count")), "url": m.get("url"), "image_url": m.get("display_uri")})
     return CallResult(data={"posts": posts, "next_max_id": data.get("next_max_id"),
                             "more_available": bool(data.get("more_available"))},
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)

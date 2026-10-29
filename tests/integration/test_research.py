@@ -16,9 +16,9 @@ ARTICLE = ("경쟁X는 2026년 3월 성수동에서 팝업스토어를 열었다
            "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다.")
 
 
-def png() -> bytes:
+def png(color: tuple[int, int, int] = (20, 60, 120)) -> bytes:
     b = io.BytesIO()
-    Image.new("RGB", (800, 450), (20, 60, 120)).save(b, "PNG")
+    Image.new("RGB", (800, 450), color).save(b, "PNG")
     return b.getvalue()
 
 
@@ -46,7 +46,8 @@ class Fakes:
 
     def fetch_image(self, url, **kw):
         self._hit("fetch_image")
-        return png()
+        # Distinct per URL — a real photo per post, not the same bytes (and sha256) every time.
+        return png((abs(hash(url)) % 200, abs(hash(url[::-1])) % 200, 80))
 
     def structured(self, system, user, schema, **kw):
         self._hit("structured")
@@ -96,6 +97,26 @@ class Fakes:
         self._hit("youtube_channel")
         return CallResult(data={"subscribers": 200000, "name": "유튜버"}, cost_usd=0.002)
 
+    def instagram_user_posts(self, handle, next_max_id=None, **kw):
+        self._hit("instagram_user_posts")
+        if next_max_id:
+            return CallResult(data={"posts": [], "next_max_id": None, "more_available": False}, cost_usd=0.002)
+        posts = [
+            {"post_id": "p1", "posted_at": "2026-08-05", "likes": 500, "comments": 10, "views": None,
+             "url": "https://instagram.com/p/p1/", "image_url": "https://img.example.com/p1.jpg"},
+            {"post_id": "p2", "posted_at": "2026-09-10", "likes": 900, "comments": 20, "views": None,
+             "url": "https://instagram.com/p/p2/", "image_url": "https://img.example.com/p2.jpg"},
+            {"post_id": "p3", "posted_at": "2026-09-20", "likes": 100, "comments": 5, "views": None,
+             "url": "https://instagram.com/p/p3/", "image_url": None},
+        ]
+        return CallResult(data={"posts": posts, "next_max_id": None, "more_available": False}, cost_usd=0.002)
+
+    def youtube_channel_videos(self, channel_id=None, handle=None, continuation_token=None, **kw):
+        self._hit("youtube_channel_videos")
+        videos = [{"id": "v1", "url": "https://youtube.com/watch?v=v1", "title": "영상1", "views": 1000,
+                  "published_at": "2026-09-01", "length_seconds": 120, "is_short": False}]
+        return CallResult(data={"videos": videos, "continuation_token": None}, cost_usd=0.002)
+
     def search_trend(self, groups, start, end, **kw):
         self._hit("search_trend")
         # One ratio per month in [start, end], distinct per group so shares aren't tied.
@@ -117,7 +138,8 @@ def fakes(monkeypatch):
     research.PROVIDERS.clear()
     research.PROVIDERS.update(search=f.search, fetch_page=f.fetch_page, fetch_image=f.fetch_image, structured=f.structured,
                               instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video,
-                              youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend)
+                              youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
+                              instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos)
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
@@ -555,3 +577,46 @@ def test_case_commentary_rewrite_then_accept(client, fakes):
     assert updated["ai_detail"] == cc["detail"] and updated["ai_implication"] == cc["implication"]
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     assert not [i for i in sp["qc"]["issues"] if i["severity"] == "block" and str(i.get("slide_id", "")).startswith("C2")]
+
+
+def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
+    pid, plan = setup_project(client)
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    cfg = proj["config"]
+    cfg["brands"][0]["official_profiles"] = [
+        {"channel": "instagram", "url": "https://www.instagram.com/brand1/"},
+        {"channel": "youtube", "url": "https://www.youtube.com/channel/UCabc/"},
+    ]
+    cfg["enabled_slides"] = cfg["enabled_slides"] + ["2-1", "2-2", "2-4"]
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"],
+                                                 "changes": {"brands": cfg["brands"], "enabled_slides": cfg["enabled_slides"]}}))
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "owned")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded"
+    assert fakes.calls["instagram_user_posts"] == 1 and fakes.calls["youtube_channel_videos"] == 1
+
+    posts = ok(client.get(f"/v1/projects/{pid}/owned-posts"))
+    assert len(posts) == 2  # p3 has no image_url, so only p1/p2 got downloaded
+    assert [p["likes"] for p in posts] == [900, 500]  # ordered by likes desc, p2 > p1
+    for p in posts:
+        assert p["asset"]["review_status"] == "candidate"
+        ok(client.patch(f"/v1/assets/{p['asset']['id']}", json={"review_status": "accepted"}))
+
+    facts = ok(client.get(f"/v1/projects/{pid}/facts"))
+    owned_facts = [f for f in facts if f["metric"].startswith("owned_")]
+    assert owned_facts  # followers, posts_monthly, likes_median, posts_by_month…
+    for f in owned_facts:
+        ok(client.patch(f"/v1/facts/{f['id']}/review", params={"project_id": pid}, json={"action": "confirm"}))
+
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    assert next(s for s in sp["plan"] if s["slot_id"] == "2-1")["readiness"] == "ready"
+    assert next(s for s in sp["plan"] if s["slot_id"] == "2-4")["readiness"] == "ready"
+    blocking = [i for i in sp["qc"]["issues"] if i["severity"] == "block" and i.get("block_id") in ("2-1", "2-2", "2-4")]
+    assert blocking == [], blocking
+
+    # rerun without force: the succeeded item is skipped, no duplicate OwnedPost rows
+    job2 = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job2['id']}"))["result"]["items"][it["id"]]["status"] == "skipped"
+    assert len(ok(client.get(f"/v1/projects/{pid}/owned-posts"))) == 2

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.jobs import register
-from app.models import PostRow, Asset, Claim, FactRow, Job, Material, Project, ResearchItem, Source, new_id, utcnow
+from app.models import PostRow, Asset, Claim, FactRow, Job, Material, OwnedPost, Project, ResearchItem, Source, new_id, utcnow
 from app.services.assets import inspect_upload, normalized_derivative
 from app.services import period
 from app.services.audit import audit
@@ -227,6 +227,31 @@ def _save_image_candidate(db: Session, m: Material, data: bytes, title: str) -> 
     db.add(a)
     if not m.selected_asset_id:
         m.selected_asset_id = aid
+    return a
+
+
+def _save_owned_asset(db: Session, project_id: str, data: bytes, title: str) -> Optional[Asset]:
+    """Same acceptance gate and storage layout as _save_image_candidate, but for a 2-4 top-post
+    image that has no Material behind it (material_id stays null — same as how owned_* Facts
+    have no material_id either)."""
+    try:
+        mime, width, height, sha = inspect_upload(data)
+    except Exception:
+        return None
+    if min(width, height) < MIN_IMAGE_SIDE or width * height < MIN_IMAGE_AREA:
+        return None
+    if db.scalar(select(Asset).where(Asset.project_id == project_id, Asset.material_id.is_(None), Asset.sha256 == sha)):
+        return None
+    storage = get_storage()
+    aid = new_id("AS")
+    ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[mime]
+    okey = storage.put_bytes(f"assets/{project_id}/{aid}/original.{ext}", data)
+    derived, dext = normalized_derivative(data)
+    dkey = storage.put_bytes(f"assets/{project_id}/{aid}/derived.{dext}", derived)
+    a = Asset(id=aid, project_id=project_id, material_id=None, source_id=None, original_key=okey, derived_key=dkey,
+              sha256=sha, mime_type=mime, width=width, height=height, title=title, usage_basis="source_reference",
+              review_status="candidate")
+    db.add(a)
     return a
 
 
@@ -749,6 +774,23 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                                     period_start=item.period_start, period_end=item.period_end, measured_at=today,
                                     label="Instagram 중앙값 좋아요")):
             out["facts"] += 1
+        # 2-4 브랜드별 상위 게시물: 기간 내 좋아요 상위 3개만 이미지까지 받는다(전수 다운로드 안 함).
+        existing_posts = set(db.scalars(select(OwnedPost.post_id).where(
+            OwnedPost.project_id == project.id, OwnedPost.channel == "instagram", OwnedPost.brand_id == item.brand_id)))
+        top3 = sorted((po for po in posts if po["likes"] is not None and po.get("image_url")
+                      and po["post_id"] not in existing_posts), key=lambda po: po["likes"], reverse=True)[:3]
+        for po in top3:
+            try:
+                img_data = p["fetch_image"](po["image_url"])
+            except ProviderError as exc:
+                out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
+                continue
+            asset = _save_owned_asset(db, project.id, img_data, f"{brand.name} Instagram 게시물")
+            db.add(OwnedPost(id=new_id("OP"), project_id=project.id, brand_id=item.brand_id, channel="instagram",
+                             post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
+                             likes=po["likes"], comments=po["comments"], asset_id=asset.id if asset else None,
+                             research_item_id=item.id))
+            out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
         ig_by_month = {mo: 0 for mo in period_months}
         for po in posts:
             if po["posted_at"]:
@@ -758,6 +800,8 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                                            count=count, measured_at=today)):
                 out["facts"] += 1
         out["channels"].append({"channel": "instagram", "handle": handle, "posts_in_period": len(posts)})
+        db.commit()  # flush before the YouTube section's own ledger.call()s — RunLedger writes through
+        # a separate session, and SQLite only tolerates one writer: an open transaction here deadlocks it.
 
     yt = profiles.get("youtube")
     if yt:

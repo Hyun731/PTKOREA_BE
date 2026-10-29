@@ -58,6 +58,18 @@ class ClaimRef(BaseModel):
     quote: Optional[str] = None  # verbatim source sentence the claim rests on (AI candidates)
 
 
+class OwnedPostRef(BaseModel):
+    """2-4 브랜드별 상위 게시물 — a channel-inventory post, not a campaign case Material."""
+    id: str
+    brand_id: str
+    channel: str
+    url: Optional[str] = None
+    posted_at: Optional[date] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
+    asset: Optional[AssetRef] = None
+
+
 class CaseMaterial(BaseModel):
     """An evidence card used for C1/M1 slides."""
     id: str
