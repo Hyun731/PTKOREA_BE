@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall, Source
-from app.services import case_commentary, direction, insights, material_ai, outline, research, synthesis
+from app.services import aliases, case_commentary, direction, insights, material_ai, outline, research, synthesis
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -27,6 +27,7 @@ class Fakes:
     def __init__(self):
         self.calls: dict[str, int] = {}
         self.fail_search = None
+        self.search_name = "경쟁X"  # how the fake articles name the brand
 
     def _hit(self, name):
         self.calls[name] = self.calls.get(name, 0) + 1
@@ -36,8 +37,8 @@ class Fakes:
         if self.fail_search:
             raise ProviderError(self.fail_search, "fake failure", 403)
         return CallResult(data={"id": "s1", "results": [
-            {"title": "경쟁X 성수 팝업", "url": "https://news.example.com/a1", "snippet": "팝업 소식", "date": "2026-03-05"},
-            {"title": "경쟁X 영상", "url": "https://www.youtube.com/watch?v=abc", "snippet": "영상", "date": None},
+            {"title": f"{self.search_name} 성수 팝업", "url": "https://news.example.com/a1", "snippet": "팝업 소식", "date": "2026-03-05"},
+            {"title": f"{self.search_name} 영상", "url": "https://www.youtube.com/watch?v=abc", "snippet": "영상", "date": None},
         ]}, cost_usd=0.005)
 
     def fetch_page(self, url, **kw):
@@ -51,8 +52,11 @@ class Fakes:
         return png((abs(hash(url)) % 200, abs(hash(url[::-1])) % 200, 80))
 
     def structured(self, system, user, schema, **kw):
-        self._hit("structured")
         props = schema["properties"]
+        self._hit("aliases" if set(props) == {"brands"} else "structured")
+        if set(props) == {"brands"}:  # 다른 표기: only the competitor has a known English name
+            return CallResult(data={"brands": [{"name": "경쟁X", "aliases": ["CompetitorX", "경쟁X"]}]},
+                              usage={"model": "fake"}, cost_usd=0.001)
         if "es_company" in props:  # 종합 장표: one line has a number and one points at a page that doesn't exist
             ref = re.search(r'"id": "([^"]+)"', user).group(1)
             return CallResult(data={
@@ -189,6 +193,8 @@ def fakes(monkeypatch):
                               instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video,
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
                               instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos)
+    aliases.STRUCTURED.clear()
+    aliases.STRUCTURED.append(f.structured)
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
@@ -209,6 +215,7 @@ def fakes(monkeypatch):
     monkeypatch.setenv("RUN_BUDGET_USD", "5")
     yield f
     research.PROVIDERS.clear()
+    aliases.STRUCTURED.clear()
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
     direction.STRUCTURED.clear()
@@ -231,6 +238,12 @@ def setup_project(client):
 
 def item(plan, section, entity=None):
     return next(i for i in plan["items"] if i["section_id"] == section and (entity is None or i["entity"] == entity))
+
+
+def clear_cache():
+    with SessionLocal() as db:
+        db.query(ProviderCache).delete()
+        db.commit()
 
 
 def ledger_rows(pid):
@@ -847,3 +860,30 @@ def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
     assert not [i for i in issues if i["slide_id"] in ("ES", "SWOT", "NEXT") and i["severity"] == "block"], issues
     ok(client.delete(f"/v1/projects/{pid}/synthesis"))
     assert "ES" not in [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]]
+
+
+def test_articles_naming_a_competitor_another_way_are_kept(client, fakes):
+    pid, plan = setup_project(client)
+    clear_cache()
+    fakes.search_name = "CompetitorX"  # every article uses the English name only
+    it = item(plan, "campaign", "경쟁X")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded" and res["created"] == 2 and res["off_topic"] == 0
+    brand = ok(client.get(f"/v1/projects/{pid}"))["config"]["brands"][0]
+    assert brand["entity_aliases"]["경쟁X"] == ["CompetitorX"]  # filled by the AI, the name itself left out
+
+
+def test_no_material_about_the_subject_is_reported_and_not_bulk_confirmed(client, fakes):
+    pid, plan = setup_project(client)
+    clear_cache()
+    fakes.search_name = "다른브랜드"
+    it = item(plan, "campaign", "경쟁X")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "failed" and res.get("created", 0) == 0
+    assert res["errors"][0]["code"] == "NO_MATERIAL" and res["retried_aliases"] == ["CompetitorX"]
+    assert fakes.calls["aliases"] == 1
+    ok(client.post(f"/v1/projects/{pid}/research-plan/accept-all"))
+    after = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "campaign", "경쟁X")
+    assert after["review_status"] == "pending"

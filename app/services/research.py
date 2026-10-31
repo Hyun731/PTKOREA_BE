@@ -95,9 +95,7 @@ def subject_names(item: ResearchItem, project: Project) -> list[str]:
     """Ways a result can name the item's subject: its name, the self brand's aliases, and the search
     keywords set for that entity (often the Latin spelling, e.g. 리모와 → RIMOWA)."""
     brand = core_project(project).brand(item.brand_id)
-    names = [item.entity]
-    if item.entity == brand.name:
-        names += brand.aliases
+    names = brand.names_for(item.entity)
     names += [k for g in brand.keyword_groups if g.entity == item.entity for k in g.keywords]
     return [n for n in dict.fromkeys(_key(n) for n in names) if len(n) >= 2]
 
@@ -105,6 +103,43 @@ def subject_names(item: ResearchItem, project: Project) -> list[str]:
 def mentions(text: str, names: list[str]) -> bool:
     t = _key(text)
     return any(n in t for n in names)
+
+
+def _year(item: ResearchItem):
+    return item.period_start.year if item.period_start.year == item.period_end.year else f"{item.period_start.year} {item.period_end.year}"
+
+
+def _named(results: list[dict], names: list[str]) -> tuple[list[dict], int]:
+    named = [(mentions(r.get("title", ""), names), r) for r in results]
+    kept = [r for t, r in named if t] + [r for t, r in named if not t and mentions(r.get("snippet", ""), names)]
+    return kept, len(results) - len(kept)
+
+
+def _search_windows(ledger: RunLedger, p: dict, item: ResearchItem, queries: list[str]) -> list[dict]:
+    """Search each part of the period on its own: one query over nine months returns mostly the latest
+    big news. Results are interleaved part by part so the kept cards cover the whole period.
+    Perplexity takes at most 5 queries per request, and max_results is per request, not per query."""
+    per_window: list[list[dict]] = []
+    for lo, hi in period.search_windows(item.period_start, item.period_end):
+        found: list[dict] = []
+        after, before = period.mmddyyyy(lo), period.mmddyyyy(hi)
+        for i in range(0, len(queries), 5):
+            chunk = queries[i:i + 5]
+            n = min(20, RESULTS_PER_QUERY * len(chunk))
+            req = {"queries": chunk, "max_results": n, "country": "KR", "languages": ["ko"], "after": after, "before": before}
+            res = ledger.call("perplexity", "search", req, 0.005,
+                              lambda: p["search"](chunk, max_results=n, country="KR", languages=["ko"],
+                                                  published_after=after, published_before=before))
+            found += res.data["results"]
+        per_window.append(found)
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    for row in zip_longest(*per_window):
+        for r in row:
+            if r and r["url"] not in seen_urls:
+                seen_urls.add(r["url"])
+                results.append(r)
+    return results
 
 
 def build_queries(item: ResearchItem, project: Project) -> list[str]:
@@ -322,38 +357,28 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
     if not queries:
         out["errors"].append({"code": "LIMIT", "message": f"실행당 검색 질의 한도({MAX_QUERIES_PER_RUN})에 도달했습니다"})
         return out
-    # Search each part of the period on its own: one query over nine months returns mostly the latest
-    # big news. Results are interleaved part by part so the kept cards cover the whole period.
-    # Perplexity takes at most 5 queries per request, and max_results is per request, not per query.
-    per_window: list[list[dict]] = []
-    for lo, hi in period.search_windows(item.period_start, item.period_end):
-        found: list[dict] = []
-        after, before = period.mmddyyyy(lo), period.mmddyyyy(hi)
-        for i in range(0, len(queries), 5):
-            chunk = queries[i:i + 5]
-            n = min(20, RESULTS_PER_QUERY * len(chunk))
-            req = {"queries": chunk, "max_results": n, "country": "KR", "languages": ["ko"], "after": after, "before": before}
-            res = ledger.call("perplexity", "search", req, 0.005,
-                              lambda: p["search"](chunk, max_results=n, country="KR", languages=["ko"],
-                                                  published_after=after, published_before=before))
-            found += res.data["results"]
-        per_window.append(found)
-    results: list[dict] = []
-    seen_urls: set[str] = set()
-    for row in zip_longest(*per_window):
-        for r in row:
-            if r and r["url"] not in seen_urls:
-                seen_urls.add(r["url"])
-                results.append(r)
+    results = _search_windows(ledger, p, item, queries)
     # Generic words in a query ("이벤트 프로모션 2026") pull in other brands' promotions. A result that never
     # names the subject would only use up a card slot before the AI rejects it: drop it here, and look
     # at results naming it in the title before those naming it only in the snippet.
     if item.section_id != "market":
         names = subject_names(item, project)
-        named = [(mentions(r.get("title", ""), names), r) for r in results]
-        kept = [r for t, r in named if t] + [r for t, r in named if not t and mentions(r.get("snippet", ""), names)]
-        out["off_topic"] = len(results) - len(kept)
-        results = kept
+        results, out["off_topic"] = _named(results, names)
+        if not results:
+            # Articles may only use another spelling (마땡킴 → Matin Kim): search once more with those.
+            other = [n for n in core_project(project).brand(item.brand_id).names_for(item.entity)[1:3]]
+            with state.lock:
+                extra = [f"{n} {w} {_year(item)}" for n in other for w in ("캠페인", "콜라보", "팝업")][:MAX_QUERIES_PER_ITEM]
+                extra = extra[: max(0, MAX_QUERIES_PER_RUN - state.queries)]
+                state.queries += len(extra)
+            if extra:
+                results, dropped = _named(_search_windows(ledger, p, item, extra), names)
+                out["off_topic"] += dropped
+                out["retried_aliases"] = other
+        if not results:
+            hint = "별칭(영문명 등)을 확인하거나 대상을 바꿔 주세요" if len(names) > 1 else "설정에서 영문명 같은 별칭을 넣어 주세요"
+            out["errors"].append({"code": "NO_MATERIAL", "message": f"‘{item.entity}’를 다룬 자료를 찾지 못했습니다 — {hint}"})
+            return out
 
     # 1. card rows for new URLs (cheap, ordered)
     existing_urls = {s.original_url for s in db.scalars(select(Source).join(Material, Material.source_id == Source.id)

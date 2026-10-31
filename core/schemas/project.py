@@ -62,6 +62,10 @@ class Brand(BaseModel):
     official_profiles: list[OfficialProfile] = Field(default_factory=list)
     # Benchmarks are manual case references only; never in share denominators (PRD 3).
     benchmarks: list[str] = Field(default_factory=list)
+    # Other ways an article may name this brand, a competitor or a benchmark (e.g. 마땡킴 → Matin Kim),
+    # so search results that use that spelling still count as being about it. Filled by the AI; a name
+    # with an empty list was looked up and has no other spelling.
+    entity_aliases: dict[str, list[str]] = Field(default_factory=dict)
 
     @field_validator("id")
     @classmethod
@@ -69,6 +73,18 @@ class Brand(BaseModel):
         if not BRAND_ID_RE.match(v):
             raise ValueError("brand id는 ^[A-Z][A-Z0-9]{0,4}$ 형식이어야 합니다")
         return v
+
+    @model_validator(mode="after")
+    def _aliases_for_known_entities(self) -> "Brand":
+        known = {self.name, *self.competitors, *self.benchmarks}
+        self.entity_aliases = {k: [a for a in dict.fromkeys(v) if a.strip() and a != k][:6]
+                               for k, v in self.entity_aliases.items() if k in known}
+        return self
+
+    def names_for(self, entity: str) -> list[str]:
+        """The entity's name and its other spellings."""
+        own = self.aliases if entity == self.name else []
+        return list(dict.fromkeys([entity, *own, *self.entity_aliases.get(entity, [])]))
 
     @property
     def entity_set(self) -> list[str]:
