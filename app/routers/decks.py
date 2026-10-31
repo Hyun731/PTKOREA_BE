@@ -29,8 +29,12 @@ router = APIRouter()
 @router.get("/projects/{project_id}/slide-plan")
 def slide_plan(project_id: str, db: Session = Depends(get_db)):
     """Dry-run composition: planned vs generatable slots and current QC, without rendering."""
+    from app.services import missing
+
     p = get_project(db, project_id)
-    result = build_deck(load_inputs(db, p))
+    inputs = load_inputs(db, p)
+    result = build_deck(inputs)
+    missing.annotate(db, p, inputs.project, result.deck.plan)
     qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(p.config))
     return {
         "plan": [s.model_dump() for s in result.deck.plan],

@@ -887,3 +887,18 @@ def test_no_material_about_the_subject_is_reported_and_not_bulk_confirmed(client
     ok(client.post(f"/v1/projects/{pid}/research-plan/accept-all"))
     after = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "campaign", "경쟁X")
     assert after["review_status"] == "pending"
+
+
+def test_missing_slides_say_why_and_what_to_do(client, fakes):
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "campaign", "경쟁X")
+    ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
+    gaps = {s["slot_id"]: s for s in ok(client.get(f"/v1/projects/{pid}/slide-plan"))["plan"] if s["readiness"] == "needs_input"}
+    assert gaps["C1c"]["cause"] == "adopt"  # 경쟁X's cards are waiting for a person
+    assert gaps["2-8a"]["cause"] == "upload" and gaps["3-1-B1"]["cause"] == "setup"
+    self_item = item(plan, "campaign", "브랜드A")
+    assert gaps["C1"]["cause"] == "collect" and gaps["C1"]["item_ids"] == [self_item["id"]]
+    assert gaps["5-recap"]["cause"] is None
+    missing = {m["slot_id"]: m for m in ok(client.get(f"/v1/projects/{pid}/outline"))["missing"]}
+    assert missing["C1c"]["cause"] == "adopt" and missing["C1c"]["action"]

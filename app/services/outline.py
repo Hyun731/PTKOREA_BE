@@ -15,7 +15,7 @@ from typing import Callable
 from sqlalchemy.orm import Session
 
 from app.models import Project, utcnow
-from app.services import insights
+from app.services import insights, missing
 from app.services.inputs import load_inputs
 from app.services.ledger import RunLedger
 from core.composition.build import build_deck, chapter_label
@@ -87,10 +87,12 @@ def outline(db: Session, project: Project) -> dict:
             label = chapter_label(core, s.chapter) if s.chapter else ""
             flow.append({"kind": "slide", **_slide_out(s, slot_of, overrides, label)})
     plan = result.deck.plan
+    missing.annotate(db, project, core, plan)
     return {
         "flow": flow,
         "pages": len(result.deck.slides),
-        "missing": [{"slot_id": s.slot_id, "label": s.label, "reason": s.reason} for s in plan if s.readiness == "needs_input"],
+        "missing": [{"slot_id": s.slot_id, "label": s.label, "reason": s.reason, "cause": s.cause, "action": s.action,
+                     "item_ids": s.item_ids} for s in plan if s.readiness == "needs_input"],
         "omitted": [{"slot_id": s.slot_id, "label": s.label, "reason": s.reason} for s in plan if s.readiness == "omitted"],
         "fingerprint": result.deck.input_fingerprint,
     }

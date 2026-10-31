@@ -237,6 +237,10 @@ class SlotPlan(BaseModel):
     reason: Optional[str] = None
     required: bool = True
     slide_ids: list[str] = Field(default_factory=list)
+    # Why a needs_input slot has no page and what fixes it (set by the app, app.services.missing).
+    cause: Optional[Literal["adopt", "collect", "setup", "upload", "access"]] = None
+    action: Optional[str] = None
+    item_ids: list[str] = Field(default_factory=list)  # research items to collect again
 
 
 class DeckSpec(BaseModel):
