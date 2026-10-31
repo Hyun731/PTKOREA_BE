@@ -63,7 +63,8 @@ def suggest(names: list[str], category_hint: str, ledger: RunLedger) -> dict[str
             # Never another listed brand's name, never the name itself, never a one-letter token.
             if len(_key(a)) >= 2 and _key(a) != _key(name) and _key(a) not in taken - {_key(name)}:
                 keep.append(a[:40])
-        out[name] = list(dict.fromkeys(keep))[:4]
+        # RIMOWA and Rimowa match the same articles: keep one of each.
+        out[name] = list({_key(a): a for a in reversed(keep)}.values())[::-1][:4]
     return out
 
 
@@ -77,7 +78,12 @@ def fill(cfg: dict, ledger: RunLedger) -> bool:
     for b in cfg.get("brands", []):
         ent = dict(b.get("entity_aliases") or {})
         for n in [b["name"], *b.get("competitors", []), *b.get("benchmarks", [])]:
-            if n not in ent:
-                ent[n] = found.get(n, [])  # an empty list records that it was asked
+            if n in ent:
+                continue
+            if n == b["name"]:  # the brand's own spellings stay in `aliases`, which other steps also read
+                b["aliases"] = b.get("aliases") or found.get(n, [])
+                ent[n] = []  # an empty list records that it was asked
+            else:
+                ent[n] = found.get(n, [])
         b["entity_aliases"] = ent
     return True
