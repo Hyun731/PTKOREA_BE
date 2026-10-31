@@ -71,16 +71,27 @@ def test_p40_image_plus_table(result):
     assert len(t.rows) == 11 and any(r.muted for r in t.rows)
 
 
-def test_p54_p68_case_cards(result):
+def test_p54_p68_case_cards(result, tmp_path):
     r, _ = result
-    # The fixture's cases are competitors': their card pages are the 경쟁사 분석 chapter's C1c.
-    assert slide(r, "C1c").template_id == "case_card_4col.v1"
-    assert slide(r, "C1c-p2").template_id == "case_card_3col.v1"
-    for sid in ("C1c", "C1c-p2"):
-        s = slide(r, sid)
+    # Three self brands: each brand's competitors' cases get its own 경쟁사 분석 part, and a competitor
+    # two brands share (누리볼트) shows in both.
+    case_pages = {s.slide_id: s for s in r.deck.slides if s.slide_id.startswith("C1c")}
+    assert {sid.rsplit("-", 1)[1] for sid in case_pages} == {"B1", "B2", "B3"}
+    for s in case_pages.values():
         frames = [b for b in s.blocks if getattr(b, "block_id", "").endswith("_frame")]
         assert len({round(f.region.h) for f in frames}) == 1  # aligned card heights
         assert all(a in r.assets for a in s.asset_ids)
+    assert sum(len(s.asset_ids) for s in case_pages.values()) == 5 + 1 + 3  # B1, B2 (마루헨제이), B3
+
+    # All seven cases about B1's competitors: B1's part shows the v6 grid (4 cards, then 3).
+    project, facts, posts, materials = build_inputs(tmp_path / "assets")
+    rivals = project.brands[0].competitors
+    for k, m in enumerate(m for m in materials if m.section_id == "campaign"):
+        m.entity = rivals[k % len(rivals)]
+    one = build_deck(BuildInputs(project=project, facts=facts, posts=posts, materials=materials,
+                                 generated_on=date(2026, 10, 12)))
+    assert slide(one, "C1c-B1").template_id == "case_card_4col.v1"
+    assert slide(one, "C1c-p2-B1").template_id == "case_card_3col.v1"
 
 
 def test_p89_recap_three_pillars_no_new_facts(result):
@@ -113,3 +124,17 @@ def test_real_render_page_count(result, tmp_path):
     path = render_deck(r.deck, tmp_path / "v.pptx", lambda a: (r.assets[a].path, r.assets[a].width, r.assets[a].height))
     pages = render_pages(path, tmp_path / "preview")
     assert len(pages) == len(r.deck.slides)
+
+
+def test_each_self_brand_gets_its_own_parts(result):
+    r, _ = result
+    from core.composition.build import content_chapter
+    dividers = [s.title for s in r.deck.slides if s.page_role == "divider"]
+    assert dividers[0] == "브랜드 비교"  # side-by-side pages stay together up front
+    assert {"경쟁사 분석 · 브랜드A", "경쟁사 분석 · 브랜드B", "경쟁사 분석 · 브랜드C"} <= set(dividers)
+    assert slide(r, "2-8a").chapter == "overview" and content_chapter(slide(r, "2-8a")) == "competitor"
+    c1c = slide(r, "C1c-B2")
+    assert c1c.chapter == "competitor:B2" and c1c.brand_id == "B2" and content_chapter(c1c) == "competitor"
+    crumb = next(b for b in c1c.blocks if getattr(b, "block_id", "") == "title").paragraphs[0].parts[0].text
+    assert crumb.endswith("경쟁사 분석 · 브랜드B")
+    assert {p.slot_id for p in r.deck.plan if p.template_id == "C1"} >= {"C1-B1", "C1c-B2", "C1c-B3"}

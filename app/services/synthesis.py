@@ -17,7 +17,7 @@ from app.models import Project
 from app.services.inputs import load_inputs
 from app.services.ledger import RunLedger
 from app.services.outline import _points, _text
-from core.composition.build import CHAPTERS, build_deck
+from core.composition.build import CHAPTERS, build_deck, content_chapter
 from core.quality.qc import FORBIDDEN_WORDS, OVERCLAIMS
 
 PARTS = ("company", "competitor", "customer")
@@ -78,7 +78,8 @@ def body_pages(db: Session, project: Project) -> list[dict]:
     inputs = load_inputs(db, project)
     inputs.synthesis = {}  # write from the body, never from an earlier summary
     deck = build_deck(inputs).deck
-    return [{"id": s.slide_id, "chapter": s.chapter, "title": s.title, "lead": _text(s, "lead"), "points": _points(s)[:4]}
+    return [{"id": s.slide_id, "chapter": content_chapter(s), "title": s.title, "lead": _text(s, "lead"),
+             "points": _points(s)[:4], **({"brand": inputs.project.brand(s.brand_id).name} if s.brand_id else {})}
             for s in deck.slides if s.page_role in ("content", "recap") and not s.parent_slide_id and s.chapter != "appendix"]
 
 

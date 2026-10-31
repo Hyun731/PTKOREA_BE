@@ -18,7 +18,7 @@ from app.models import Project, utcnow
 from app.services import insights
 from app.services.inputs import load_inputs
 from app.services.ledger import RunLedger
-from core.composition.build import CHAPTERS, build_deck
+from core.composition.build import build_deck, chapter_label
 from core.composition.chrome import PartFactory
 from core.schemas.slidespec import SlideSpec, TableBlock, TextBlock
 
@@ -59,23 +59,24 @@ def _bare(text: str) -> str:
     return re.sub(r"^[▲▸•·\-\s]+|\s+", "", text or "")
 
 
-def _slide_out(slide: SlideSpec, slot_of: dict, overrides: dict) -> dict:
+def _slide_out(slide: SlideSpec, slot_of: dict, overrides: dict, section: str = "") -> dict:
     slot = slot_of.get(slide.slide_id) or slot_of.get(slide.parent_slide_id or "")
     return {"slide_id": slide.slide_id, "page_no": slide.page_no, "title": slide.title, "page_role": slide.page_role,
-            "section": CHAPTERS.get(slide.chapter or "", ("", slide.chapter or ""))[1],
+            "section": section,
             "lead": _text(slide, "lead"), "points": _points(slide), "source": _text(slide, "footnote"),
             "slot_id": slot.slot_id if slot else None, "edited": slide.slide_id in overrides,
             "continued": bool(slide.parent_slide_id)}
 
 
 def _build(db: Session, project: Project):
-    result = build_deck(load_inputs(db, project))
+    inputs = load_inputs(db, project)
+    result = build_deck(inputs)
     slot_of = {sid: s for s in result.deck.plan for sid in s.slide_ids}
-    return result, slot_of
+    return result, slot_of, inputs.project
 
 
 def outline(db: Session, project: Project) -> dict:
-    result, slot_of = _build(db, project)
+    result, slot_of, core = _build(db, project)
     overrides = project.lead_overrides or {}
     flow: list[dict] = []
     for s in result.deck.slides:
@@ -83,7 +84,8 @@ def outline(db: Session, project: Project) -> dict:
             sub = _text(s, "divider_sub")
             flow.append({"kind": "section", "title": s.title, "subtitle": "" if sub == s.title else sub, "page_no": s.page_no})
         elif s.page_role in ("content", "recap", "appendix"):
-            flow.append({"kind": "slide", **_slide_out(s, slot_of, overrides)})
+            label = chapter_label(core, s.chapter) if s.chapter else ""
+            flow.append({"kind": "slide", **_slide_out(s, slot_of, overrides, label)})
     plan = result.deck.plan
     return {
         "flow": flow,
@@ -113,7 +115,7 @@ FEEDBACK_SCHEMA = {
 
 def feedback(db: Session, project: Project, slide_id: str, message: str, history: list[dict], who: str) -> dict:
     """Apply one piece of feedback to one slide. Returns the reply, what was done and the slide as it is now."""
-    result, slot_of = _build(db, project)
+    result, slot_of, core = _build(db, project)
     slide = next((s for s in result.deck.slides if s.slide_id == slide_id), None)
     if slide is None:
         raise KeyError(slide_id)
