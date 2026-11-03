@@ -377,6 +377,15 @@ def read_plan(project_id: str, db: Session = Depends(get_db)):
             "confirmed_at": plan.confirmed_at, "scope": directions, "items": [item_out(db, i) for i in items]}
 
 
+@router.get("/projects/{project_id}/collection-mix")
+def read_collection_mix(project_id: str, db: Session = Depends(get_db)):
+    """Phase 1-4: 브랜드 × 채널별 수집 현황 — 조사 계획 화면에서 기사에만 치우쳤는지 보여준다."""
+    from app.services import collection_mix
+
+    p = get_project(db, project_id)
+    return {"brands": collection_mix.compute(db, p)}
+
+
 class PlanItemPatch(BaseModel):
     id: str
     selected: Optional[bool] = None

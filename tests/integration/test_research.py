@@ -8,7 +8,7 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import ProviderCache, ProviderCall, Source
+from app.models import FactRow, Material, PostRow, ProviderCache, ProviderCall, Source, new_id, utcnow
 from app.services import (
     aliases, case_commentary, direction, industry, insights, material_ai, official_accounts, outline, research,
     synthesis,
@@ -783,6 +783,61 @@ def test_owned_item_also_runs_for_a_competitor_without_leaking_into_self(client,
     slide_2_1 = next(s for s in spec["slides"] if s["slide_id"] == "2-1")
     text = str(slide_2_1)
     assert "브랜드A" in text and "경쟁X" not in text
+
+
+def test_collection_mix_flags_press_heavy_research_and_thin_channels(client, fakes):
+    pid, plan = setup_project(client)
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    with SessionLocal() as db:
+        # 3 press materials (언론) — two of them duplicates of the same activity, so only 2 count.
+        srcs = [Source(id=new_id("SRC"), project_id=pid, title=f"기사{i}", source_type="web") for i in range(3)]
+        db.add_all(srcs)
+        db.flush()
+        mats = [Material(id=new_id("EV"), project_id=pid, source_id=srcs[i].id, brand_id="B1", entity="브랜드A",
+                         section_id="campaign", title=f"기사{i}", review_status="candidate") for i in range(3)]
+        mats[2].duplicate_of = mats[0].id  # 같은 활동을 다룬 기사 묶음은 1건
+        db.add_all(mats)
+        # an unavailable (access-walled) source under the same brand
+        walled_src = Source(id=new_id("SRC"), project_id=pid, title="로그인 필요", source_type="web", access_status="unavailable")
+        db.add(walled_src)
+        db.flush()
+        db.add(Material(id=new_id("EV"), project_id=pid, source_id=walled_src.id, brand_id="B1", entity="브랜드A",
+                        section_id="campaign", title="로그인 필요", review_status="excluded"))
+        # 4 influencer posts (below the 10 minimum)
+        for i in range(4):
+            db.add(PostRow(project_id=pid, batch_id="BATCH-x", post_id=f"p{i}",
+                           data={"brand_id": "B1", "owner_type": "creator"}))
+        db.commit()
+
+    r = ok(client.get(f"/v1/projects/{pid}/collection-mix"))
+    row = next(b for b in r["brands"] if b["brand_id"] == "B1")
+    assert row["channels"]["press"]["count"] == 2  # duplicate collapsed, excluded one not counted
+    assert row["channels"]["influencer"] == {"count": 4, "min": 10, "enough": False,
+                                             "label": "SNS·인플루언서", "action": "조사 계획에서 인플루언서 항목을 다시 모으세요"}
+    assert row["channels"]["owned"]["enough"] is False and row["channels"]["owned"]["total"] == 0  # 공식 계정 미등록
+    for c in ("cafe_blog", "community", "review"):
+        assert row["channels"][c] == {"count": 0, "label": {"cafe_blog": "카페·블로그", "community": "커뮤니티",
+                                                             "review": "리뷰"}[c], "enough": False, "not_implemented": True}
+    assert row["access_unavailable"] == 1
+    # press(2) / total(2 press + 4 influencer) = 1/3 ≈ 0.333 — not over 40% yet with this mix
+    assert row["press_ratio"] == round(2 / 6, 3)
+
+
+def test_collection_mix_owned_channel_enough_once_every_confirmed_account_is_recent(client, fakes):
+    pid, plan = setup_project(client)
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    cfg = proj["config"]
+    cfg["brands"][0]["official_profiles"] = [{"channel": "instagram", "url": "https://www.instagram.com/brand1/"}]
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"], "changes": {"brands": cfg["brands"]}}))
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "owned", "브랜드A")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]["status"] == "succeeded"
+
+    r = ok(client.get(f"/v1/projects/{pid}/collection-mix"))
+    row = next(b for b in r["brands"] if b["brand_id"] == "B1")
+    assert row["channels"]["owned"] == {"count": 1, "total": 1, "enough": True, "label": "공식 채널",
+                                        "action": "자료 확인에서 '다시 모으기'로 최근 자료를 받으세요"}
 
 
 def test_research_runs_without_a_run_budget(client, fakes, monkeypatch):
