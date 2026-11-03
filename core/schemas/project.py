@@ -46,9 +46,30 @@ class KeywordGroup(BaseModel):
     keywords: list[str] = Field(min_length=1)
 
 
+# 업종 (Phase 1-1): AI가 브랜드 이름으로 추천해 미리 채우고, 사람은 확인만 한다.
+INDUSTRIES: tuple[str, ...] = ("패션", "뷰티", "가전·IT", "생활용품", "식음료", "여행", "금융", "플랫폼", "통신", "자동차", "제약", "기타")
+# 리뷰 중심(판매 플랫폼 리뷰가 핵심 자료) · 지표 중심(거래량 등 KPI가 핵심) · 둘 다 가능.
+INDUSTRY_TYPES: dict[str, tuple[str, ...]] = {
+    "패션": ("review",), "뷰티": ("review",), "가전·IT": ("review",), "생활용품": ("review",),
+    "식음료": ("review",), "여행": ("review",),
+    "금융": ("metric",), "플랫폼": ("metric",), "통신": ("metric",), "자동차": ("metric",), "제약": ("metric",),
+    "기타": ("review", "metric"),
+}
+# 전자·뷰티·패션은 리뷰 분석이 필수(Phase 2에서 항목이 생김): 꺼도 막지 않지만 감사 기록을 남긴다.
+REQUIRED_REVIEW_INDUSTRIES: tuple[str, ...] = ("가전·IT", "뷰티", "패션")
+
+
 class OfficialProfile(BaseModel):
     channel: str
-    url: str
+    url: str = ""
+    # confirmed: 사람이 확인·입력함 · candidate: AI가 찾아 사람 확인 대기 · none: '이 채널 운영 안 함'으로 확인함.
+    status: Literal["confirmed", "candidate", "none"] = "confirmed"
+
+    @model_validator(mode="after")
+    def _url_unless_none(self) -> "OfficialProfile":
+        if self.status != "none" and not self.url.strip():
+            raise ValueError("공식 계정 URL이 필요합니다 (운영하지 않으면 status를 none으로 두세요)")
+        return self
 
 
 class Brand(BaseModel):
@@ -60,6 +81,10 @@ class Brand(BaseModel):
     competitors: list[str] = Field(min_length=1, max_length=4)
     keyword_groups: list[KeywordGroup] = Field(default_factory=list)
     official_profiles: list[OfficialProfile] = Field(default_factory=list)
+    # Competitors have no Brand object of their own, so their official accounts live here, by name.
+    competitor_profiles: dict[str, list[OfficialProfile]] = Field(default_factory=dict)
+    # 업종: AI가 브랜드 이름으로 추천(이미 값이 있으면 덮어쓰지 않음). None이면 아직 추천 전.
+    industry: Optional[str] = None
     # Benchmarks are manual case references only; never in share denominators (PRD 3).
     benchmarks: list[str] = Field(default_factory=list)
     # Other ways an article may name this brand, a competitor or a benchmark (e.g. 마땡킴 → Matin Kim),
@@ -74,17 +99,30 @@ class Brand(BaseModel):
             raise ValueError("brand id는 ^[A-Z][A-Z0-9]{0,4}$ 형식이어야 합니다")
         return v
 
+    @field_validator("industry")
+    @classmethod
+    def _industry_known(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in INDUSTRIES:
+            raise ValueError(f"업종은 {', '.join(INDUSTRIES)} 중 하나여야 합니다")
+        return v
+
     @model_validator(mode="after")
     def _aliases_for_known_entities(self) -> "Brand":
         known = {self.name, *self.competitors, *self.benchmarks}
         self.entity_aliases = {k: [a for a in dict.fromkeys(v) if a.strip() and a != k][:6]
                                for k, v in self.entity_aliases.items() if k in known}
+        self.competitor_profiles = {k: v for k, v in self.competitor_profiles.items()
+                                    if k in {*self.competitors, *self.benchmarks}}
         return self
 
     def names_for(self, entity: str) -> list[str]:
         """The entity's name and its other spellings."""
         own = self.aliases if entity == self.name else []
         return list(dict.fromkeys([entity, *own, *self.entity_aliases.get(entity, [])]))
+
+    def profiles_for(self, entity: str) -> list[OfficialProfile]:
+        """This entity's own official accounts: self from official_profiles, anyone else by name."""
+        return self.official_profiles if entity == self.name else self.competitor_profiles.get(entity, [])
 
     @property
     def entity_set(self) -> list[str]:

@@ -121,6 +121,46 @@ def _fill_aliases(db: Session, p: Project) -> bool:
     return True
 
 
+def _fill_industry(db: Session, p: Project) -> bool:
+    """Let the AI pick each brand's industry where none is set yet. Best effort, like _fill_aliases."""
+    from app.services import industry
+    from app.services.ledger import RunLedger
+    from integrations.base import ProviderError
+
+    if not settings.provider_configured("anthropic") or not industry.missing(p.config):
+        return False
+    db.commit()  # the ledger writes from its own session; SQLite allows one writer
+    cfg = json.loads(json.dumps(p.config))
+    try:
+        if not industry.fill(cfg, RunLedger(db, p.id, None)):
+            return False
+        p.config = json.loads(CoreProject.model_validate(cfg).model_dump_json())
+    except (ProviderError, ValidationError, ValueError):
+        return False
+    return True
+
+
+def _fill_official_accounts(db: Session, p: Project) -> bool:
+    """Let the AI propose candidate official accounts (self + competitors) where none exist yet."""
+    from app.services import official_accounts
+    from app.services.ledger import RunLedger
+    from integrations.base import ProviderError
+
+    if not settings.provider_configured("anthropic") or not settings.provider_configured("perplexity"):
+        return False
+    if not any(official_accounts.missing(b) for b in p.config.get("brands", [])):
+        return False
+    db.commit()
+    cfg = json.loads(json.dumps(p.config))
+    try:
+        if not official_accounts.fill(cfg, RunLedger(db, p.id, None)):
+            return False
+        p.config = json.loads(CoreProject.model_validate(cfg).model_dump_json())
+    except (ProviderError, ValidationError, ValueError):
+        return False
+    return True
+
+
 def project_out(db: Session, p: Project) -> dict:
     core = CoreProject.model_validate(p.config)
     cmp_start, cmp_end = comparison_window(core)
@@ -192,6 +232,10 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db), who: str = De
     db.commit()
     if _fill_aliases(db, p):
         db.commit()
+    if _fill_industry(db, p):
+        db.commit()
+    if _fill_official_accounts(db, p):
+        db.commit()
     return project_out(db, p)
 
 
@@ -233,8 +277,13 @@ def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get
         raise ApiError(422, "INVALID_PROJECT", f"수정할 수 없는 필드: {', '.join(sorted(bad))}")
     _save_config(db, p, body.changes, who)
     db.commit()
-    if "brands" in body.changes and _fill_aliases(db, p):
-        db.commit()
+    if "brands" in body.changes:
+        if _fill_aliases(db, p):
+            db.commit()
+        if _fill_industry(db, p):
+            db.commit()
+        if _fill_official_accounts(db, p):
+            db.commit()
     return project_out(db, p)
 
 
@@ -395,6 +444,10 @@ def start_run(project_id: str, body: RunIn, db: Session = Depends(get_db), who: 
         for iid in running.params.get("item_ids", []):
             busy[iid] = running.id
     if _fill_aliases(db, p):  # projects made before aliases existed
+        db.commit()
+    if _fill_industry(db, p):
+        db.commit()
+    if _fill_official_accounts(db, p):
         db.commit()
     clash = [i for i in items if i.id in busy]
     if clash:

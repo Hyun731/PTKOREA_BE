@@ -9,7 +9,10 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models import ProviderCache, ProviderCall, Source
-from app.services import aliases, case_commentary, direction, insights, material_ai, outline, research, synthesis
+from app.services import (
+    aliases, case_commentary, direction, industry, insights, material_ai, official_accounts, outline, research,
+    synthesis,
+)
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
 
@@ -53,10 +56,22 @@ class Fakes:
 
     def structured(self, system, user, schema, **kw):
         props = schema["properties"]
-        self._hit("aliases" if set(props) == {"brands"} else "structured")
-        if set(props) == {"brands"}:  # 다른 표기: only the competitor has a known English name
+        if set(props) == {"brands"}:
+            item_props = set(schema["properties"]["brands"]["items"]["properties"])
+            if item_props == {"name", "industry"}:  # 업종 추천: echo back whichever brand name was asked about
+                self._hit("industry")
+                names = user.split("<brands>\n")[-1].split("\n</brands>")[0].splitlines()
+                return CallResult(data={"brands": [{"name": n, "industry": "패션"} for n in names]},
+                                  usage={"model": "fake"}, cost_usd=0.001)
+            self._hit("aliases")  # 다른 표기: only the competitor has a known English name
             return CallResult(data={"brands": [{"name": "경쟁X", "aliases": ["CompetitorX", "경쟁X"]}]},
                               usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"profiles"}:  # 공식 계정 후보
+            self._hit("official_accounts")
+            return CallResult(data={"profiles": [
+                {"channel": "instagram", "url": "https://instagram.com/competitorx_official", "confident": True}]},
+                              usage={"model": "fake"}, cost_usd=0.001)
+        self._hit("structured")
         if "es_company" in props:  # 종합 장표: one line has a number and one points at a page that doesn't exist
             ref = re.search(r'"id": "([^"]+)"', user).group(1)
             return CallResult(data={
@@ -195,6 +210,12 @@ def fakes(monkeypatch):
                               instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
+    industry.STRUCTURED.clear()
+    industry.STRUCTURED.append(f.structured)
+    official_accounts.STRUCTURED.clear()
+    official_accounts.STRUCTURED.append(f.structured)
+    official_accounts.SEARCH.clear()
+    official_accounts.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
@@ -216,6 +237,9 @@ def fakes(monkeypatch):
     yield f
     research.PROVIDERS.clear()
     aliases.STRUCTURED.clear()
+    industry.STRUCTURED.clear()
+    official_accounts.STRUCTURED.clear()
+    official_accounts.SEARCH.clear()
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
     direction.STRUCTURED.clear()
@@ -705,6 +729,62 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     assert len(ok(client.get(f"/v1/projects/{pid}/owned-posts"))) == 2
 
 
+def test_owned_item_also_runs_for_a_competitor_without_leaking_into_self(client, fakes):
+    pid, plan = setup_project(client)
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    cfg = proj["config"]
+    cfg["brands"][0]["official_profiles"] = [{"channel": "instagram", "url": "https://www.instagram.com/brand1/"}]
+    cfg["brands"][0]["competitor_profiles"] = {
+        "경쟁X": [{"channel": "instagram", "url": "https://www.instagram.com/competitorx/"}]}
+    cfg["enabled_slides"] = cfg["enabled_slides"] + ["2-1"]
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"],
+                                                 "changes": {"brands": cfg["brands"], "enabled_slides": cfg["enabled_slides"]}}))
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    self_item, comp_item = item(plan, "owned", "브랜드A"), item(plan, "owned", "경쟁X")
+    assert self_item["required"] is True and comp_item["required"] is False  # 경쟁사는 선택
+
+    # Real Instagram post ids are globally unique per account; the shared fake must vary them by
+    # handle too, or the self/competitor runs collide on owned_posts' (project, channel, post_id).
+    def instagram_user_posts(handle, next_max_id=None, **kw):
+        fakes._hit("instagram_user_posts")
+        if next_max_id:
+            return CallResult(data={"posts": [], "next_max_id": None, "more_available": False}, cost_usd=0.002)
+        posts = [{"post_id": f"{handle}-p1", "posted_at": "2026-08-05", "likes": 500, "comments": 10, "views": None,
+                 "url": f"https://instagram.com/p/{handle}-p1/", "image_url": "https://img.example.com/p1.jpg"}]
+        return CallResult(data={"posts": posts, "next_max_id": None, "more_available": False}, cost_usd=0.002)
+
+    research.PROVIDERS["instagram_user_posts"] = instagram_user_posts
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs",
+                         json={"item_ids": [self_item["id"], comp_item["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"]
+    assert res[self_item["id"]]["status"] == "succeeded" and res[comp_item["id"]]["status"] == "succeeded"
+
+    facts = ok(client.get(f"/v1/projects/{pid}/facts"))
+    by_entity = {}
+    for f in facts:
+        if f["metric"] == "owned_followers" and f["dims"].get("channel") == "instagram":
+            by_entity[f["entity"]] = f
+    assert set(by_entity) == {"브랜드A", "경쟁X"}  # both collected, kept apart by entity
+
+    posts = ok(client.get(f"/v1/projects/{pid}/owned-posts"))
+    assert {p["entity"] for p in posts} == {"브랜드A", "경쟁X"}
+
+    # 2-1 is self-only: confirming every owned fact must never pull 경쟁X's numbers onto 브랜드A's slide.
+    for f in facts:
+        if f["metric"].startswith("owned_"):
+            ok(client.patch(f"/v1/facts/{f['id']}/review", params={"project_id": pid}, json={"action": "confirm"}))
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    assert next(s for s in sp["plan"] if s["slot_id"] == "2-1")["readiness"] == "ready"
+    build_job = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)["job"]
+    ok(client.get(f"/v1/jobs/{build_job['id']}"))
+    deck = ok(client.get(f"/v1/projects/{pid}/decks"))[0]
+    spec = ok(client.get(f"/v1/decks/{deck['id']}"))["spec"]
+    slide_2_1 = next(s for s in spec["slides"] if s["slide_id"] == "2-1")
+    text = str(slide_2_1)
+    assert "브랜드A" in text and "경쟁X" not in text
+
+
 def test_research_runs_without_a_run_budget(client, fakes, monkeypatch):
     """No RUN_BUDGET_USD = no cap: the run goes ahead and its cost is still recorded."""
     monkeypatch.delenv("RUN_BUDGET_USD", raising=False)
@@ -887,6 +967,28 @@ def test_no_material_about_the_subject_is_reported_and_not_bulk_confirmed(client
     ok(client.post(f"/v1/projects/{pid}/research-plan/accept-all"))
     after = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "campaign", "경쟁X")
     assert after["review_status"] == "pending"
+
+
+def test_create_project_fills_industry_and_official_accounts(client, fakes):
+    clear_cache()  # another test may have cached a request with the same (provider, endpoint, name)
+    p = ok(client.post("/v1/projects", json={
+        "name": "브랜드 카드 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "categories": ["러기지"]}]}), 201)
+    brand = p["config"]["brands"][0]
+    assert brand["industry"] == "패션"  # AI가 채움, 사람이 입력하지 않음
+    assert [prof["status"] for prof in brand["official_profiles"]] == ["candidate"]  # 확인 전까지는 후보일 뿐
+    assert brand["competitor_profiles"]["경쟁X"][0]["channel"] == "instagram"
+    assert fakes.calls["industry"] == 1
+    assert fakes.calls["official_accounts"] == 2  # self + 경쟁X, 한 번씩
+
+    # A planner-set industry is never overwritten, and an entity with an account already on file
+    # (even just a candidate) is not searched again.
+    pid = p["id"]
+    patched = ok(client.patch(f"/v1/projects/{pid}", json={"base_version": p["version"], "changes": {
+        "brands": [{**brand, "industry": "뷰티"}]}}))
+    assert patched["config"]["brands"][0]["industry"] == "뷰티"
+    assert fakes.calls["industry"] == 1  # still just the one call from create
+    assert fakes.calls["official_accounts"] == 2
 
 
 def test_missing_slides_say_why_and_what_to_do(client, fakes):

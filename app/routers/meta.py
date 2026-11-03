@@ -4,12 +4,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.config import settings
-from app.services import scope
+from app.services import official_accounts, scope
 from app.services.catalog import CHANNELS, DEFAULT_SLIDES, FRAMES, SECTIONS, channel_status
 from core.composition.build import TEMPLATE_LABEL
 from core.composition.tokens import tokens
 from core.rendering.preview import backend as render_backend
 from core.schemas.facts import MANUAL_METRICS
+from core.schemas.project import INDUSTRIES, INDUSTRY_TYPES, REQUIRED_REVIEW_INDUSTRIES
 
 router = APIRouter()
 
@@ -30,4 +31,9 @@ def meta():
         "manual_metrics": list(MANUAL_METRICS),
         "render_backend": render_backend(),
         "tokens": tokens(),
+        "industries": [{"id": i, "types": list(INDUSTRY_TYPES.get(i, ())), "review_required": i in REQUIRED_REVIEW_INDUSTRIES}
+                       for i in INDUSTRIES],
+        "official_channels": [{"id": c, "label": official_accounts.CHANNEL_LABEL[c],
+                               "auto_collect": c in official_accounts.AUTO_COLLECTABLE}
+                              for c in official_accounts.CHANNELS],
     }
