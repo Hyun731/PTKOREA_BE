@@ -285,6 +285,9 @@ class OwnedPost(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     brand_id: Mapped[str] = mapped_column(String(10), index=True)
+    # Whose post this is: the self brand's own name, or a competitor's (Phase 1-1 run_owned_item
+    # also collects competitor official accounts under the same self brand's brand_id).
+    entity: Mapped[str] = mapped_column(String(120), default="")
     channel: Mapped[str] = mapped_column(String(20))  # instagram (youtube: 2-5, not this slide)
     post_id: Mapped[str] = mapped_column(String(100))
     url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

@@ -16,8 +16,8 @@ def _asset(id_, status="accepted", tmp_path=None):
     return AssetRef(id=id_, source_id=None, path=path, width=800, height=450, review_status=status)
 
 
-def _post(id_, likes, tmp_path, asset_status="accepted", brand_id="B1"):
-    return OwnedPostRef(id=id_, brand_id=brand_id, channel="instagram", url=f"https://instagram.com/p/{id_}/",
+def _post(id_, likes, tmp_path, asset_status="accepted", brand_id="B1", entity="브랜드A"):
+    return OwnedPostRef(id=id_, brand_id=brand_id, entity=entity, channel="instagram", url=f"https://instagram.com/p/{id_}/",
                         posted_at=date(2026, 9, 1), likes=likes, comments=likes // 10,
                         asset=_asset(f"AS-{id_}", asset_status, tmp_path))
 

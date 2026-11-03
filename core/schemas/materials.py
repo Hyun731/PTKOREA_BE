@@ -62,6 +62,7 @@ class OwnedPostRef(BaseModel):
     """2-4 브랜드별 상위 게시물 — a channel-inventory post, not a campaign case Material."""
     id: str
     brand_id: str
+    entity: str = ""  # the self brand's own name, or a competitor's
     channel: str
     url: Optional[str] = None
     posted_at: Optional[date] = None

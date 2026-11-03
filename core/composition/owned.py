@@ -22,9 +22,12 @@ from core.schemas.slidespec import (
 )
 
 
-def _find(ctx: QuantContext, brand_id: str, metric: str, **dims: str) -> Optional[Fact]:
+def _find(ctx: QuantContext, brand_id: str, entity: str, metric: str, **dims: str) -> Optional[Fact]:
+    # entity, not just brand_id: run_owned_item also collects a competitor's own channel under the
+    # same self-brand's plan (Phase 1-1), so brand_id alone would risk picking up its numbers here.
     matches = [f for f in ctx.metrics.registry.facts.values()
-              if f.brand_id == brand_id and f.metric == metric and all(f.dims.get(k) == v for k, v in dims.items())]
+              if f.brand_id == brand_id and f.entity == entity and f.metric == metric
+              and all(f.dims.get(k) == v for k, v in dims.items())]
     return max(matches, key=lambda f: f.measured_at) if matches else None
 
 
@@ -39,14 +42,14 @@ def channel_inventory_page(ctx: QuantContext) -> Optional[SlideSpec]:
 
     brand_rows = []
     for b in ctx.project.brands:
-        ig = {"followers": _find(ctx, b.id, "owned_followers", channel="instagram"),
-             "posts": _find(ctx, b.id, "owned_posts_monthly", channel="instagram"),
-             "likes": _find(ctx, b.id, "owned_likes_median", channel="instagram")}
-        yt = {"subs": _find(ctx, b.id, "owned_followers", channel="youtube"),
-             "videos": _find(ctx, b.id, "owned_videos_monthly", channel="youtube", format="video"),
-             "shorts": _find(ctx, b.id, "owned_videos_monthly", channel="youtube", format="shorts"),
-             "views_video": _find(ctx, b.id, "owned_views_avg", channel="youtube", format="video"),
-             "views_shorts": _find(ctx, b.id, "owned_views_avg", channel="youtube", format="shorts")}
+        ig = {"followers": _find(ctx, b.id, b.name, "owned_followers", channel="instagram"),
+             "posts": _find(ctx, b.id, b.name, "owned_posts_monthly", channel="instagram"),
+             "likes": _find(ctx, b.id, b.name, "owned_likes_median", channel="instagram")}
+        yt = {"subs": _find(ctx, b.id, b.name, "owned_followers", channel="youtube"),
+             "videos": _find(ctx, b.id, b.name, "owned_videos_monthly", channel="youtube", format="video"),
+             "shorts": _find(ctx, b.id, b.name, "owned_videos_monthly", channel="youtube", format="shorts"),
+             "views_video": _find(ctx, b.id, b.name, "owned_views_avg", channel="youtube", format="video"),
+             "views_shorts": _find(ctx, b.id, b.name, "owned_views_avg", channel="youtube", format="shorts")}
         if not any(ig.values()) and not any(yt.values()):
             continue
         ig_paras = [p for p in [line("팔로워", ig["followers"], "count"), line("월평균 게시물", ig["posts"], "index", "건"),
@@ -109,7 +112,8 @@ def operating_gap_page(ctx: QuantContext) -> Optional[SlideSpec]:
     panels_data = []
     for b in ctx.project.brands:
         by_month = {f.dims["month"]: f for f in ctx.metrics.registry.facts.values()
-                   if f.brand_id == b.id and f.metric == "owned_posts_by_month" and f.dims.get("channel") == "instagram"}
+                   if f.brand_id == b.id and f.entity == b.name and f.metric == "owned_posts_by_month"
+                   and f.dims.get("channel") == "instagram"}
         if not by_month:
             continue
         months = sorted(by_month)
@@ -156,7 +160,7 @@ def top_posts_page(project: Project, owned_posts: list[OwnedPostRef]) -> Optiona
     자료 전체(이미지+수치)의 사람 검토 지점은 이미지 채택 하나뿐이다."""
     panels_data: list[tuple] = []
     for b in project.brands:
-        posts = [p for p in owned_posts if p.brand_id == b.id and p.channel == "instagram"
+        posts = [p for p in owned_posts if p.brand_id == b.id and p.entity == b.name and p.channel == "instagram"
                 and p.asset and p.asset.review_status == "accepted"]
         posts.sort(key=lambda p: p.likes or 0, reverse=True)
         if posts:
@@ -213,11 +217,12 @@ def youtube_performance_page(ctx: QuantContext) -> Optional[SlideSpec]:
     fact_ids: list[str] = []
     panels_data = []
     for b in ctx.project.brands:
-        subs = _find(ctx, b.id, "owned_followers", channel="youtube")
-        views_video = _find(ctx, b.id, "owned_views_avg", channel="youtube", format="video")
-        views_shorts = _find(ctx, b.id, "owned_views_avg", channel="youtube", format="shorts")
+        subs = _find(ctx, b.id, b.name, "owned_followers", channel="youtube")
+        views_video = _find(ctx, b.id, b.name, "owned_views_avg", channel="youtube", format="video")
+        views_shorts = _find(ctx, b.id, b.name, "owned_views_avg", channel="youtube", format="shorts")
         by_month = {f.dims["month"]: f for f in ctx.metrics.registry.facts.values()
-                   if f.brand_id == b.id and f.metric == "owned_posts_by_month" and f.dims.get("channel") == "youtube"}
+                   if f.brand_id == b.id and f.entity == b.name and f.metric == "owned_posts_by_month"
+                   and f.dims.get("channel") == "youtube"}
         if not (subs or views_video or views_shorts or by_month):
             continue
         panels_data.append((b, subs, views_video, views_shorts, by_month))

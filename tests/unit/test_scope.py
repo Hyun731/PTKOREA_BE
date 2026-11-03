@@ -84,3 +84,16 @@ def test_upload_line_only_when_an_upload_channel_is_chosen():
     p = project()
     assert not any("내부 자료" in x for x in scope.direction(scope.BY_ID["2-7"], by_id(p)["2-7"], p))
     assert any("내부 자료" in x for x in scope.direction(scope.BY_ID["2-4"], by_id(p)["2-4"], p))
+
+
+def test_owned_channel_item_covers_self_and_competitors_but_only_self_is_required():
+    p = project()
+    rows = [r for r in scope.generate_items(p) if r["scope_id"] == "2-6"]
+    assert {(r["entity"], r["role"], r["required"]) for r in rows} == {
+        ("샘소나이트", "self", True), ("리모와", "competitor", False), ("투미", "competitor", False)}
+
+
+def test_owned_channel_targets_narrow_which_competitors_but_never_drop_self():
+    p = project(scope=[{"item_id": "2-6", "targets": ["리모와"]}])
+    rows = [r for r in scope.generate_items(p) if r["scope_id"] == "2-6"]
+    assert {r["entity"] for r in rows} == {"샘소나이트", "리모와"}

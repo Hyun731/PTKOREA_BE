@@ -46,3 +46,16 @@ def test_channel_inventory_absent_without_owned_facts():
     assert not any(s.slide_id == "2-1" for s in result.deck.slides)
     slot = next(p for p in result.deck.plan if p.slot_id == "2-1")
     assert slot.readiness == "needs_input"
+
+
+def test_a_competitor_owned_fact_never_fills_the_self_brand_s_panel():
+    """Phase 1-1: run_owned_item also collects a competitor's own channel under the same brand_id
+    (no Brand object of its own). 2-1 is self-only, so a same-brand_id/metric/channel competitor
+    fact must stay invisible here even though 브랜드A has nothing of its own yet."""
+    project, _, _ = load_fixture()
+    facts = [_fact("owned_followers", 999000, "instagram", entity="경쟁X")]
+    cfg = project.model_copy(update={"enabled_slides": ["2-1"]})
+    result = build_deck(BuildInputs(project=cfg, facts=facts, materials=[], generated_on=date(2026, 10, 12)))
+    assert not any(s.slide_id == "2-1" for s in result.deck.slides)  # still needs_input, not 경쟁X's number
+    slot = next(p for p in result.deck.plan if p.slot_id == "2-1")
+    assert slot.readiness == "needs_input"

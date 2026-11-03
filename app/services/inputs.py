@@ -81,8 +81,8 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     owned_posts: list[OwnedPostRef] = []
     for op in db.scalars(select(OwnedPost).where(OwnedPost.project_id == project.id).order_by(OwnedPost.likes.desc())):
         asset = assets.get(op.asset_id) if op.asset_id else None
-        owned_posts.append(OwnedPostRef(id=op.id, brand_id=op.brand_id, channel=op.channel, url=op.url,
-                                        posted_at=op.posted_at, likes=op.likes, comments=op.comments,
+        owned_posts.append(OwnedPostRef(id=op.id, brand_id=op.brand_id, entity=op.entity, channel=op.channel,
+                                        url=op.url, posted_at=op.posted_at, likes=op.likes, comments=op.comments,
                                         asset=asset_ref(asset) if asset else None))
 
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}

@@ -68,8 +68,8 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             cause = None  # built from the other pages (1-1, recap): nothing of its own to fetch
         elif any(mine(m.brand_id, m.entity, m.section_id) for m in waiting):
             cause = "adopt"
-        elif section == "owned" and not any(b.official_profiles for b in brands):
-            cause = "setup"
+        elif section == "owned" and not any(p.status == "confirmed" for b in brands for p in b.official_profiles):
+            cause = "setup"  # a candidate account still needs a person's check before it can be collected
         elif section == "influencer" and not any((i.inputs or {}).get("post_urls") or (i.inputs or {}).get("hashtags")
                                                  for i in related):
             cause = "setup"
@@ -77,7 +77,7 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             cause = "collect"
         slot.cause = cause
         if cause == "setup":
-            slot.action = ("설정에서 공식 계정 URL을 넣으세요" if section == "owned"
+            slot.action = ("설정에서 공식 계정 URL을 넣거나, AI가 찾은 후보를 확인하세요" if section == "owned"
                            else "조사 계획에서 게시물 URL이나 해시태그를 넣으세요")
         elif cause == "collect" and any((i.last_result or {}).get("status") == "failed" for i in related):
             slot.action = "찾은 자료가 없습니다 — 조사 계획에서 다른 표기(영문명 등)를 확인하고 다시 모으세요"

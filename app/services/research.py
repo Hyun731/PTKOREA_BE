@@ -758,9 +758,11 @@ MAX_OWNED_PAGES = 40  # per channel per item — paging starts at today, so it m
 
 
 def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
-    """2-1: 공식 계정 전체 게시물에서 팔로워·기간 내 게시 빈도·반응을 집계. Brand.official_profiles에
-    등록된 handle만 쓴다 — 어떤 계정이 '자사'인지 추측하지 않는다. 콘텐츠 타겟·톤앤매너·자체/공동 게시
-    비중처럼 판단이 필요한 열은 여기서 만들지 않는다(core/composition/owned.py 참고)."""
+    """2-1: 공식 계정 전체 게시물에서 팔로워·기간 내 게시 빈도·반응을 집계. 자사는 Brand.official_profiles,
+    경쟁사는 Brand.competitor_profiles에 등록된(확인된) handle만 쓴다 — 어떤 계정이 '그 주체'인지
+    추측하지 않는다. 콘텐츠 타겟·톤앤매너·자체/공동 게시 비중처럼 판단이 필요한 열은 여기서 만들지
+    않는다(core/composition/owned.py 참고). 2-1·2-2·2-4·2-5는 자사 전용 장표라, 경쟁사 결과는
+    item.entity로만 구분해 기록해 둔다 — 나란히 비교하거나 장표에 끌어오지 않는다."""
     from statistics import median
 
     from core.ingestion.owned import monthly_post_count_fact, owned_fact
@@ -775,10 +777,11 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
     p = _providers()
     core = core_project(project)
     brand = core.brand(item.brand_id)
+    entity = item.entity
     out: dict = {"created": 0, "facts": 0, "channels": [], "errors": []}
-    profiles = {prof.channel: prof for prof in brand.official_profiles}
+    profiles = {prof.channel: prof for prof in brand.profiles_for(entity) if prof.status == "confirmed"}
     if not profiles:
-        out["errors"].append({"code": "NEEDS_INPUT", "message": "Brand.official_profiles에 공식 계정 URL이 없습니다"})
+        out["errors"].append({"code": "NEEDS_INPUT", "message": f"{entity}의 공식 계정 URL이 확인(채택)되지 않았습니다"})
         return out
 
     today = date.today()
@@ -826,25 +829,26 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                 break
         else:
             out["errors"].append({"code": "PARTIAL", "message": f"IG 게시물: {MAX_OWNED_PAGES}페이지 상한으로 {start_s}까지 닿지 못함"})
-        if followers is not None and add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_followers",
+        if followers is not None and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_followers",
                                                      value=Decimal(followers), channel="instagram",
                                                      period_start=item.period_start, period_end=item.period_end,
                                                      measured_at=today, label="Instagram 팔로워")):
             out["facts"] += 1
-        if add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_posts_monthly",
+        if add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_posts_monthly",
                           value=Decimal(str(round(len(posts) / months, 2))), channel="instagram",
                           period_start=item.period_start, period_end=item.period_end, measured_at=today,
                           label="Instagram 월평균 게시물")):
             out["facts"] += 1
         likes = [po["likes"] for po in posts if po["likes"] is not None]
-        if likes and add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_likes_median",
+        if likes and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_likes_median",
                                     value=Decimal(str(median(likes))), channel="instagram",
                                     period_start=item.period_start, period_end=item.period_end, measured_at=today,
                                     label="Instagram 중앙값 좋아요")):
             out["facts"] += 1
         # 2-4 브랜드별 상위 게시물: 기간 내 좋아요 상위 3개만 이미지까지 받는다(전수 다운로드 안 함).
         existing_posts = set(db.scalars(select(OwnedPost.post_id).where(
-            OwnedPost.project_id == project.id, OwnedPost.channel == "instagram", OwnedPost.brand_id == item.brand_id)))
+            OwnedPost.project_id == project.id, OwnedPost.channel == "instagram", OwnedPost.brand_id == item.brand_id,
+            OwnedPost.entity == entity)))
         top3 = sorted((po for po in posts if po["likes"] is not None and po.get("image_url")
                       and po["post_id"] not in existing_posts), key=lambda po: po["likes"], reverse=True)[:3]
         for po in top3:
@@ -853,9 +857,9 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
             except ProviderError as exc:
                 out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
                 continue
-            asset = _save_owned_asset(db, project.id, img_data, f"{brand.name} Instagram 게시물")
-            db.add(OwnedPost(id=new_id("OP"), project_id=project.id, brand_id=item.brand_id, channel="instagram",
-                             post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
+            asset = _save_owned_asset(db, project.id, img_data, f"{entity} Instagram 게시물")
+            db.add(OwnedPost(id=new_id("OP"), project_id=project.id, brand_id=item.brand_id, entity=entity,
+                             channel="instagram", post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
                              likes=po["likes"], comments=po["comments"], asset_id=asset.id if asset else None,
                              research_item_id=item.id))
             out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
@@ -864,7 +868,7 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
             if po["posted_at"]:
                 ig_by_month[po["posted_at"][:7]] = ig_by_month.get(po["posted_at"][:7], 0) + 1
         for mo, count in ig_by_month.items():
-            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=brand.name, channel="instagram", month=mo,
+            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=entity, channel="instagram", month=mo,
                                            count=count, measured_at=today)):
                 out["facts"] += 1
         out["channels"].append({"channel": "instagram", "handle": handle, "posts_in_period": len(posts)})
@@ -903,20 +907,20 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                 break
         else:
             out["errors"].append({"code": "PARTIAL", "message": f"YouTube 영상: {MAX_OWNED_PAGES}페이지 상한으로 {start_s}까지 닿지 못함"})
-        if subs is not None and add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_followers",
+        if subs is not None and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_followers",
                                                 value=Decimal(subs), channel="youtube", period_start=item.period_start,
                                                 period_end=item.period_end, measured_at=today, label="YouTube 구독자")):
             out["facts"] += 1
         groups = {"video": [v for v in videos if not v["is_short"]], "shorts": [v for v in videos if v["is_short"]]}
         for fmt, group in groups.items():
             fmt_label = "동영상" if fmt == "video" else "쇼츠"
-            if add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_videos_monthly",
+            if add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_videos_monthly",
                               value=Decimal(str(round(len(group) / months, 2))), channel="youtube",
                               period_start=item.period_start, period_end=item.period_end, measured_at=today,
                               label=f"YouTube 월평균 {fmt_label}", extra_dims={"format": fmt})):
                 out["facts"] += 1
             views = [v["views"] for v in group if v["views"] is not None]
-            if views and add(owned_fact(brand_id=item.brand_id, entity=brand.name, metric="owned_views_avg",
+            if views and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_views_avg",
                                         value=Decimal(str(round(sum(views) / len(views), 1))), channel="youtube",
                                         period_start=item.period_start, period_end=item.period_end, measured_at=today,
                                         label=f"YouTube {fmt_label} 평균 조회", extra_dims={"format": fmt})):
@@ -926,7 +930,7 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
             if v["published_at"]:
                 yt_by_month[v["published_at"][:7]] = yt_by_month.get(v["published_at"][:7], 0) + 1
         for mo, count in yt_by_month.items():
-            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=brand.name, channel="youtube", month=mo,
+            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=entity, channel="youtube", month=mo,
                                            count=count, measured_at=today)):
                 out["facts"] += 1
         out["channels"].append({"channel": "youtube", **yt_ref, "videos_in_period": len(videos)})

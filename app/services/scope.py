@@ -57,7 +57,7 @@ ITEMS: list[dict] = [
      "collector": None, "channels": ["upload", "community"], "period": "inherit",
      "output": "타깃 한 줄 + 니즈 3개 + 근거 원문 2개"},
     {"id": "2-6", "part": "company", "group": "채널과 활동", "title": "Owned 채널 운영 현황",
-     "question": "{brand} 공식 Instagram·YouTube 채널 전체 게시물(팔로워·게시 빈도·반응)", "subject": "self",
+     "question": "{brand} 공식 Instagram·YouTube 채널 전체 게시물(팔로워·게시 빈도·반응)", "subject": "self_and_competitor",
      "collector": "owned", "templates": ["2-1", "2-2", "2-4", "2-5"],
      "channels": ["instagram_owned", "youtube_owned", "naver_blog"], "default_channels": ["instagram_owned", "youtube_owned"],
      "period": "inherit", "period_hint": "권장 최근 6개월", "needs": "브랜드 공식 계정 URL",
@@ -313,6 +313,10 @@ def section_windows(project: Project) -> list[dict]:
 
 def _subjects(spec: dict, brand, targets: Optional[list[str]]) -> list[tuple[str, str]]:
     pick = (lambda names: [n for n in names if targets is None or n in targets])
+    if spec["subject"] == "self_and_competitor":
+        # Self is always in (required); competitors are collected too when they have official
+        # accounts registered — `targets` can still narrow which competitors, same as "competitor".
+        return [(brand.name, "self"), *((c, "competitor") for c in pick(brand.competitors))]
     if spec["subject"] == "competitor":
         return [(c, "competitor") for c in pick(brand.competitors)]
     if spec["subject"] == "benchmark":
