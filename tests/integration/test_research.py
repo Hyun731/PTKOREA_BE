@@ -1332,3 +1332,28 @@ def test_missing_slides_say_why_and_what_to_do(client, fakes):
     assert gaps["5-recap"]["cause"] is None
     missing = {m["slot_id"]: m for m in ok(client.get(f"/v1/projects/{pid}/outline"))["missing"]}
     assert missing["C1c"]["cause"] == "adopt" and missing["C1c"]["action"]
+
+
+def test_competitor_ad_mix_checks_and_stores_latest_only(client, fakes, monkeypatch):
+    """Phase 3-2 경쟁사 포지셔닝 보강: 확인할 때마다 그 경쟁사의 최신 1건으로 남는다."""
+    from app.services import ad_library
+
+    pid, plan = setup_project(client)
+    brand_id = ok(client.get(f"/v1/projects/{pid}"))["config"]["brands"][0]["id"]
+
+    monkeypatch.setattr(ad_library, "fetch_ad_mix",
+                        lambda entity, country="KR": {"status": "unavailable", "reason": "접근 불가 — 봇 확인 페이지로 막힘"})
+    out = ok(client.post(f"/v1/projects/{pid}/ad-mix", json={"brand_id": brand_id, "entity": "경쟁X"}))
+    assert out["status"] == "unavailable" and out["mix"] is None
+
+    bad = ok(client.post(f"/v1/projects/{pid}/ad-mix", json={"brand_id": brand_id, "entity": "없는경쟁사"}), 422)
+    assert bad["error"]["code"] == "INVALID_INPUT"
+
+    monkeypatch.setattr(ad_library, "fetch_ad_mix",
+                        lambda entity, country="KR": {"status": "ok", "mix": {"review": 40, "influencer": 35, "product": 25},
+                                                      "ad_count": 20})
+    out2 = ok(client.post(f"/v1/projects/{pid}/ad-mix", json={"brand_id": brand_id, "entity": "경쟁X"}))
+    assert out2["status"] == "ok" and out2["mix"] == {"review": 40, "influencer": 35, "product": 25}
+
+    rows = ok(client.get(f"/v1/projects/{pid}/ad-mix"))
+    assert len(rows) == 1 and rows[0]["id"] == out["id"] == out2["id"]  # 경쟁사당 최신 1건만

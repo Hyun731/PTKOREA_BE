@@ -52,6 +52,22 @@ class SynthesisRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class CompetitorAdMix(Base):
+    """경쟁사 포지셔닝(3-5) 보강 — 유료 소셜 광고 소재 유형 비중(Phase 3-2). Meta 광고 라이브러리
+    공개 페이지를 시도해 본 결과를 경쟁사마다 최신 1건만 남긴다. 로그인·봇 차단으로 막히면
+    status="unavailable"에 이유를 적는다 — 흔한 정상 결과이지 오류가 아니다."""
+    __tablename__ = "competitor_ad_mix"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    brand_id: Mapped[str] = mapped_column(String(10), index=True)
+    entity: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(20))  # ok | unavailable
+    mix: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # {"review": pct, "influencer": pct, "product": pct}
+    ad_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ResearchPlan(Base):
     __tablename__ = "research_plans"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)

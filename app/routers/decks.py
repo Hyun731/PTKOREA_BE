@@ -22,6 +22,7 @@ from app.services.inputs import load_inputs
 from app.storage import get_storage
 from core.composition.build import build_deck
 from core.quality.qc import run_qc, self_brand_names
+from core.schemas.project import Project as CoreProject
 
 router = APIRouter()
 
@@ -502,3 +503,54 @@ def review_case_commentary(commentary_id: str, body: CommentaryReview, db: Sessi
     audit(db, p.id, "case_commentary", c.id, body.action, after={"material_id": c.material_id}, actor=who)
     db.commit()
     return commentary_out(c)
+
+
+# ------------------------------------------------------------------ Phase 3-2 경쟁사 포지셔닝(3-5): 광고 소재 믹스
+
+class AdMixIn(BaseModel):
+    brand_id: str
+    entity: str
+
+
+def ad_mix_out(r) -> dict:
+    return {"id": r.id, "brand_id": r.brand_id, "entity": r.entity, "status": r.status, "mix": r.mix,
+            "ad_count": r.ad_count, "reason": r.reason, "checked_at": r.checked_at}
+
+
+@router.post("/projects/{project_id}/ad-mix")
+def check_ad_mix(project_id: str, body: AdMixIn, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """경쟁사의 유료 소셜 광고 소재 유형 비중을 Meta 광고 라이브러리 공개 페이지에서 시도해 본다.
+    로그인·봇 확인으로 막히면 흔한 정상 결과로 "접근 불가"를 남긴다(우회 시도 없음)."""
+    from app.models import CompetitorAdMix
+    from app.services import ad_library
+
+    p = get_project(db, project_id)
+    core = CoreProject.model_validate(p.config)
+    try:
+        brand = core.brand(body.brand_id)
+    except KeyError:
+        raise not_found("브랜드")
+    if body.entity not in brand.competitors:
+        raise ApiError(422, "INVALID_INPUT", f"{brand.name}의 경쟁사가 아닙니다: {body.entity}")
+    out = ad_library.fetch_ad_mix(body.entity)
+    row = db.scalar(select(CompetitorAdMix).where(CompetitorAdMix.project_id == project_id,
+                                                  CompetitorAdMix.brand_id == body.brand_id,
+                                                  CompetitorAdMix.entity == body.entity))
+    if row is None:
+        row = CompetitorAdMix(id=new_id("ADMIX"), project_id=project_id, brand_id=body.brand_id, entity=body.entity)
+        db.add(row)
+    row.status, row.mix = out["status"], out.get("mix")
+    row.ad_count, row.reason, row.checked_at = out.get("ad_count"), out.get("reason"), utcnow()
+    audit(db, project_id, "competitor_ad_mix", row.id, "check",
+          after={"entity": body.entity, "status": row.status}, actor=who)
+    db.commit()
+    return ad_mix_out(row)
+
+
+@router.get("/projects/{project_id}/ad-mix")
+def list_ad_mix(project_id: str, db: Session = Depends(get_db)):
+    from app.models import CompetitorAdMix
+    get_project(db, project_id)
+    rows = db.scalars(select(CompetitorAdMix).where(CompetitorAdMix.project_id == project_id)
+                      .order_by(CompetitorAdMix.checked_at.desc()))
+    return [ad_mix_out(r) for r in rows]
