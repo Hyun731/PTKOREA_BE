@@ -22,8 +22,10 @@ from core.schemas.project import Project as CoreProject
 PRESS_WARN_RATIO = 0.4
 RECENT_DAYS = 183  # ~6 months
 INFLUENCER_MIN = 10
-# Not implemented yet (Phase 1-3 / Phase 2): always 0, shown so the gap is visible, not hidden.
-NOT_IMPLEMENTED = ("cafe_blog", "community", "review")
+VOC_MIN = 20
+COMMUNITY_SITES_MIN = 3
+# Not implemented yet (Phase 2): always 0, shown so the gap is visible, not hidden.
+NOT_IMPLEMENTED = ("review",)
 CHANNEL_LABEL = {"press": "언론", "owned": "공식 채널", "influencer": "SNS·인플루언서",
                  "cafe_blog": "카페·블로그", "community": "커뮤니티", "review": "리뷰"}
 
@@ -58,6 +60,29 @@ def _influencer(posts: list[PostRow], brand_id: str) -> dict:
            "action": "조사 계획에서 인플루언서 항목을 다시 모으세요"}
 
 
+def _voc(db: Session, project_id: str, brand_id: str, entity: str) -> dict:
+    from app.services.research import VOC_SITE_CHANNEL, _host
+
+    rows = db.execute(select(Material, Source).join(Source, Source.id == Material.source_id).where(
+        Material.project_id == project_id, Material.brand_id == brand_id, Material.entity == entity,
+        Material.section_id == "voc", Material.duplicate_of.is_(None))).all()
+    counts = {"cafe_blog": 0, "community": 0}
+    sites: dict[str, set[str]] = {"cafe_blog": set(), "community": set()}
+    for _, s in rows:
+        host = _host(s.original_url or "")
+        channel = next((c for site, c in VOC_SITE_CHANNEL.items() if host == site or host.endswith(f".{site}")), None)
+        if channel:
+            counts[channel] += 1
+            sites[channel].add(host)
+    cafe_blog = {"count": counts["cafe_blog"], "min": VOC_MIN, "enough": counts["cafe_blog"] >= VOC_MIN,
+                "action": "조사 계획에서 소비자 원문 항목을 다시 모으세요"}
+    community = {"count": counts["community"], "min": VOC_MIN, "sites": len(sites["community"]),
+                "sites_min": COMMUNITY_SITES_MIN,
+                "enough": counts["community"] >= VOC_MIN and len(sites["community"]) >= COMMUNITY_SITES_MIN,
+                "action": "조사 계획에서 소비자 원문 항목을 다시 모으세요"}
+    return {"cafe_blog": cafe_blog, "community": community}
+
+
 def _access_unavailable(db: Session, project_id: str, brand_id: str) -> int:
     rows = db.scalars(select(Source.id).join(Material, Material.source_id == Source.id).where(
         Material.project_id == project_id, Material.brand_id == brand_id, Source.access_status == "unavailable"))
@@ -75,9 +100,12 @@ def compute(db: Session, project: Project) -> list[dict]:
         press = {"count": _press(materials, b.id), "label": CHANNEL_LABEL["press"]}
         owned = {**_owned(facts, b, b.id), "label": CHANNEL_LABEL["owned"]}
         influencer = {**_influencer(posts, b.id), "label": CHANNEL_LABEL["influencer"]}
+        voc = _voc(db, project.id, b.id, b.name)
         not_ready = {c: {"count": 0, "label": CHANNEL_LABEL[c], "enough": False, "not_implemented": True}
                     for c in NOT_IMPLEMENTED}
-        channels = {"press": press, "owned": owned, "influencer": influencer, **not_ready}
+        channels = {"press": press, "owned": owned, "influencer": influencer,
+                   "cafe_blog": {**voc["cafe_blog"], "label": CHANNEL_LABEL["cafe_blog"]},
+                   "community": {**voc["community"], "label": CHANNEL_LABEL["community"]}, **not_ready}
         total = sum(c["count"] for c in channels.values())
         press_ratio = round(press["count"] / total, 3) if total else 0.0
         out.append({

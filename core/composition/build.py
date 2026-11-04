@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional
 
-from core.composition import cases, overview, owned, quant, synthesis
+from core.composition import cases, customer, overview, owned, quant, synthesis
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
 )
@@ -36,20 +36,22 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
     "search": ("2", "검색 경쟁", "Check", "브랜드명 · 카테고리 조합어 · 키 타겟 검색 점유"),
     "influencer": ("3", "인플루언서", "Check", "크리에이터 게시물 관측 지표"),
     "campaign": ("4", "캠페인·시장 사례", "Check", "활동 사실 · 관측 성과 · 근거"),
+    "voc": ("5", "소비자 원문", "Customer", "카페·블로그·커뮤니티 원문 · 인식 경로"),
     "recap": ("5", "Recap", "Insight", "본문 근거 요약"),
     "appendix": ("A", "Appendix", "Appendix", "출처"),
 }
 TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-4": "owned",
                     "2-5": "owned", "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search",
-                    "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "5-recap": "recap",
-                    "A-source": "appendix", "ES": "recap", "SWOT": "recap", "NEXT": "recap"}
+                    "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "5-1": "voc",
+                    "5-2": "voc", "5-recap": "recap", "A-source": "appendix", "ES": "recap", "SWOT": "recap",
+                    "NEXT": "recap"}
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
-                  "M1": "시장·타겟 근거", "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary",
-                  "SWOT": "SWOT", "NEXT": "다음 단계 제언"}
-SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "recap", "appendix"]
+                  "M1": "시장·타겟 근거", "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로", "5-recap": "Recap",
+                  "A-source": "출처 표", "ES": "Executive Summary", "SWOT": "SWOT", "NEXT": "다음 단계 제언"}
+SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
 # A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
 CHAPTERS: dict[str, tuple[str, str, str, str]] = {
@@ -70,16 +72,17 @@ SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
                     "2-8a": "competitor", "2-8b": "competitor", "2-8c": "competitor", "2-8d": "competitor",
+                    "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "SWOT": "summary", "NEXT": "summary"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
 PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "2-8a", "2-8b", "2-8c", "2-8d",
-              "C1c", "C2c", "C1b", "C2b", "5-recap", "SWOT", "NEXT", "A-source"]
+              "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "SWOT", "NEXT", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
                ("benchmark", "competitor", "C1b", "C2b", "Benchmark", "벤치마크 사례")]
 TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1",
-                  "5-recap", "A-source"]
+                  "5-1", "5-2", "5-recap", "A-source"]
 FRAME_TEMPLATES = {"cover", "index", "divider", "end"}
 
 
@@ -270,6 +273,13 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             market = [m for m in mats if m.section_id == "market"]
             slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
                  "채택된 시장·타겟 근거 없음", part=part)
+        voc = [m for m in mats if m.section_id == "voc" and m.entity == (c.project.brands[0].name if c.project.brands else None)]
+        if on("5-1"):
+            s = customer.voc_summary_page(c.project, voc)
+            slot("5-1", "5-1", [s] if s else [], "채택된 소비자 원문 없음(긍정·부정 분류 필요)", part=part)
+        if on("5-2"):
+            s = customer.awareness_channel_page(c.project, voc)
+            slot("5-2", "5-2", [s] if s else [], "인식 경로가 드러난 소비자 원문 없음", part=part)
         if on("5-recap"):
             s = quant.recap(c)
             slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음", part=part)
@@ -444,8 +454,8 @@ def _korean_breadcrumb(slide: SlideSpec, shown: dict[str, str], labels: dict[str
             return
 
 
-CHIPS = {"overview": "OVERVIEW", "owned": "OWNED", "search": "SEARCH", "influencer": "INFLUENCER", "recap": "RECAP",
-        "appendix": "APPENDIX"}
+CHIPS = {"overview": "OVERVIEW", "owned": "OWNED", "search": "SEARCH", "influencer": "INFLUENCER", "voc": "VOC",
+        "recap": "RECAP", "appendix": "APPENDIX"}
 
 
 def _chip(slide: SlideSpec) -> str:
