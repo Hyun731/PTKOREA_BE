@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -66,6 +66,45 @@ class CompetitorAdMix(Base):
     ad_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReviewSnapshot(Base):
+    """커머스 리뷰 한 번의 수집 스냅샷(Phase 2) — 플랫폼 하나, 상품(정확히 그 URL의 SKU) 하나,
+    측정 시점 하나. 평점은 절대 다른 플랫폼과 합치거나 평균 내지 않는다 — 행 하나가 그 기준 그대로다.
+    review_status는 Material과 같은 candidate/accepted/excluded 검토 흐름(자동 채택 없음)."""
+    __tablename__ = "review_snapshots"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    brand_id: Mapped[str] = mapped_column(String(10), index=True)
+    entity: Mapped[str] = mapped_column(String(120))  # 자사 브랜드명 또는 경쟁사명
+    role: Mapped[str] = mapped_column(String(20))  # self | competitor
+    platform: Mapped[str] = mapped_column(String(20))  # musinsa | 29cm | oliveyoung | smartstore | coupang
+    product_name: Mapped[str] = mapped_column(String(300))
+    product_url: Mapped[str] = mapped_column(Text)  # 정확한 상품 페이지 — 옵션·SKU를 섞지 않기 위한 기준
+    access_status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | unavailable
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # unavailable일 때 이유
+    rating: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rating_scale: Mapped[float] = mapped_column(Float, default=5.0)  # 만점 기준 — 플랫폼마다 다를 수 있어 명시
+    review_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    sponsored_count: Mapped[int] = mapped_column(Integer, default=0)  # 체험단·협찬으로 식별된 건수(따로 집계)
+    measured_at: Mapped[date] = mapped_column(Date)
+    review_status: Mapped[str] = mapped_column(String(20), default="candidate")  # candidate|accepted|excluded
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReviewKeyword(Base):
+    """그 스냅샷에서 뽑은 긍정·부정 키워드 하나(Phase 2) — 원문 인용·게시일·표본 수·분류 방법이
+    모두 있어야 저장된다(app.services.commerce의 검증을 거친 것만 들어온다)."""
+    __tablename__ = "review_keywords"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("review_snapshots.id", ondelete="CASCADE"), index=True)
+    sentiment: Mapped[str] = mapped_column(String(10))  # positive | negative
+    keyword: Mapped[str] = mapped_column(String(100))
+    sample_size: Mapped[int] = mapped_column(Integer)  # 이 키워드를 포함한 리뷰 표본 수
+    method: Mapped[str] = mapped_column(Text)  # 분류 방법 한 줄
+    quotes: Mapped[list] = mapped_column(JSON)  # [{"text": "...", "posted_at": "YYYY-MM-DD"}], 1개 이상
+    blocks_purchase: Mapped[bool] = mapped_column(Boolean, default=False)  # 구매를 막는 불만인지
+    review_status: Mapped[str] = mapped_column(String(20), default="candidate")  # candidate|accepted|excluded
 
 
 class ResearchPlan(Base):
