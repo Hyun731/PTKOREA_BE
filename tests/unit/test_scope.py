@@ -31,8 +31,10 @@ def test_catalog_runs_company_competitor_customer():
 def test_everything_is_in_by_default_and_slides_follow_items():
     p = project()
     r = by_id(p)
-    # 3-10(업종 KPI)은 지표 중심 업종에서만 기본으로 켜진다 — 이 프로젝트는 업종 미설정.
-    assert all(x["enabled"] for iid, x in r.items() if iid != "3-10") and not r["3-10"]["enabled"]
+    # 3-10(업종 KPI)·2-9(커머스 리뷰)는 업종에 따라서만 기본으로 켜진다 — 이 프로젝트는 업종 미설정.
+    industry_gated = {"3-10", "2-9"}
+    assert all(x["enabled"] for iid, x in r.items() if iid not in industry_gated)
+    assert not r["3-10"]["enabled"] and not r["2-9"]["enabled"]
     assert {"2-1", "2-4", "2-8a", "3-1", "C1", "M1", "cover", "A-source"} <= set(scope.slides(p))
     off = project(scope=[{"item_id": "2-6", "enabled": False}, {"item_id": "2-8", "enabled": False}])
     left = set(scope.slides(off))
@@ -49,6 +51,17 @@ def test_industry_kpi_item_defaults_on_only_for_metric_industries():
                               "industry": "금융"}])
     assert by_id(metric)["3-10"]["enabled"] is True  # 지표 중심 업종
     assert "M2" in scope.slides(metric)
+
+
+def test_commerce_review_item_defaults_on_only_for_review_industries():
+    review = project(brands=[{"id": "B1", "name": "샘소나이트", "competitors": ["리모와"], "categories": ["러기지"],
+                              "industry": "패션"}])
+    assert by_id(review)["2-9"]["enabled"] is True  # 리뷰 중심 업종(전자·뷰티·패션은 필수)
+    assert "CM1" in scope.slides(review)
+    metric = project(brands=[{"id": "B1", "name": "은행A", "competitors": ["은행B"], "categories": ["금융"],
+                              "industry": "금융"}])
+    assert by_id(metric)["2-9"]["enabled"] is False  # 지표 중심 업종
+    assert "CM1" not in scope.slides(metric)
 
 
 def test_direction_reads_like_a_plan():

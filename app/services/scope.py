@@ -32,6 +32,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "market": {"web"},
     "market_kpi": {"web"},
     "search_trend": {"google_trends"},
+    "commerce_review": {"commerce_review"},
     "search": {"search_naver"},
     "voc": {"community", "naver_blog"},
 }
@@ -75,6 +76,12 @@ ITEMS: list[dict] = [
      "channels": ["web", "instagram", "youtube", "tvcf"], "default_channels": ["web", "instagram", "youtube"],
      "period": "inherit", "period_hint": "권장 최근 12~24개월", "limit": {"label": "새 사례 카드 상한", "default": 10},
      "output": "캠페인마다 기간·대행사·모델·카피"},
+    # Phase 2 커머스 리뷰: 리뷰 중심 업종에서만 기본으로 켠다(전자·뷰티·패션은 꺼도 감사 기록).
+    {"id": "2-9", "part": "company", "group": "채널과 활동", "title": "커머스 리뷰",
+     "question": "{brand}·경쟁사({competitors}) 대표 상품의 판매 플랫폼 리뷰(평점·리뷰 수·긍정·부정 키워드)",
+     "subject": "self_and_competitor", "collector": "commerce_review", "templates": ["CM1", "CM2"],
+     "channels": ["commerce_review"], "default_channels": ["commerce_review"], "period": "inherit",
+     "period_hint": "최신 수집 시점 기준", "output": "플랫폼별 대표 상품 평점·리뷰 수 + 긍정·부정 키워드(원문 근거)"},
     {"id": "4-1", "part": "company", "group": "주요 이슈", "title": "긍정 이슈",
      "question": "{brand} 신규 기능·비전 발표·서비스 확장·수상·투자 소식", "subject": "self", "collector": None,
      "channels": ["web"], "period": 6, "period_hint": "최근 3~6개월, 최신순", "output": "이슈마다 제목·매체·일자·요약 2줄"},
@@ -211,6 +218,8 @@ def _default_setting(spec: dict, project: Project) -> ScopeSetting:
     enabled = True  # everything is in by default; the planner only takes out what this project doesn't need
     if spec["id"] == "3-10":  # 업종 KPI: 지표 중심 업종에서만 기본으로 켠다(사람이 다시 켤 수는 있음)
         enabled = any("metric" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
+    if spec["id"] == "2-9":  # 커머스 리뷰: 리뷰 중심 업종에서만 기본으로 켠다(전자·뷰티·패션은 꺼도 감사 기록)
+        enabled = any("review" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
     section = next((sec for sec, iid in SECTION_ITEM.items() if iid == spec["id"]), None)
     w = project.window_for(section) if section else None
     if w and (w.start, w.end) != (project.period.start, project.period.end):  # a window set before scope existed

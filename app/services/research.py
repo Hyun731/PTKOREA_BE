@@ -1380,6 +1380,11 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                     # Google Trends는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.
                     r = run_search_trend_item(s, ledger, project, item)
                     made = r.get("facts", 0)
+                elif item.section_id == "commerce_review":
+                    # 무신사는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.
+                    from app.services.commerce_collect import run_commerce_item
+                    r = run_commerce_item(s, ledger, project, item)
+                    made = r.get("created", 0)
                 else:
                     r = {"errors": [{"code": "NOT_IN_STAGE", "message": "자동 수집 대상이 아닙니다"}]}
                     made = 0

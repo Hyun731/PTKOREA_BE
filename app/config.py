@@ -48,6 +48,7 @@ class Settings:
             "apify": ["APIFY_TOKEN"],  # actor defaults to apify~instagram-hashtag-scraper
             "naver": ["NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET"],
             "google_trends": [],  # 발급받는 키가 없는 공개 경로(Phase 3-4) — 항상 "구성됨"으로 본다
+            "commerce": [],  # 무신사 등 공개 페이지 — 발급받는 키 없음(Phase 2)
         }[provider]
         aliases = {"APIFY_TOKEN": ("APIFY_TOKEN", "APIFY_API_TOKEN")}
         return all(any(_env(name) for name in aliases.get(k, (k,))) for k in keys)

@@ -289,6 +289,21 @@ def read_project(project_id: str, db: Session = Depends(get_db)):
     return project_out(db, get_project(db, project_id))
 
 
+def _audit_commerce_review_disabled(db: Session, p: Project, before: CoreProject, after: CoreProject, who: str) -> None:
+    """Phase 2 업종 규칙: 전자·뷰티·패션은 리뷰 항목이 필수(기본 켜짐) — 사람이 꺼도 막지는 않지만
+    감사 기록에 남긴다."""
+    from core.schemas.project import REQUIRED_REVIEW_INDUSTRIES
+
+    required = any(b.industry in REQUIRED_REVIEW_INDUSTRIES for b in after.brands)
+    if not required:
+        return
+    was_on, is_on = "CM1" in scope.slides(before), "CM1" in scope.slides(after)
+    if was_on and not is_on:
+        audit(db, p.id, "project", p.id, "commerce_review_disabled",
+              after={"industries": [b.industry for b in after.brands if b.industry in REQUIRED_REVIEW_INDUSTRIES]},
+              actor=who)
+
+
 @router.patch("/projects/{project_id}")
 def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get_db), who: str = Depends(actor)):
     p = get_project(db, project_id)
@@ -299,7 +314,10 @@ def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get
     bad = set(body.changes) - allowed
     if bad:
         raise ApiError(422, "INVALID_PROJECT", f"수정할 수 없는 필드: {', '.join(sorted(bad))}")
-    _save_config(db, p, body.changes, who)
+    before = CoreProject.model_validate(p.config) if {"scope", "enabled_slides"} & set(body.changes) else None
+    core = _save_config(db, p, body.changes, who)
+    if before is not None:
+        _audit_commerce_review_disabled(db, p, before, core, who)
     db.commit()
     if "brands" in body.changes:
         if _fill_aliases(db, p):

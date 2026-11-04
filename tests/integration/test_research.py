@@ -10,8 +10,8 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import FactRow, Material, PostRow, ProviderCache, ProviderCall, Source, new_id, utcnow
 from app.services import (
-    aliases, case_commentary, direction, hero_products, industry, insights, material_ai, official_accounts, outline,
-    research, synthesis,
+    aliases, case_commentary, commerce_collect, direction, hero_products, industry, insights, material_ai,
+    official_accounts, outline, research, synthesis,
 )
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
@@ -76,6 +76,18 @@ class Fakes:
             self._hit("hero_products")
             return CallResult(data={"products": [{"name": "에어맥스 95", "confident": True}]},
                               usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"reviews"}:  # 커머스 리뷰 키워드 분류 (Phase 2) — 간단한 키워드 규칙으로 흉내
+            self._hit("commerce_keywords")
+            rows = []
+            for m in re.finditer(r"^(\d+)\. (.+)$", user, re.M):
+                idx, text = int(m.group(1)), m.group(2)
+                if "쿠션감이 좋" in text:
+                    rows.append({"index": idx, "sentiment": "positive", "keywords": ["쿠션감"], "blocks_purchase": False})
+                elif "쿠션감이 부족" in text:
+                    rows.append({"index": idx, "sentiment": "negative", "keywords": ["쿠션감"], "blocks_purchase": True})
+                else:
+                    rows.append({"index": idx, "sentiment": "neutral", "keywords": [], "blocks_purchase": False})
+            return CallResult(data={"reviews": rows}, usage={"model": "fake"}, cost_usd=0.002)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
             data: dict = {}
@@ -250,6 +262,8 @@ def fakes(monkeypatch):
     hero_products.STRUCTURED.append(f.structured)
     hero_products.SEARCH.clear()
     hero_products.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
+    commerce_collect.STRUCTURED.clear()
+    commerce_collect.STRUCTURED.append(f.structured)
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
@@ -276,6 +290,7 @@ def fakes(monkeypatch):
     official_accounts.SEARCH.clear()
     hero_products.STRUCTURED.clear()
     hero_products.SEARCH.clear()
+    commerce_collect.STRUCTURED.clear()
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
     direction.STRUCTURED.clear()
@@ -587,6 +602,60 @@ def test_search_trend_item_fails_quietly_when_google_trends_blocks_it(client, fa
                                                 "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["TR1"]}}))
     missing = {m["slot_id"]: m for m in ok(client.get(f"/v1/projects/{pid}/outline"))["missing"]}
     assert missing["TR1"]["cause"] == "collect"
+
+
+def test_commerce_review_item_collects_rating_and_keywords_excluding_sponsored(client, fakes, monkeypatch):
+    """Phase 2 커머스 리뷰: 확정된 대표 상품의 평점·리뷰 수·긍정부정 키워드를 모은다(체험단 리뷰는 집계에서 뺌)."""
+    from app.models import ReviewKeyword, ReviewSnapshot
+    from integrations.commerce import musinsa
+
+    p = ok(client.post("/v1/projects", json={
+        "name": "커머스 리뷰 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "categories": ["신발"], "industry": "패션",
+                   "hero_products": [{"name": "에어맥스 95", "status": "confirmed"}]}]}), 201)
+    pid = p["id"]
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "commerce_review", "브랜드A")
+    assert it["role"] == "self"
+
+    monkeypatch.setattr(musinsa, "find_product",
+                        lambda name, **kw: {"goods_no": "123", "url": "https://www.musinsa.com/products/123"})
+    monkeypatch.setattr(musinsa, "fetch_product", lambda goods_no, **kw: {
+        "platform": "musinsa", "product_name": "에어맥스 95", "product_url": "https://www.musinsa.com/products/123",
+        "brand_name": "나이키", "rating": 4.5, "rating_scale": 5.0, "review_count": 120, "access_status": "ok"})
+    monkeypatch.setattr(musinsa, "fetch_reviews", lambda goods_no, **kw: [
+        {"text": "쿠션감이 좋아요 재구매 의사 있습니다", "rating": 5, "posted_at": "2026-08-01", "sponsored": False},
+        {"text": "쿠션감이 부족해서 별로예요", "rating": 2, "posted_at": "2026-08-02", "sponsored": False},
+        {"text": "체험단으로 제공받아 작성한 후기입니다. 쿠션감이 좋아요", "rating": 5, "posted_at": "2026-08-03", "sponsored": True},
+    ])
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded" and res["snapshots"] == 1
+
+    with SessionLocal() as db:
+        snap = db.scalars(select(ReviewSnapshot).where(ReviewSnapshot.project_id == pid)).one()
+        assert snap.rating == 4.5 and snap.review_count == 120 and snap.review_status == "candidate"
+        assert snap.sponsored_count == 1  # 체험단 리뷰 1건은 따로 셈
+        kws = db.scalars(select(ReviewKeyword).where(ReviewKeyword.snapshot_id == snap.id)).all()
+        by_sentiment = {k.sentiment: k for k in kws}
+        assert set(by_sentiment) == {"positive", "negative"}
+        assert by_sentiment["positive"].sample_size == 1  # 체험단 리뷰는 키워드 집계에서 빠짐(2건이 아니라 1건)
+        assert by_sentiment["negative"].blocks_purchase is True
+        assert by_sentiment["negative"].quotes[0]["posted_at"] == "2026-08-02"
+
+
+def test_commerce_review_item_requires_a_confirmed_hero_product(client, fakes):
+    """대표 상품을 확정하지 않으면 수집하지 않는다(자동 채택 금지의 연장)."""
+    p = ok(client.post("/v1/projects", json={
+        "name": "대표 상품 없음", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "industry": "패션"}]}), 201)
+    pid = p["id"]
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "commerce_review", "브랜드A")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "failed" and res["errors"][0]["code"] == "NO_PRODUCT"
 
 
 def test_deck_build_asks_before_building_with_pending_review(client, fakes):
