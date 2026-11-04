@@ -203,6 +203,9 @@ class Material(Base):
     voc_sponsored: Mapped[bool] = mapped_column(Boolean, default=False)  # 체험단·협찬 — 키워드 집계에서 뺀다
     # Phase 3-2 산업 카테고리 분석 — section_id="market" 카드에만 채워짐 (core.schemas.materials.MARKET_ASPECTS).
     market_aspect: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Phase 3-3 사례 귀속 정리 — section_id="campaign" 카드에만 채워짐. 함께 등장하는 다른 자사
+    # 브랜드(주 대상은 아님)의 id 목록. 주 대상은 brand_id/entity 자체가 그 브랜드로 다시 붙는다.
+    related_brand_ids: Mapped[list] = mapped_column(JSON, default=list)
     # Person-picked for a one-slide deep dive (full image + period + numbered insights) instead of the card grid.
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     order: Mapped[int] = mapped_column(Integer, default=0)

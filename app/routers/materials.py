@@ -268,6 +268,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
         "target_segment": m.target_segment, "ai_detail": m.ai_detail, "ai_implication": m.ai_implication,
         "voc_sentiment": m.voc_sentiment, "voc_topic": m.voc_topic, "voc_awareness": m.voc_awareness,
         "voc_sponsored": m.voc_sponsored, "market_aspect": m.market_aspect,
+        "related_brand_ids": m.related_brand_ids or [],
         "created_at": m.created_at, "updated_at": m.updated_at,
     }
     if detail:

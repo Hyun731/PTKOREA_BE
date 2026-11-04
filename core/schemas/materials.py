@@ -108,3 +108,6 @@ class CaseMaterial(BaseModel):
     voc_sponsored: bool = False
     # Phase 3-2 산업 카테고리 분석 — section_id="market" 카드에만 채워짐.
     market_aspect: Optional[Literal["size_growth", "channel", "player"]] = None
+    # Phase 3-3 사례 귀속 정리 — section_id="campaign" 카드에만 채워짐. 함께 등장하는 다른 자사
+    # 브랜드(주 대상은 아님)의 id 목록.
+    related_brand_ids: list[str] = Field(default_factory=list)

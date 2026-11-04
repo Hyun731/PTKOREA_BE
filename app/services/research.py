@@ -175,7 +175,7 @@ EXTRACT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["relevant", "relevance_note", "summary", "activity_date", "activity_date_end", "event_name", "same_as",
-                "target_segment", "market_aspect", "facts", "claims"],
+                "target_segment", "market_aspect", "primary_brand", "related_brands", "facts", "claims"],
     "properties": {
         "relevant": {"type": "boolean"},
         "summary": {"type": "string"},
@@ -186,6 +186,8 @@ EXTRACT_SCHEMA = {
         "same_as": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "target_segment": {"anyOf": [{"type": "string", "enum": list(TARGET_SEGMENTS)}, {"type": "null"}]},
         "market_aspect": {"anyOf": [{"type": "string", "enum": list(MARKET_ASPECTS)}, {"type": "null"}]},
+        "primary_brand": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "related_brands": {"type": "array", "items": {"type": "string"}},
         "facts": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "required": ["label", "metric", "value", "quote", "substituted"],
@@ -215,6 +217,10 @@ EXTRACT_SYSTEM = """당신은 브랜드 마케팅 진단 보고서를 돕는 리
 - event_name: 이 원문이 다루는 활동을 가리키는 짧은 이름(예: "키크니 협업 직장인 공감 이벤트"). 협업 상대·제품명·장소처럼 활동을 구별하는 말을 넣습니다.
 - same_as: <existing>에 나열된 기존 자료 중 이 원문과 같은 활동(같은 협업·같은 팝업·같은 출시)을 다룬 것이 있으면 그 ID, 없으면 null. 같은 브랜드의 다른 활동이면 null입니다.
 - target_segment: 이 활동이 겨냥한 대상이 원문에 명시적으로 드러날 때만 다음 중 하나를 고릅니다 — "대학생·Gen Z"(대학생·캠퍼스·Z세대), "20~30대", "직장인", "30~40대·가족"(가족 단위·자녀 동반), "외국인 관광객"(인바운드·방한 관광객), "팝업·OOH·PR"(팝업스토어·옥외광고·전시 행사 자체가 핵심일 때). 원문에 뚜렷한 근거가 없으면 추측하지 말고 null.
+- primary_brand / related_brands: 조사 대상 설명에 '다른 자사 브랜드' 목록이 함께 주어졌을 때만 씁니다. 원문이 실제로는
+  그 목록 중 하나의 활동을 주로 다루면(조사 대상이 아니라) primary_brand에 그 브랜드 이름을 그대로 적습니다 — 조사
+  대상 그대로가 맞으면 null. 두 자사 브랜드가 함께 등장하는 활동이면 주로 다루는 쪽을 primary_brand로, 나머지를
+  related_brands에 적습니다(목록에 없으면 둘 다 null/빈 배열).
 - market_aspect: 조사 대상이 '산업 카테고리 분석'(시장 규모·유통 구조·주요 플레이어)일 때만, 이 원문이 주로 다루는 내용 하나를 고릅니다 — "size_growth"(시장 규모·성장률·전망), "channel"(유통 채널 구조·판매 경로 비중), "player"(주요 플레이어·경쟁 구도·점유율). 그 외 조사에서는 null.
 원문에 없는 내용, 다른 브랜드의 수치, 추정치는 넣지 않습니다. 관련 내용이 없으면 relevant=false와 빈 배열을 돌려줍니다."""
 
@@ -532,12 +538,29 @@ def _extract_prompt(db: Session, project: Project, item: ResearchItem, m: Materi
                 if o.id != m.id and usable(o) and o.id not in pending][:15]
     focus = (scope.setting_for(core, item.scope_id) or {}).get("focus")
     listing = "\n".join(f"- {o.id} | {o.title[:80]} | {o.event_name or ''} | {o.activity_date or ''}" for o in existing)
+    # Phase 3-3: 사례 귀속 정리 — 자사 브랜드가 여럿이면, 이 원문이 실은 다른 자사 브랜드 활동일 수 있다고 알려 준다.
+    other_self = [b.name for b in core.brands if b.id != item.brand_id] if item.role == "self" else []
     user = (f"조사 대상: {item.entity} (자사 브랜드 {brand.name}의 {'자사' if item.role == 'self' else '경쟁·참고'} 대상)\n"
+            + (f"다른 자사 브랜드: {', '.join(other_self)}\n" if other_self else "") +
             f"조사 질문: {item.question}\n조사 기간: {item.period_start} ~ {item.period_end}\n"
             + (f"조사 방향: {focus}\n" if focus else "") +
             f"<existing>\n{listing or '(없음)'}\n</existing>\n"
             f"원문 URL: {src.original_url}\n<page>\n{text[:PAGE_CHARS_FOR_AI]}\n</page>")
     return user, [o.id for o in existing]
+
+
+def reassign_primary_brand(m: Material, item: ResearchItem, core: Project, data: dict) -> None:
+    """Phase 3-3 사례 귀속 정리: 캠페인 원문이 실은 다른 자사 브랜드의 활동이면 그 브랜드로 다시
+    붙이고(브랜드 A 장표에 B의 사례가 끼어들지 않도록), 함께 등장하는 다른 자사 브랜드는
+    related_brand_ids에 남긴다(장표에는 '관련 사례'로만 연결할 수 있도록 — 완전한 카드 복제는 없음)."""
+    if item.role != "self" or m.section_id != "campaign":
+        return
+    self_by_name = {b.name: b.id for b in core.brands}
+    primary_name = data.get("primary_brand")
+    if primary_name in self_by_name and primary_name != m.entity:
+        m.brand_id, m.entity = self_by_name[primary_name], primary_name
+    related = [n for n in dict.fromkeys(data.get("related_brands") or []) if n in self_by_name and n != m.entity]
+    m.related_brand_ids = [self_by_name[n] for n in related]
 
 
 def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Material, src: Source, text: str,
@@ -553,6 +576,7 @@ def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Mate
         m.target_segment = data["target_segment"]
     if m.section_id == "market" and data.get("market_aspect") in MARKET_ASPECTS:
         m.market_aspect = data["market_aspect"]
+    reassign_primary_brand(m, item, core_project(project), data)
     same_id = data.get("same_as")
     same = db.get(Material, same_id) if same_id in existing_ids else None
     if same and not same.duplicate_of and same.id != m.id:  # the AI judged it the same activity

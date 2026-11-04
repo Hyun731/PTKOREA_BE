@@ -131,10 +131,15 @@ class Fakes:
             return CallResult(data={"detail": "짧은 기간에 완판된 협업 캡슐 컬렉션", "implication": "자사도 한정판 캡슐로 화제성 확보"},
                               usage={"input_tokens": 100, "output_tokens": 30, "model": "fake"}, cost_usd=0.001)
         if "facts" in schema["properties"]:  # extraction
+            # Phase 3-3: when the prompt names other self brands, claim the content is really about
+            # the first of them — otherwise stay inert (existing single-brand tests are unaffected).
+            other_brands = re.search(r"다른 자사 브랜드: (.+)", user)
+            primary_brand = other_brands.group(1).split(", ")[0] if other_brands else None
             return CallResult(data={
                 "relevant": True, "relevance_note": "", "activity_date": "2026-03-01",
                 "summary": "성수동 팝업에서 신제품 체험 공간을 열어 방문객을 모은 활동입니다.",
                 "market_aspect": "channel",  # Phase 3-2: only applied when the material's section_id is "market"
+                "primary_brand": primary_brand, "related_brands": [],
                 "facts": [{"label": "방문객", "metric": "count", "value": "12000", "quote": "행사 기간 방문객은 12000명으로 집계됐다.",
                           "substituted": True},  # Phase 3-2: only applied when section_id is "market_kpi"
                           {"label": "가짜", "metric": "count", "value": "999", "quote": "원문에 없는 문장."}],
@@ -368,6 +373,32 @@ def test_market_kpi_item_only_appears_for_metric_industries_and_marks_substitute
     assert mats
     facts = [f for m in mats for f in m["facts"]]
     assert facts and all(f["dims"].get("substituted") == "true" for f in facts)
+
+
+def test_campaign_case_reassigns_to_the_brand_it_is_really_about(client, fakes):
+    """Phase 3-3 사례 귀속 정리: 자사 브랜드가 여럿이면, 실은 다른 브랜드 활동인 원문은 그 브랜드로
+    옮겨 붙고(귀속 판정), 그 브랜드의 장표 구간에만 들어간다(장표 분배)."""
+    p = ok(client.post("/v1/projects", json={
+        "name": "귀속 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"]},
+                  {"id": "B2", "name": "브랜드B", "competitors": ["경쟁Y"]}]}), 201)
+    pid = p["id"]
+    fakes.search_name = "브랜드B"  # the fake's canned article titles must name the entity being researched
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    b_campaign = item(plan, "campaign", "브랜드B")
+    assert b_campaign["role"] == "self"
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [b_campaign["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+
+    mats = ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "campaign"}))
+    article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
+    assert article["brand_id"] == "B1" and article["entity"] == "브랜드A"  # B가 수집했지만 실은 A의 활동
+
+    # B의 소셜 게시물("브랜드B 영상")은 추출을 거치지 않아 원래 그대로 B에 남는다 — 그건 의도된 동작.
+    # 재귀속 대상인 기사("성수 팝업")는 A쪽 구간에만 나타나고 B쪽에는 나타나지 않아야 한다.
+    slots = {s["slot_id"]: s for s in ok(client.get(f"/v1/projects/{pid}/slide-plan"))["plan"] if s["slot_id"].startswith("C1-")}
+    assert slots["C1-B1"]["brand_id"] == "B1" and "성수 팝업" in slots["C1-B1"]["reason"]
+    assert slots["C1-B2"]["brand_id"] == "B2" and "성수 팝업" not in slots["C1-B2"]["reason"]
 
 
 def test_budget_and_provider_failure_keep_existing_material(client, fakes, monkeypatch):
