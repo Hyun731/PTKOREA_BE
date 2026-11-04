@@ -72,17 +72,23 @@ class Fakes:
                 {"channel": "instagram", "url": "https://instagram.com/competitorx_official", "confident": True}]},
                               usage={"model": "fake"}, cost_usd=0.001)
         self._hit("structured")
-        if "es_company" in props:  # 종합 장표: one line has a number and one points at a page that doesn't exist
-            ref = re.search(r'"id": "([^"]+)"', user).group(1)
-            return CallResult(data={
-                "es_company": [{"text": "크리에이터 게시물 중심의 자사 관측", "ref": ref}],
-                "es_competitor": [{"text": "경쟁 세트 안 검색 점유 우위 축소", "ref": "2-8a"},
-                                  {"text": "점유 12퍼센트 하락", "ref": "2-8a"}, {"text": "없는 장 근거", "ref": "Z-9"}],
-                "es_customer": [], "task": "검색 점유 방어를 위한 접점 확대 필요",
-                "swot_lead": "자사 접점은 넓고 검색 점유는 낮은 편", "S": ["크리에이터 협업 접점"], "W": ["검색 점유 우위 축소"],
-                "O": ["카테고리 조합어 검색 수요"], "T": ["경쟁사 검색 점유 상승"], "next_lead": "검색 점유 회복 중심의 다음 단계",
-                "next": [{"title": "검색 접점 확대", "body": "크리에이터 콘텐츠에 브랜드명 검색 유도 문구 배치"}]},
-                usage={"model": "fake"}, cost_usd=0.01)
+        if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
+            data: dict = {}
+            if "es_company" in props:  # one line has a number and one points at a page that doesn't exist
+                ref = re.search(r'"id": "([^"]+)"', user).group(1)
+                data.update({
+                    "es_company": [{"text": "크리에이터 게시물 중심의 자사 관측", "ref": ref}],
+                    "es_competitor": [{"text": "경쟁 세트 안 검색 점유 우위 축소", "ref": "2-8a"},
+                                      {"text": "점유 12퍼센트 하락", "ref": "2-8a"}, {"text": "없는 장 근거", "ref": "Z-9"}],
+                    "es_customer": [], "task": "검색 점유 방어를 위한 접점 확대 필요",
+                    "insights": [{"title": "검색 우위 축소", "body": "경쟁 세트 안에서 검색 점유가 줄어드는 흐름"}]})
+            if "swot_lead" in props:
+                data.update({"swot_lead": "자사 접점은 넓고 검색 점유는 낮은 편", "S": ["크리에이터 협업 접점"],
+                            "W": ["검색 점유 우위 축소"], "O": ["카테고리 조합어 검색 수요"], "T": ["경쟁사 검색 점유 상승"]})
+            if "problem_lead" in props:
+                data.update({"problem_lead": "검색 접점에서 경쟁 열위", "problems": ["검색 노출 열세", "콘텐츠 반응 둔화"],
+                            "solutions": [{"title": "검색 접점 확대", "body": "크리에이터 콘텐츠에 브랜드명 검색 유도 문구 배치"}]})
+            return CallResult(data=data, usage={"model": "fake"}, cost_usd=0.01)
         if "action" in props:  # 초안 흐름 장표 피드백
             fb = user.split("<feedback>")[-1]
             if "빼" in fb:
@@ -1147,16 +1153,76 @@ def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
     pid, _ = setup_project(client)
     for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
-    out = ok(client.post(f"/v1/projects/{pid}/synthesis", json={"instruction": "검색 위주로"}))
-    assert out["es"]["competitor"] == ["경쟁 세트 안 검색 점유 우위 축소"]  # the line with a number and the bad ref are out
+    brand_id = ok(client.get(f"/v1/projects/{pid}"))["config"]["brands"][0]["id"]
+
+    out = ok(client.post(f"/v1/projects/{pid}/synthesis", json={"brand_id": brand_id, "instruction": "검색 위주로"}))
+    assert out["version"] == 1 and out["active"] and not out["stale"]
+    assert out["types"] == ["insight"]  # 기본값
+    assert out["data"]["insight"]["competitor"] == ["경쟁 세트 안 검색 점유 우위 축소"]  # 숫자 포함 줄과 없는 장표 참조 줄은 빠짐
     assert any("숫자" in d for d in out["dropped"]) and any("Z-9" in d for d in out["dropped"])
     flow = ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]
     ids = [x.get("slide_id") for x in flow if x["kind"] == "slide"]
-    assert ids[0] == "ES" and ids.index("SWOT") > ids.index("5-recap") and "NEXT" in ids
+    assert ids[0] == "ES" and "INSIGHT" in ids and "SWOT" not in ids  # 고른 유형만 만들어진다
     issues = ok(client.get(f"/v1/projects/{pid}/slide-plan"))["qc"]["issues"]
-    assert not [i for i in issues if i["slide_id"] in ("ES", "SWOT", "NEXT") and i["severity"] == "block"], issues
-    ok(client.delete(f"/v1/projects/{pid}/synthesis"))
+    assert not [i for i in issues if i["slide_id"] in ("ES", "INSIGHT") and i["severity"] == "block"], issues
+
+    # 다시 쓰기: 결과가 이미 있어도 다시 쓸 수 있고, 덮어쓰지 않고 새 버전으로 남는다(버그 수정 확인).
+    out2 = ok(client.post(f"/v1/projects/{pid}/synthesis",
+                          json={"brand_id": brand_id, "types": ["insight", "swot"], "instruction": "검색 위주로"}))
+    assert out2["version"] == 2 and out2["active"] and out2["types"] == ["insight", "swot"]
+    versions = ok(client.get(f"/v1/projects/{pid}/synthesis"))
+    assert [(v["version"], v["active"]) for v in versions] == [(2, True), (1, False)]
+    ids2 = [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"] if x["kind"] == "slide"]
+    assert "SWOT" in ids2  # 새 버전의 유형이 반영됨
+
+    # 되돌리기: 새로 만들지 않고 이전 버전을 다시 활성으로.
+    v1 = next(v for v in versions if v["version"] == 1)
+    back = ok(client.post(f"/v1/synthesis-runs/{v1['id']}/activate"))
+    assert back["active"] and back["version"] == 1
+    versions = ok(client.get(f"/v1/projects/{pid}/synthesis"))
+    assert [(v["version"], v["active"]) for v in versions] == [(2, False), (1, True)]
+    ids3 = [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"] if x["kind"] == "slide"]
+    assert "SWOT" not in ids3  # v1에는 insight만 있었으므로 되돌아감
+
+    ok(client.delete(f"/v1/projects/{pid}/synthesis", params={"brand_id": brand_id}))
     assert "ES" not in [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]]
+
+
+def test_synthesis_scopes_pages_to_their_own_brand(client, fakes, monkeypatch):
+    """자사 브랜드가 여럿이면 브랜드마다 따로 — 다른 브랜드의 본문 장표가 섞이지 않는다."""
+    from app.models import Project
+
+    p = ok(client.post("/v1/projects", json={
+        "name": "멀티 브랜드", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X1"], "categories": ["러기지"]},
+                  {"id": "B2", "name": "브랜드B", "competitors": ["경쟁Y1"], "categories": ["러기지"]}]}), 201)
+    pid = p["id"]
+
+    pages = [{"id": "1-1", "chapter": "company", "title": "자사 채널 A", "lead": "A 운영 현황", "points": [], "brand": "브랜드A"},
+             {"id": "1-2", "chapter": "company", "title": "자사 채널 B", "lead": "B 운영 현황", "points": [], "brand": "브랜드B"},
+             {"id": "3-1", "chapter": "customer", "title": "검색 추이", "lead": "검색 추이 공유", "points": []}]
+    monkeypatch.setattr(synthesis, "body_pages", lambda db, project: pages)
+
+    seen: list[str] = []
+
+    def fake_structured(system, user, schema, **kw):
+        seen.append(user)
+        return CallResult(data={"es_company": [], "es_competitor": [], "es_customer": [], "task": "", "insights": []},
+                          usage={"model": "fake"}, cost_usd=0.001)
+
+    synthesis.STRUCTURED.clear()
+    synthesis.STRUCTURED.append(fake_structured)
+    try:
+        with SessionLocal() as db:
+            project = db.get(Project, pid)
+            synthesis.generate(db, project, "B1", ["insight"])
+            synthesis.generate(db, project, "B2", ["insight"])
+            db.rollback()
+    finally:
+        synthesis.STRUCTURED.clear()
+
+    assert "1-1" in seen[0] and "3-1" in seen[0] and "1-2" not in seen[0]  # B1: 자신의 장표 + 공유 장표만
+    assert "1-2" in seen[1] and "3-1" in seen[1] and "1-1" not in seen[1]  # B2: 자신의 장표 + 공유 장표만
 
 
 def test_articles_naming_a_competitor_another_way_are_kept(client, fakes):

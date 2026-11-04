@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Header
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -90,13 +90,30 @@ def slide_feedback(project_id: str, slide_id: str, body: SlideFeedbackIn, db: Se
 
 
 class SynthesisIn(BaseModel):
+    brand_id: str
+    types: list[str] = Field(default_factory=list, max_length=3)
     instruction: str = Field(default="", max_length=400)
+
+
+def synthesis_run_out(db: Session, p, r) -> dict:
+    from app.services import synthesis
+    stale = r.body_fingerprint != synthesis.body_fingerprint(db, p, r.brand_id)
+    return {"id": r.id, "project_id": r.project_id, "brand_id": r.brand_id, "version": r.version, "types": r.types,
+            "data": r.data, "instruction": r.instruction, "dropped": r.dropped, "active": r.active, "stale": stale,
+            "created_at": r.created_at}
+
+
+def _deactivate_active(db: Session, project_id: str, brand_id: str) -> None:
+    from app.models import SynthesisRun
+    db.query(SynthesisRun).filter(SynthesisRun.project_id == project_id, SynthesisRun.brand_id == brand_id,
+                                  SynthesisRun.active.is_(True)).update({"active": False})
 
 
 @router.post("/projects/{project_id}/synthesis")
 def make_synthesis(project_id: str, body: SynthesisIn, db: Session = Depends(get_db), who: str = Depends(actor)):
-    """Write Executive Summary, SWOT and 다음 단계 from the deck's body pages (again, when asked)."""
+    """종합 장표를 쓴다(다시 쓰기 포함) — 자사 브랜드 하나, 고른 유형만, 덮어쓰지 않고 새 버전으로 남긴다."""
     from app.config import settings
+    from app.models import SynthesisRun
     from app.services import synthesis
     from integrations.base import ProviderError
 
@@ -104,24 +121,60 @@ def make_synthesis(project_id: str, body: SynthesisIn, db: Session = Depends(get
     if not settings.provider_configured("anthropic"):
         raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "AI 키가 설정되지 않았습니다", ".env의 ANTHROPIC_API_KEY를 확인하세요")
     try:
-        out = synthesis.generate(db, p, body.instruction)
+        out = synthesis.generate(db, p, body.brand_id, body.types, body.instruction)
+        fp = synthesis.body_fingerprint(db, p, body.brand_id)
+    except KeyError:
+        raise not_found("브랜드")
     except ValueError as exc:
         raise ApiError(409, "NO_BODY_PAGES", str(exc), "자료 확인에서 자료를 채택하세요")
     except ProviderError as exc:
         raise ApiError(502, exc.code, f"AI 응답을 받지 못했습니다: {exc.message}", "잠시 뒤 다시 시도하세요")
-    dropped = out.pop("dropped")
-    p.synthesis = out
-    audit(db, project_id, "project", project_id, "synthesis", after={"instruction": body.instruction, "dropped": dropped}, actor=who)
+    version = (db.scalar(select(func.max(SynthesisRun.version)).where(
+        SynthesisRun.project_id == project_id, SynthesisRun.brand_id == body.brand_id)) or 0) + 1
+    _deactivate_active(db, project_id, body.brand_id)
+    run = SynthesisRun(id=new_id("SYN"), project_id=project_id, brand_id=body.brand_id, version=version,
+                       types=out["types"], data=out["data"], instruction=body.instruction, dropped=out["dropped"],
+                       body_fingerprint=fp, active=True)
+    db.add(run)
+    audit(db, project_id, "project", project_id, "synthesis",
+          after={"brand_id": body.brand_id, "types": out["types"], "instruction": body.instruction,
+                "dropped": out["dropped"]}, actor=who)
     db.commit()
-    return {**out, "dropped": dropped}
+    return synthesis_run_out(db, p, run)
+
+
+@router.get("/projects/{project_id}/synthesis")
+def list_synthesis(project_id: str, db: Session = Depends(get_db)):
+    """브랜드마다 쓴 버전 목록, 최신 먼저 — 되돌리기 화면에 씀."""
+    from app.models import SynthesisRun
+    p = get_project(db, project_id)
+    rows = db.scalars(select(SynthesisRun).where(SynthesisRun.project_id == project_id)
+                      .order_by(SynthesisRun.brand_id, SynthesisRun.version.desc()))
+    return [synthesis_run_out(db, p, r) for r in rows]
+
+
+@router.post("/synthesis-runs/{run_id}/activate")
+def activate_synthesis(run_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """되돌리기: 고른 버전을 다시 쓴다(새로 생성하지 않고 활성만 바꿈)."""
+    from app.models import SynthesisRun
+    run = db.get(SynthesisRun, run_id)
+    if run is None:
+        raise not_found("종합 장표 버전")
+    p = get_project(db, run.project_id)
+    _deactivate_active(db, run.project_id, run.brand_id)
+    run.active = True
+    audit(db, run.project_id, "project", run.project_id, "synthesis_activate",
+          after={"brand_id": run.brand_id, "version": run.version}, actor=who)
+    db.commit()
+    return synthesis_run_out(db, p, run)
 
 
 @router.delete("/projects/{project_id}/synthesis")
-def clear_synthesis(project_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
-    """Take the summary pages out of the deck."""
+def clear_synthesis(project_id: str, brand_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """그 브랜드의 종합 장표를 뺀다(버전은 남아 되돌릴 수 있음)."""
     p = get_project(db, project_id)
-    p.synthesis = None
-    audit(db, project_id, "project", project_id, "synthesis_clear", actor=who)
+    _deactivate_active(db, project_id, brand_id)
+    audit(db, project_id, "project", project_id, "synthesis_clear", after={"brand_id": brand_id}, actor=who)
     db.commit()
     return {"ok": True}
 

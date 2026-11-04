@@ -29,10 +29,27 @@ class Project(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     omitted_slots: Mapped[dict] = mapped_column(JSON, default=dict)  # slot_id -> {reason, by, at}
     lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [Paragraph]
-    synthesis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # ES / SWOT / NEXT written from the deck
+    synthesis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Phase 3-1 전: 더 안 씀, SynthesisRun으로 대체
     owner: Mapped[str] = mapped_column(String(120), default="dev")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SynthesisRun(Base):
+    """종합 장표(Executive Summary·SWOT·문제/솔루션) 한 번 쓴 결과 — 자사 브랜드마다, 버전마다 따로 남긴다.
+    덮어쓰지 않고 새 버전을 쌓으며, active=True인 한 버전만 장표에 쓰인다(Phase 3-1 되돌리기)."""
+    __tablename__ = "synthesis_runs"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    brand_id: Mapped[str] = mapped_column(String(10), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    types: Mapped[list] = mapped_column(JSON)  # ["insight", "swot"] 고른 순서
+    data: Mapped[dict] = mapped_column(JSON)  # {"insight": {...}, "swot": {...}, "problem": {...}}
+    instruction: Mapped[str] = mapped_column(Text, default="")
+    dropped: Mapped[list] = mapped_column(JSON, default=list)  # 규칙에 안 맞아 뺀 줄
+    body_fingerprint: Mapped[str] = mapped_column(String(64))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class ResearchPlan(Base):

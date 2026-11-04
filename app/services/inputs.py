@@ -6,7 +6,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, Source
+from app.models import Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, Source, SynthesisRun
 from app.storage import get_storage
 from core.composition.build import BuildInputs
 from core.schemas.facts import Fact, Post
@@ -89,7 +89,10 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
 
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}
     leads = {k: [Paragraph.model_validate(p) for p in v] for k, v in (project.lead_overrides or {}).items()}
+    synthesis: dict[str, dict] = {}
+    for run in db.scalars(select(SynthesisRun).where(SynthesisRun.project_id == project.id, SynthesisRun.active.is_(True))):
+        synthesis[run.brand_id] = run.data
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
-                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, synthesis=project.synthesis or {},
+                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, synthesis=synthesis,
                        generated_on=date.today(),
                        deck_id=project.id)

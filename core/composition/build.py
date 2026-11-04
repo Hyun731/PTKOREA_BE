@@ -43,14 +43,15 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
 TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-4": "owned",
                     "2-5": "owned", "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search",
                     "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "5-1": "voc",
-                    "5-2": "voc", "5-recap": "recap", "A-source": "appendix", "ES": "recap", "SWOT": "recap",
-                    "NEXT": "recap"}
+                    "5-2": "voc", "5-recap": "recap", "A-source": "appendix", "ES": "recap", "INSIGHT": "recap",
+                    "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
                   "M1": "시장·타겟 근거", "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로", "5-recap": "Recap",
-                  "A-source": "출처 표", "ES": "Executive Summary", "SWOT": "SWOT", "NEXT": "다음 단계 제언"}
+                  "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트", "SWOT": "SWOT",
+                  "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
 # A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
@@ -60,23 +61,26 @@ CHAPTERS: dict[str, tuple[str, str, str, str]] = {
     "company": ("1", "자사 분석", "Company", "자사 채널 · 인플루언서 · 캠페인"),
     "competitor": ("2", "경쟁사 분석", "Competitor", "시장 · 검색 경쟁 · 경쟁사와 벤치마크 사례"),
     "customer": ("3", "소비자 분석", "Customer", "인식 · 구매 여정"),
-    "summary": ("4", "종합", "Insight", "3C Recap · SWOT · 다음 단계"),
+    "summary": ("4", "종합", "Insight", "인사이트 · SWOT · 문제·솔루션"),
     "appendix": ("A", "Appendix", "Appendix", "출처"),
 }
 CHAPTER_ORDER = list(CHAPTERS)
 # With several self brands each one gets its own 자사·경쟁사·소비자·요약 parts ("company:B1"), so one
 # brand's cases never get lost among another's. Pages that set the brands side by side (v6 p26~p29,
-# channel tables, recap) stay shared: they open the deck as 브랜드 비교, the recap stays in 종합.
-BRAND_CHAPTERS = ("company", "competitor", "customer", "summary")
+# channel tables, recap) stay shared: they open the deck as 브랜드 비교, the recap stays in 종합. "exec"
+# (Executive Summary) is also per self brand — Phase 3-1: 자사 브랜드가 여럿이면 브랜드마다 따로 쓴다.
+BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
 SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
                     "2-8a": "competitor", "2-8b": "competitor", "2-8c": "competitor", "2-8d": "competitor",
                     "5-1": "customer", "5-2": "customer",
-                    "5-recap": "summary", "A-source": "appendix", "ES": "exec", "SWOT": "summary", "NEXT": "summary"}
+                    "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
+                    "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
 PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "2-8a", "2-8b", "2-8c", "2-8d",
-              "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "SWOT", "NEXT", "A-source"]
+              "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT", "PROBLEM", "SOLUTION",
+              "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
@@ -95,7 +99,8 @@ class BuildInputs:
     owned_posts: list[OwnedPostRef] = field(default_factory=list)
     omitted_slots: dict[str, str] = field(default_factory=dict)  # slot_id -> reason
     lead_overrides: dict[str, list[Paragraph]] = field(default_factory=dict)
-    synthesis: dict = field(default_factory=dict)  # ES / SWOT / NEXT text written from the deck (app.services.synthesis)
+    # {brand_id: {"insight": {...}, "swot": {...}, "problem": {...}}} — active SynthesisRun per self brand.
+    synthesis: dict = field(default_factory=dict)
     generated_on: Optional[date] = None
     deck_id: str = "deck"
     deck_version: int = 1
@@ -283,6 +288,18 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("5-recap"):
             s = quant.recap(c)
             slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음", part=part)
+        # 종합 장표(Phase 3-1): 자사 브랜드마다 따로, 고른 유형만 — 쓴 적 없으면 빈 슬롯도 만들지 않는다.
+        if which != "shared":
+            brand_id = c.project.brands[0].id if c.project.brands else None
+            synth = inputs.synthesis.get(brand_id, {}) if brand_id else {}
+            for key, type_key, page_fn in (
+                ("ES", "insight", synthesis.es_page), ("INSIGHT", "insight", synthesis.insight_page),
+                ("SWOT", "swot", synthesis.swot_page), ("PROBLEM", "problem", synthesis.problem_page),
+                ("SOLUTION", "problem", synthesis.solution_page),
+            ):
+                data = synth.get(type_key)
+                if data and (s := page_fn(data)):
+                    slot(key, key, [s], "", part=part)
 
     if not multi:
         brand_part(ctx, inputs.materials, inputs.owned_posts, None)
@@ -297,11 +314,6 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             c = replace(ctx, project=project.model_copy(update={"brands": [b]}),
                         findings=[f for f in findings if f.brand_id == b.id])
             brand_part(c, mats, [o for o in inputs.owned_posts if o.brand_id == b.id], b.id, "own")
-    # Written from the other pages on request, so they exist only once written (no empty slot otherwise).
-    for key, page in (("ES", synthesis.es_page), ("SWOT", synthesis.swot_page), ("NEXT", synthesis.next_page)):
-        part = inputs.synthesis.get(key.lower())
-        if part and (s := page(part)):
-            slot(key, key, [s], "")
     if "A-source" in enabled:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
@@ -458,13 +470,18 @@ CHIPS = {"overview": "OVERVIEW", "owned": "OWNED", "search": "SEARCH", "influenc
         "recap": "RECAP", "appendix": "APPENDIX"}
 
 
+SYNTHESIS_CHIP = {"ES": "SUMMARY", "SWOT": "SWOT", "INSIGHT": "INSIGHT", "PROBLEM": "PROBLEM", "SOLUTION": "SOLUTION"}
+
+
 def _chip(slide: SlideSpec) -> str:
     if slide.page_role == "index":
         return "INDEX"
     if slide.template_id.startswith("market"):
         return "MARKET"
-    if slide.slide_id in ("ES", "SWOT", "NEXT"):
-        return {"ES": "SUMMARY", "SWOT": "SWOT", "NEXT": "NEXT"}[slide.slide_id]
+    # Per self brand these carry a -{brand_id} suffix (slot(part=...)), same as other brand-scoped slides.
+    key = next((k for k in SYNTHESIS_CHIP if slide.slide_id == k or slide.slide_id.startswith(k + "-")), None)
+    if key:
+        return SYNTHESIS_CHIP[key]
     if slide.section_id == "campaign":
         return "CASE"
     return CHIPS.get(slide.section_id or "", "FACTBOOK")

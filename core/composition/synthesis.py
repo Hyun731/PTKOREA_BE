@@ -90,21 +90,49 @@ def swot_page(swot: dict) -> Optional[SlideSpec]:
                      blocks=blocks, is_data=False)
 
 
-def next_page(nxt: dict) -> Optional[SlideSpec]:
-    items = nxt.get("items") or []
+def _items_page(slide_id: str, template: str, heading: str, sub: str, title: str, data: dict,
+                items_key: str) -> Optional[SlideSpec]:
+    """Up to 3 numbered title+body panels — insights(type=insight) and solutions(type=problem) share
+    this exact v6 pillar layout, just with different framing text."""
+    items = (data.get(items_key) or [])[:3]
     if not items:
         return None
     n = len(items)
-    w = {1: 520, 2: 520, 3: 372}[min(n, 3)]
+    w = {1: 520, 2: 520, 3: 372}[n]
     gap = 32
-    x0 = 640 - (min(n, 3) * w + (min(n, 3) - 1) * gap) / 2
-    blocks: list[Block] = [title_block("Next", "플래닝 제언")]
-    if nxt.get("lead"):
-        blocks.append(lead_block([P(T(nxt["lead"]))]))
-    h = max(_body_h([it.get("body", "")], w - 32) for it in items[:3])
+    x0 = 640 - (n * w + (n - 1) * gap) / 2
+    blocks: list[Block] = [title_block(heading, sub)]
+    if data.get("lead"):
+        blocks.append(lead_block([P(T(data["lead"]))]))
+    h = max(_body_h([it.get("body", "")], w - 32) for it in items)
     y = _top(60 + 8 + h)
-    for i, it in enumerate(items[:3]):
+    for i, it in enumerate(items):
         blocks += _panel(i, x0 + i * (w + gap), y, w, 60, h, it.get("title", ""), [it.get("body", "")], no=f"{i + 1}.")
     blocks.append(_note())
-    return SlideSpec(slide_id="NEXT", template_id="next_steps.v1", page_role="recap", section_id="recap",
-                     title="다음 단계 제언", blocks=blocks, is_data=False)
+    return SlideSpec(slide_id=slide_id, template_id=template, page_role="recap", section_id="recap", title=title,
+                     blocks=blocks, is_data=False)
+
+
+def insight_page(insight: dict) -> Optional[SlideSpec]:
+    return _items_page("INSIGHT", "insight.v1", "Insight", "핵심 인사이트", "핵심 인사이트", insight, "insights")
+
+
+def solution_page(problem: dict) -> Optional[SlideSpec]:
+    return _items_page("SOLUTION", "solution.v1", "Solution", "솔루션 방향", "솔루션 방향", problem, "solutions")
+
+
+def problem_page(problem: dict) -> Optional[SlideSpec]:
+    """문제 정의: 본문에서 드러난 문제 2~3개를 한 패널에 번호로."""
+    problems = problem.get("problems") or []
+    if not problems:
+        return None
+    blocks: list[Block] = [title_block("Problem", "문제 정의")]
+    if problem.get("lead"):
+        blocks.append(lead_block([P(T(problem["lead"]))]))
+    w = 1184
+    h = _body_h(problems, w - 32)
+    y = _top(48 + 8 + h)
+    blocks += _panel(0, 48, y, w, 48, h, "문제", problems, numbered=True)
+    blocks.append(_note())
+    return SlideSpec(slide_id="PROBLEM", template_id="problem.v1", page_role="recap", section_id="recap",
+                     title="문제 정의", blocks=blocks, is_data=False)
