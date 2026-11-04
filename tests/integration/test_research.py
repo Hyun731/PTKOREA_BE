@@ -30,6 +30,7 @@ class Fakes:
     def __init__(self):
         self.calls: dict[str, int] = {}
         self.fail_search = None
+        self.fail_trends = False
         self.search_name = "경쟁X"  # how the fake articles name the brand
 
     def _hit(self, name):
@@ -212,6 +213,17 @@ class Fakes:
             for name, _ in groups
         ]}, usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
 
+    def google_trends_search(self, keywords, geo="KR", **kw):
+        self._hit("google_trends_search")
+        if self.fail_trends:
+            raise ProviderError("RATE_LIMITED", "Google Trends 접근 실패 (429)", 429)
+        import time as _time
+        points = [{"time": int(_time.mktime((2026, 7, d, 0, 0, 0, 0, 0, 0))), "values": {k: 40.0 + i for k in keywords}}
+                  for i, d in enumerate((1, 8, 15, 22))]
+        return CallResult(data={"points": points, "related_queries": [f"{keywords[0]} 신상", f"{keywords[0]} 세일"],
+                                "geo": geo, "timeframe": "today 12-m"}, usage={"requests": 2}, cost_usd=0.0,
+                          cost_is_estimate=False)
+
 
 @pytest.fixture
 def fakes(monkeypatch):
@@ -220,7 +232,8 @@ def fakes(monkeypatch):
     research.PROVIDERS.update(search=f.search, fetch_page=f.fetch_page, fetch_image=f.fetch_image, structured=f.structured,
                               instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video,
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
-                              instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos)
+                              instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos,
+                              google_trends_search=f.google_trends_search)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -520,6 +533,50 @@ def test_search_items_need_naver_key(client, fakes, monkeypatch):
     r = client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]})
     assert r.status_code == 503
     assert r.json()["error"]["detail"]["providers"] == ["naver"]
+
+
+def test_search_trend_item_collects_monthly_index_and_related_queries(client, fakes):
+    """Phase 3-4 검색 추이(Google Trends): 주별 응답을 월별로 평균해 자사·카테고리 지수로 남긴다."""
+    pid, plan = setup_project(client)
+    it = item(plan, "search_trend")
+    assert it["role"] == "self"
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded" and res["facts"] > 0
+    assert res["related_queries"] == ["브랜드A 신상", "브랜드A 세일"]
+    assert fakes.calls["google_trends_search"] == 1
+
+    facts = [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"] == "trends_index_monthly"]
+    assert facts and {f["entity"] for f in facts} == {"브랜드A", "가방"}  # 브랜드명 + 카테고리
+    assert all(f["dims"]["month"] == "2026-07" for f in facts)  # 네 번의 주간 응답이 한 달로 묶임
+    assert all(f["verification_status"] == "candidate" and f["origin"] == "auto" for f in facts)
+    for f in facts:
+        ok(client.patch(f"/v1/facts/{f['id']}/review?project_id={pid}", json={"action": "confirm"}))
+
+    # TR1 isn't in the sample project's curated demo slide list (like M1/M2) — turn it on explicitly.
+    project = ok(client.get(f"/v1/projects/{pid}"))
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": project["version"],
+                                                "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["TR1"]}}))
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    assert next(s for s in sp["plan"] if s["slot_id"] == "TR1")["readiness"] == "ready"
+
+
+def test_search_trend_item_fails_quietly_when_google_trends_blocks_it(client, fakes):
+    """Phase 3-4: Trends가 막히면(흔함) 장표는 조용히 빠지고 원인은 '수집 필요'로 나온다."""
+    clear_cache()  # avoid a cache hit from the earlier successful test (same keywords/geo request)
+    fakes.fail_trends = True
+    pid, plan = setup_project(client)
+    it = item(plan, "search_trend")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "failed" and res["errors"][0]["code"] == "RATE_LIMITED"
+
+    # TR1 isn't in the sample project's curated demo slide list (like M1/M2) — turn it on explicitly.
+    project = ok(client.get(f"/v1/projects/{pid}"))
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": project["version"],
+                                                "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["TR1"]}}))
+    missing = {m["slot_id"]: m for m in ok(client.get(f"/v1/projects/{pid}/outline"))["missing"]}
+    assert missing["TR1"]["cause"] == "collect"
 
 
 def test_lead_proposal_rewrite_then_accept(client, fakes):

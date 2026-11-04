@@ -43,13 +43,14 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
 TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-4": "owned",
                     "2-5": "owned", "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search",
                     "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "M2": "campaign",
-                    "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix", "ES": "recap",
-                    "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
+                    "TR1": "search_trend", "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
+                    "ES": "recap", "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
-                  "M1": "시장·타겟 근거", "M2": "업종 KPI", "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
+                  "M1": "시장·타겟 근거", "M2": "업종 KPI", "TR1": "검색 추이(Google Trends)",
+                  "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
                   "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트",
                   "SWOT": "SWOT", "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
@@ -73,14 +74,14 @@ BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
 SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap", "M1"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
-                    "M2": "competitor", "2-8a": "competitor", "2-8b": "competitor", "2-8c": "competitor",
-                    "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
+                    "M2": "competitor", "TR1": "competitor", "2-8a": "competitor", "2-8b": "competitor",
+                    "2-8c": "competitor", "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
                     "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
 PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "M2", "2-8a", "2-8b", "2-8c",
-              "2-8d", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT", "PROBLEM", "SOLUTION",
-              "A-source"]
+              "2-8d", "TR1", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT", "PROBLEM",
+              "SOLUTION", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
@@ -101,6 +102,8 @@ class BuildInputs:
     lead_overrides: dict[str, list[Paragraph]] = field(default_factory=dict)
     # {brand_id: {"insight": {...}, "swot": {...}, "problem": {...}}} — active SynthesisRun per self brand.
     synthesis: dict = field(default_factory=dict)
+    # {brand_id: [query, ...]} — Phase 3-4 Google Trends 연관 검색어, 그 브랜드의 최신 search_trend 수집 결과.
+    trend_related: dict[str, list[str]] = field(default_factory=dict)
     generated_on: Optional[date] = None
     deck_id: str = "deck"
     deck_version: int = 1
@@ -286,6 +289,11 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             kpi = [m for m in mats if m.section_id == "market_kpi"]
             slot("M2", "M2", cases.kpi_pages(kpi, pf, self_name, badge if _uses_synthetic(kpi, metrics) else []),
                  "채택된 업종 KPI 근거 없음", part=part)
+        if on("TR1"):
+            self_id = c.project.brands[0].id if c.project.brands else None
+            related = inputs.trend_related.get(self_id, []) if self_id else []
+            slot("TR1", "TR1", [s] if (s := quant.trend_page(c, related)) else [],
+                 "Google Trends 수집 결과 없음(요청 빈도 제한으로 자주 막힘)", part=part)
         voc = [m for m in mats if m.section_id == "voc" and m.entity == self_name]
         if on("5-1"):
             s = customer.voc_summary_page(c.project, voc)

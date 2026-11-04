@@ -24,6 +24,8 @@ SECTIONS = [
      "data": "공식 보고서·통계의 확인된 사실", "default_window": "사용자 지정"},
     {"id": "market_kpi", "label": "업종 KPI", "templates": ["M2"],
      "data": "공식 통계·공시의 업종 지표(자사·경쟁사 최근 3년)", "default_window": "최근 3년"},
+    {"id": "search_trend", "label": "검색 추이(Google Trends)", "templates": ["TR1"],
+     "data": "Google Trends 공개 경로 — 카테고리·브랜드 키워드 상대 지수(0~100)·연관 검색어", "default_window": "최근 12개월"},
     {"id": "voc", "label": "소비자 원문(VOC)", "templates": ["5-1", "5-2"],
      "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색 + 원문 수집, AI 감성·주제·인식 경로 분류)",
      "default_window": "24M"},
@@ -56,6 +58,8 @@ CHANNELS = {
     # target-segment filters (2-8d) have no config surface yet, so they stay CSV-only.
     "search_naver": {"label": "네이버 데이터랩 검색어트렌드 (브랜드명)", "support": "auto", "provider": "naver"},
     "search_csv": {"label": "검색 지수 CSV (보유 자료 · 조합어·키 타겟)", "support": "manual_only", "provider": None},
+    # Phase 3-4: Google Trends 공개 경로 — 봇 차단으로 자주 막힌다(그러면 "수집 필요"로 조용히 빠짐).
+    "google_trends": {"label": "Google Trends (카테고리·브랜드 키워드 월별 추이)", "support": "auto", "provider": "google_trends"},
     "web": {"label": "웹 기사·공식 자료", "support": "auto", "provider": "perplexity"},
     "instagram": {"label": "Instagram 공개 게시물", "support": "auto", "provider": "scrapecreators"},
     "youtube": {"label": "YouTube 공개 영상", "support": "auto", "provider": "scrapecreators"},

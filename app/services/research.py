@@ -68,10 +68,12 @@ def _providers():
             instagram_post, instagram_profile, instagram_user_posts, youtube_channel, youtube_channel_videos, youtube_video,
         )
         from integrations.naver.client import search_trend
+        from integrations.google_trends.client import search_trend as google_trends_search
         PROVIDERS.update(search=search, fetch_page=fetch_page, fetch_image=fetch_image, structured=structured,
                          instagram_post=instagram_post, instagram_profile=instagram_profile, youtube_video=youtube_video,
                          youtube_channel=youtube_channel, instagram_hashtag=hashtag_posts, naver_search_trend=search_trend,
-                         instagram_user_posts=instagram_user_posts, youtube_channel_videos=youtube_channel_videos)
+                         instagram_user_posts=instagram_user_posts, youtube_channel_videos=youtube_channel_videos,
+                         google_trends_search=google_trends_search)
     return PROVIDERS
 
 
@@ -1273,6 +1275,55 @@ def run_search_item(db: Session, ledger: RunLedger, project: Project, item: Rese
     return out
 
 
+# ------------------------------------------------------------------ search trend (Phase 3-4, Google Trends)
+
+def run_search_trend_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
+    """카테고리·브랜드 키워드의 월별 검색 추이(Google Trends, 공개 경로). 요청 빈도 제한으로 자주
+    막힌다 — 그러면 조용히 빈 결과를 돌려주고, missing.py가 그 장표를 "수집 필요"로 남긴다."""
+    from core.ingestion.trends_index import trends_monthly_fact
+
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    category = brand.categories[0] if brand.categories else None
+    keywords = [brand.name] + ([category] if category and category != brand.name else [])
+    out: dict = {"created": 0, "facts": 0, "related_queries": [], "errors": []}
+    try:
+        res = ledger.call("google_trends", "search_trend", {"keywords": keywords, "geo": "KR"}, 0.0,
+                          lambda: p["google_trends_search"](keywords, geo="KR"), cache_days=1)
+    except ProviderError as exc:
+        out["errors"].append({"code": exc.code, "message": exc.message})
+        return out
+    points = res.data.get("points") or []
+    if not points:
+        out["errors"].append({"code": "NO_DATA", "message": "Google Trends 결과가 비어 있습니다"})
+        return out
+    # A 12-month window comes back at weekly resolution: average into months ourselves.
+    by_month: dict[str, dict[str, list[float]]] = {}
+    for pt in points:
+        month = date.fromtimestamp(pt["time"]).strftime("%Y-%m")
+        bucket = by_month.setdefault(month, {})
+        for kw, v in pt["values"].items():
+            bucket.setdefault(kw, []).append(v)
+    today = date.today()
+    existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+    for month, by_kw in sorted(by_month.items()):
+        for kw, values in by_kw.items():
+            fact = trends_monthly_fact(brand_id=item.brand_id, entity=kw, month=month,
+                                       index=sum(values) / len(values), measured_at=today)
+            if fact.id in existing:
+                continue
+            db.add(FactRow(project_id=project.id, fact_id=fact.id, origin="auto", research_item_id=item.id,
+                           data=json.loads(fact.model_dump_json()), verification_status="candidate",
+                           review_note="Google Trends 자동 수집"))
+            existing.add(fact.id)
+            out["facts"] += 1
+    out["related_queries"] = res.data.get("related_queries") or []
+    out["created"] = out["facts"]
+    db.commit()
+    return out
+
+
 # ------------------------------------------------------------------ job
 
 @register("research_run")
@@ -1325,6 +1376,10 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                         raise ProviderError("PROVIDER_AUTH", "Perplexity 키가 없습니다")
                     r = run_voc_item(s, ledger, project, item, ai_enabled)
                     made = r["created"]
+                elif item.section_id == "search_trend":
+                    # Google Trends는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.
+                    r = run_search_trend_item(s, ledger, project, item)
+                    made = r.get("facts", 0)
                 else:
                     r = {"errors": [{"code": "NOT_IN_STAGE", "message": "자동 수집 대상이 아닙니다"}]}
                     made = 0

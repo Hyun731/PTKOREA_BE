@@ -31,6 +31,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "campaign": {"web"},
     "market": {"web"},
     "market_kpi": {"web"},
+    "search_trend": {"google_trends"},
     "search": {"search_naver"},
     "voc": {"community", "naver_blog"},
 }
@@ -128,6 +129,12 @@ ITEMS: list[dict] = [
      "collector": "market_kpi", "templates": ["M2"], "channels": ["web", "report"], "default_channels": ["web"],
      "period": 36, "period_hint": "최근 3년(또는 3개 회계연도)",
      "output": "지표마다 연도별 수치 + 출처, 내부 자료가 필요한 지표는 공개 대체 지표로 표시"},
+    # Phase 3-4: 네이버 데이터랩(3-2)과 별개로 Google Trends 공개 경로 — 막히면(흔함) 조용히 빠진다.
+    {"id": "3-11", "part": "competitor", "group": "시장 환경", "title": "검색 추이(Google Trends)",
+     "question": "{brand}·{category} 키워드의 월별 검색 추이와 성수기(Google Trends, 상대 지수)",
+     "subject": "self", "collector": "search_trend", "templates": ["TR1"], "channels": ["google_trends"],
+     "default_channels": ["google_trends"], "period": "inherit", "period_hint": "최근 12개월",
+     "output": "브랜드·카테고리 키워드 월별 지수(0~100) + 연관 검색어, 출처(Google Trends)·지역·기간 표기"},
     # ---------------------------------------------------------------- 3. 소비자 분석 (Customer)
     {"id": "5-1", "part": "customer", "group": "소비자 인식", "title": "소비자 인식 원문",
      "question": "{brand}를 믿고 사는 이유와 다른 브랜드로 넘어가는 이유(소비자 원문)", "subject": "self_and_competitor",

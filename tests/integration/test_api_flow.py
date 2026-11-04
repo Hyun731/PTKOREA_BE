@@ -30,7 +30,9 @@ def test_full_manual_flow(client):
     plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
     sections = {(i["section_id"], i["role"]) for i in plan["items"]}
     assert ("search", "self") in sections and ("campaign", "competitor") in sections
-    assert all(c["status"] in ("key_missing", "manual_only") for i in plan["items"] for c in i["channels"])
+    # google_trends needs no key (Phase 3-4 공개 경로) — it alone is always "ready", regardless of keys.
+    assert all(c["status"] in ("key_missing", "manual_only") for i in plan["items"] for c in i["channels"]
+              if c["id"] != "google_trends")
 
     # Automatic research is honest about missing keys (no fake run).
     campaign_item = next(i for i in plan["items"] if i["section_id"] == "campaign")

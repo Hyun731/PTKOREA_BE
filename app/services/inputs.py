@@ -6,7 +6,9 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, Source, SynthesisRun
+from app.models import (
+    Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, ResearchItem, Source, SynthesisRun,
+)
 from app.storage import get_storage
 from core.composition.build import BuildInputs
 from core.schemas.facts import Fact, Post
@@ -93,7 +95,14 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     synthesis: dict[str, dict] = {}
     for run in db.scalars(select(SynthesisRun).where(SynthesisRun.project_id == project.id, SynthesisRun.active.is_(True))):
         synthesis[run.brand_id] = run.data
+    # Phase 3-4: Google Trends 연관 검색어 — 그 브랜드의 가장 최근 수집 결과만 쓴다.
+    trend_related: dict[str, list[str]] = {}
+    for ri in db.scalars(select(ResearchItem).where(ResearchItem.project_id == project.id,
+                                                     ResearchItem.section_id == "search_trend")):
+        queries = (ri.last_result or {}).get("related_queries") or []
+        if queries:
+            trend_related[ri.brand_id] = queries
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
                        owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, synthesis=synthesis,
-                       generated_on=date.today(),
+                       trend_related=trend_related, generated_on=date.today(),
                        deck_id=project.id)

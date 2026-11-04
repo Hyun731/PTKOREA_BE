@@ -25,7 +25,7 @@ CAUSES = {
 # Slot template -> the research section that feeds it.
 SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
            "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
-           "5-1": "voc", "5-2": "voc"}
+           "5-1": "voc", "5-2": "voc", "TR1": "search_trend"}
 UPLOAD = {"2-8a", "2-8b", "2-8c", "2-8d"}  # search volumes come from a CSV (no Naver API)
 
 
@@ -92,5 +92,5 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             slot.action = CAUSES[cause][1]
         # Items to run again: only web-collected ones that did not just succeed with new cards.
         if cause in ("collect", "access"):
-            slot.item_ids = [i.id for i in related if i.section_id in ("campaign", "market", "voc")
+            slot.item_ids = [i.id for i in related if i.section_id in ("campaign", "market", "voc", "search_trend")
                              and i.execution_status not in ("queued", "running")]

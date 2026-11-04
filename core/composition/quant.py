@@ -357,6 +357,57 @@ def search_trend(ctx: QuantContext) -> Optional[SlideSpec]:
                      finding_ids=[f.id for f in findings], needs_review=not findings, is_data=True)
 
 
+# ---------------------------------------------------------------- TR1 (Phase 3-4 검색 추이, Google Trends)
+
+def trend_page(ctx: QuantContext, related: list[str]) -> Optional[SlideSpec]:
+    """카테고리·브랜드 키워드의 월별 검색 추이와 연관 검색어(Google Trends 공개 경로). 2-8a~d(네이버
+    데이터랩, 경쟁사 간 점유)와는 출처·용도가 달라 한 축으로 섞지 않는다 — 여긴 자사 키워드 하나의
+    시기별 추이만 본다."""
+    brand = ctx.project.brands[0] if ctx.project.brands else None
+    if brand is None:
+        return None
+    category = brand.categories[0] if brand.categories and brand.categories[0] != brand.name else None
+    keywords = [brand.name] + ([category] if category else [])
+    by_kw: dict[str, dict[str, object]] = {}
+    for f in ctx.metrics.registry.facts.values():
+        if f.metric == "trends_index_monthly" and f.brand_id == brand.id and f.entity in keywords and f.usable:
+            by_kw.setdefault(f.entity, {})[f.dims.get("month", "")] = f
+    months = sorted({m for series in by_kw.values() for m in series if m})
+    line_series: list[LineSeries] = []
+    fact_ids: list[str] = []
+    for kw in keywords:
+        series = by_kw.get(kw)
+        if not series:
+            continue
+        pts = [LinePoint(month=m, fact_id=series[m].id if m in series else None,
+                         value=float(series[m].value) if m in series else None) for m in months]
+        line_series.append(LineSeries(entity=kw, role="self" if kw == brand.name else "other", points=pts))
+        fact_ids += [p.fact_id for p in pts if p.fact_id]
+    if not line_series or not months:
+        return None
+    chart_h = 360
+    chart = LineChartBlock(block_id="chart", region=Region(x=48, y=148, w=1184, h=chart_h),
+                           categories=[fmt_month_label(m) for m in months], series=line_series)
+    blocks: list[Block] = [
+        title_block("Search", sub_parts=[T("검색 추이 (Google Trends)")]),
+        lead_block([P(N(brand.name), T(" 키워드 검색 추이"), *([T(" · "), N(category)] if category else []))]),
+        chart,
+    ]
+    y = 148 + chart_h + 20
+    if related:
+        parts = [M("연관 검색어", "label"), T(" ")]
+        for i, q in enumerate(related[:8]):
+            if i:
+                parts.append(T(", "))
+            parts.append(N(q))
+        blocks.append(text_block("related", "body", Region(x=48, y=y, w=1184, h=48), [P(*parts)], spec="card_body"))
+        y += 48
+    blocks.append(_footnote(ctx, fact_ids, [T("상대 지수 "), M("0~100", "scale"), T(" · 절대 검색량 아님 · 지역 KR · 기간 "),
+                                            D(fmt_month_range(months[0], months[-1]))]))
+    return SlideSpec(slide_id="TR1", template_id="search_trend_google.v1", page_role="content", section_id="search",
+                     title="검색 추이", blocks=blocks, source_ids=[], needs_review=True, is_data=True)
+
+
 # ---------------------------------------------------------------- 2-8c
 
 def combo_share_pages(ctx: QuantContext) -> list[SlideSpec]:
