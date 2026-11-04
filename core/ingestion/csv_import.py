@@ -28,7 +28,7 @@ from core.schemas.project import Project
 FACT_REQUIRED = ["brand", "entity", "metric", "value", "unit", "dims", "period", "measured_at", "source", "confidence"]
 FACT_OPTIONAL = ["url", "method", "source_record_key"]
 POST_REQUIRED = ["post_id", "brand", "channel", "creator", "owner_type", "posted_at", "measured_at", "likes_hidden"]
-POST_OPTIONAL = ["followers", "followers_measured_at", "views", "likes", "comments", "product", "url"]
+POST_OPTIONAL = ["followers", "followers_measured_at", "views", "likes", "comments", "product", "url", "sponsored"]
 POST_FIELD_METRICS = {
     "views": "post_views",
     "likes": "post_likes",
@@ -328,7 +328,8 @@ def _parse_post_row(row: dict, row_no: int, brand_ids: set[str], batch_id: str,
         owner_type=owner, posted_at=posted_at, measured_at=measured_at, followers=counts["followers"],
         followers_measured_at=followers_measured_at, views=counts["views"], likes=counts["likes"],
         comments=counts["comments"], likes_hidden=likes_hidden, product=cell("product") or None,
-        url=cell("url") or None, row_no=row_no, batch_id=batch_id,
+        url=cell("url") or None, sponsored=_parse_bool(cell("sponsored"), "sponsored") if cell("sponsored") else False,
+        row_no=row_no, batch_id=batch_id,
     )
     facts: list[Fact] = []
     for field, metric in POST_FIELD_METRICS.items():

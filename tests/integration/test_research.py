@@ -339,7 +339,8 @@ def test_budget_and_provider_failure_keep_existing_material(client, fakes, monke
     assert item(plan2, "campaign", "경쟁Y")["execution_status"] == "failed"
 
 
-def test_influencer_urls_become_candidate_batch(client, fakes):
+def test_influencer_urls_become_candidate_batch(client, fakes, monkeypatch):
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)  # isolate manual-URL handling from YouTube auto-discovery
     pid, plan = setup_project(client)
     it = item(plan, "influencer")
     bad = client.put(f"/v1/research-items/{it['id']}/inputs", json={"post_urls": ["https://example.com/x"]})
@@ -356,6 +357,58 @@ def test_influencer_urls_become_candidate_batch(client, fakes):
     ok(client.post(f"/v1/imports/{batch['id']}/review", json={"action": "accept"}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     assert next(s for s in sp["plan"] if s["slot_id"] == "3-1-B1")["readiness"] == "ready"
+
+
+def test_influencer_item_finds_posts_without_any_input(client, fakes, monkeypatch):
+    """Phase 1-2: no post_urls, no hashtags — the brand name becomes the Instagram hashtag and the
+    YouTube search term, Owned/Earned is split by official handle, and YouTube's native paid-promotion
+    flag marks the sponsored post."""
+    monkeypatch.setenv("APIFY_TOKEN", "test-token")
+
+    def hashtag(tags, per_tag=60, **kw):
+        fakes._hit("instagram_hashtag")
+        assert tags == ["브랜드A", "브랜드 A"]  # 브랜드 이름 + 다른 표기로 자동 생성됨
+        return CallResult(data={"posts": [
+            {"url": "https://www.instagram.com/p/EARNED1/", "posted_at": "2026-08-10", "creator": "fit_runner",
+             "likes": 400, "comments": 10, "views": None}]}, usage={"results": 1}, cost_usd=0.01)
+
+    research.PROVIDERS["instagram_hashtag"] = hashtag
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "influencer")
+    assert (it["inputs"] or {}).get("post_urls") in (None, []) and (it["inputs"] or {}).get("hashtags") in (None, [])
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded" and res["posts"] == 2  # IG 해시태그 1건 + YouTube 검색 1건
+    assert res["coverage_short"] is True  # 목표 10건에 한참 못 미침
+
+    batch = next(b for b in ok(client.get(f"/v1/projects/{pid}/imports")) if b["id"] == res["batch_id"])
+    ok(client.post(f"/v1/imports/{batch['id']}/review", json={"action": "accept"}))
+
+    with SessionLocal() as db:
+        rows = [r.data for r in db.scalars(select(PostRow).where(PostRow.project_id == pid))]
+    ig_row = next(r for r in rows if r["channel"] == "instagram")
+    yt_row = next(r for r in rows if r["channel"] == "youtube")
+    assert ig_row["owner_type"] == "creator" and ig_row["sponsored"] is False
+    assert yt_row["owner_type"] == "creator" and yt_row["sponsored"] is True  # isPaidPromotion=True in the fake
+
+
+def test_influencer_item_marks_official_account_posts_as_self(client, fakes, monkeypatch):
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)  # isolate: only the manual URL matters here
+    pid, plan = setup_project(client)
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    cfg = proj["config"]
+    cfg["brands"][0]["official_profiles"] = [{"channel": "instagram", "url": "https://www.instagram.com/ig_creator/",
+                                              "status": "confirmed"}]  # matches the fake instagram_post's creator
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"], "changes": {"brands": cfg["brands"]}}))
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "influencer")
+    ok(client.put(f"/v1/research-items/{it['id']}/inputs", json={"post_urls": ["https://www.instagram.com/p/C1x/"]}))
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]["status"] == "succeeded"
+    with SessionLocal() as db:
+        row = db.scalars(select(PostRow).where(PostRow.project_id == pid)).one()
+    assert row.data["owner_type"] == "self"  # 공식 계정이 올린 글이라 Owned
 
 
 def test_search_items_auto_collect_via_naver(client, fakes):
@@ -624,6 +677,7 @@ def test_hashtag_discovery_adds_in_period_creator_posts(client, fakes, monkeypat
     from datetime import date, timedelta
 
     monkeypatch.setenv("APIFY_TOKEN", "test-token")
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)  # isolate hashtag discovery from YouTube auto-discovery
     pid, plan = setup_project(client)
     it = item(plan, "influencer")
     start = date.fromisoformat(it["period_start"])
@@ -1053,7 +1107,8 @@ def test_missing_slides_say_why_and_what_to_do(client, fakes):
     ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
     gaps = {s["slot_id"]: s for s in ok(client.get(f"/v1/projects/{pid}/slide-plan"))["plan"] if s["readiness"] == "needs_input"}
     assert gaps["C1c"]["cause"] == "adopt"  # 경쟁X's cards are waiting for a person
-    assert gaps["2-8a"]["cause"] == "upload" and gaps["3-1-B1"]["cause"] == "setup"
+    # 3-1(인플루언서)은 이제 입력이 없어도 브랜드 이름으로 찾아보므로 '설정 필요'가 아니라 '수집 필요'.
+    assert gaps["2-8a"]["cause"] == "upload" and gaps["3-1-B1"]["cause"] == "collect"
     self_item = item(plan, "campaign", "브랜드A")
     assert gaps["C1"]["cause"] == "collect" and gaps["C1"]["item_ids"] == [self_item["id"]]
     assert gaps["5-recap"]["cause"] is None

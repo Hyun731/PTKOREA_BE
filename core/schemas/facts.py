@@ -97,6 +97,7 @@ class Post(BaseModel):
     likes: Optional[int] = None
     comments: Optional[int] = None
     likes_hidden: bool = False
+    sponsored: bool = False  # 협찬(#광고·#협찬·유료광고 포함 등 표기) — 자동 수집에서만 채워짐
     product: Optional[str] = None
     url: Optional[str] = None
     row_no: Optional[int] = None

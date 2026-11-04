@@ -593,17 +593,19 @@ DISCOVER_PER_CREATOR = 2
 RETAIL_HANDLE = re.compile(r"outlet|(^|[._])(store|official|mall|shop|dept|department|brand)s?([._]|$)|매장")
 
 
-def _official_handles(project: Project, brand_id: str) -> tuple[set[str], list[str]]:
-    """Accounts that are the brand itself, not creators: configured profiles, and handles carrying
-    the brand's latin name or alias (xexymix_official, xexymix.japan …)."""
+def _official_handles(project: Project, brand_id: str, entity: str) -> tuple[set[str], list[str]]:
+    """Accounts that are entity itself (self brand or a competitor), not creators: confirmed official
+    profiles, and handles carrying its latin name or alias (xexymix_official, xexymix.japan …)."""
     core = core_project(project)
     b = core.brand(brand_id)
     handles = set()
-    for prof in b.official_profiles or []:  # https://www.instagram.com/xexymix_official/ -> xexymix_official
+    for prof in b.profiles_for(entity):  # https://www.instagram.com/xexymix_official/ -> xexymix_official
+        if prof.status != "confirmed":
+            continue
         path = [x for x in prof.url.split("?")[0].split("/") if x]
         if path:
             handles.add(path[-1].lstrip("@").lower())
-    stems = [w.lower() for n in [b.name, *b.aliases] for w in re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", n)]
+    stems = [w.lower() for n in b.names_for(entity) for w in re.findall(r"[A-Za-z][A-Za-z0-9]{3,}", n)]
     return handles, stems
 
 
@@ -623,7 +625,7 @@ def discover_instagram(db: Session, ledger: RunLedger, project: Project, item: R
     except ProviderError as exc:
         out["errors"].append({"code": exc.code, "message": f"해시태그 탐색 실패: {exc.message}"})
         return []
-    handles, stems = _official_handles(project, item.brand_id)
+    handles, stems = _official_handles(project, item.brand_id, item.entity)
     seen: set[str] = set()
     kept = []
     skipped = {"out_of_period": 0, "official": 0, "duplicate": 0}
@@ -667,22 +669,68 @@ def discover_instagram(db: Session, ledger: RunLedger, project: Project, item: R
     return chosen
 
 
+DISCOVER_YT_KEEP = 5  # new YouTube videos added per run via search (no hashtag equivalent on YouTube)
+INFLUENCER_TARGET = 10  # per-brand goal of Earned (non-sponsored) posts (Phase 1-4 수집 부족 기준과 동일)
+SPONSOR_PATTERN = re.compile(r"#(광고|협찬)|유료\s*광고\s*포함|paid\s*partnership|sponsored", re.IGNORECASE)
+
+
+def discover_youtube(ledger: RunLedger, item: ResearchItem, *, exclude: set[str], out: dict) -> list[str]:
+    """Perplexity 검색으로 크리에이터 YouTube 영상 URL을 찾는다 — 해시태그 발견이 없는 채널이라 검색으로 대신한다."""
+    from app.config import settings
+    from integrations.scrapecreators.client import platform_of
+    if not settings.provider_configured("perplexity"):
+        return []
+    p = _providers()
+    query = f"{item.entity} 유튜브 리뷰"
+    try:
+        res = ledger.call("perplexity", "search", {"queries": [query], "max_results": 8}, 0.005,
+                          lambda: p["search"]([query], max_results=8, country="KR", languages=["ko"]))
+    except ProviderError as exc:
+        out["errors"].append({"code": exc.code, "message": f"유튜브 검색 실패: {exc.message}"})
+        return []
+    found: list[str] = []
+    for r in res.data["results"]:
+        url = r.get("url") or ""
+        if platform_of(url) == "youtube" and url not in exclude and url not in found:
+            found.append(url)
+    return found[:DISCOVER_YT_KEEP]
+
+
+def _sponsored(post: dict) -> bool:
+    """협찬 표기: YouTube의 공식 유료 광고 공개 플래그, 또는 캡션/제목에 광고·협찬 문구."""
+    if post.get("paid_promotion"):
+        return True
+    return bool(SPONSOR_PATTERN.search(post.get("title") or ""))
+
+
 def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem, state: RunState) -> dict:
-    """Collect public metrics for the post URLs a person chose (DEVELOPMENT_PLAN 2 ScrapeCreators)."""
+    """Collect public metrics for influencer content. URL이나 해시태그를 직접 넣었으면 그것부터 쓰고,
+    아무것도 없으면 브랜드 이름으로 해시태그(Instagram)·검색(YouTube)을 만들어 자동으로 찾는다
+    (DEVELOPMENT_PLAN 2 ScrapeCreators, Phase 1-2 URL 없이 찾기)."""
     from integrations.scrapecreators.client import platform_of
     p = _providers()
+    core = core_project(project)
     urls = [u for u in (item.inputs or {}).get("post_urls", []) if u]
     out = {"posts": 0, "rows_with_errors": 0, "errors": []}
-    tags = [t for t in (item.inputs or {}).get("hashtags", []) if t]
-    if tags:
+    from app.config import settings
+
+    manual_tags = [t for t in (item.inputs or {}).get("hashtags", []) if t]
+    # 사람이 넣은 URL·해시태그가 있으면 그것부터 쓰고, 브랜드 이름(다른 표기 포함)으로도 항상 더 찾아본다.
+    auto_tags = [n for n in core.brand(item.brand_id).names_for(item.entity) if len(n) >= 2][:3]
+    tags = list(dict.fromkeys([*manual_tags, *auto_tags]))
+    # 사람이 해시태그를 직접 넣었으면 키가 없다는 오류도 뜻이 있다 — 자동으로 더해진 것뿐이면 조용히 건너뛴다.
+    if tags and (manual_tags or settings.provider_configured("apify")):
         found = discover_instagram(db, ledger, project, item, tags, exclude=set(urls), out=out)
-        if found:
-            urls += found
-            item.inputs = {**(item.inputs or {}), "post_urls": list(dict.fromkeys(urls))[:MAX_POSTS_PER_RUN]}
-            db.commit()
+        urls += found
+    urls += discover_youtube(ledger, item, exclude=set(urls), out=out)
+    urls = list(dict.fromkeys(urls))[:MAX_POSTS_PER_RUN]
+    if urls != [u for u in (item.inputs or {}).get("post_urls", []) if u]:
+        item.inputs = {**(item.inputs or {}), "post_urls": urls}
+        db.commit()
     if not urls:
-        out["errors"].append({"code": "NEEDS_INPUT", "message": "수집할 게시물 URL이나 해시태그를 먼저 입력하세요"})
+        out["errors"].append({"code": "NEEDS_INPUT", "message": "수집할 게시물을 찾지 못했습니다 — URL이나 해시태그를 직접 넣어보세요"})
         return out
+    handles, stems = _official_handles(project, item.brand_id, item.entity)
     rows = []
     channel_subs: dict[str, Optional[int]] = {}
     today = date.today().isoformat()
@@ -728,20 +776,24 @@ def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: 
                 except ProviderError:
                     channel_subs[key] = None
             post["followers"] = channel_subs[key]
+        who = (post.get("creator") or "").lower()
+        post["owner_type"] = "self" if (who in handles or any(st in who for st in stems)) else "creator"
+        post["sponsored"] = _sponsored(post)
         rows.append(post)
     if not rows:
         return out
-    header = "post_id,brand,channel,creator,owner_type,posted_at,measured_at,followers,followers_measured_at,views,likes,comments,likes_hidden,product,url\n"
+    header = ("post_id,brand,channel,creator,owner_type,posted_at,measured_at,followers,followers_measured_at,"
+             "views,likes,comments,likes_hidden,sponsored,product,url\n")
     buf = io.StringIO()
     import csv
     w = csv.writer(buf)
     for r in rows:
         followers = r.get("followers")
         w.writerow([f"{r['platform'][:2]}-{r['post_id']}", item.brand_id, r["platform"], r.get("creator") or "unknown",
-                    "creator", r.get("posted_at") or "", today, "" if followers is None else followers,
+                    r["owner_type"], r.get("posted_at") or "", today, "" if followers is None else followers,
                     today if followers is not None else "", "" if r.get("views") is None else r["views"],
                     "" if r.get("likes") is None else r["likes"], "" if r.get("comments") is None else r["comments"],
-                    "true" if r.get("likes_hidden") else "false", "", r["url"]])
+                    "true" if r.get("likes_hidden") else "false", "true" if r["sponsored"] else "false", "", r["url"]])
     from app.routers.materials import _store_batch
     batch = _store_batch(db, project, "posts", f"scrapecreators-{today}.csv", header + buf.getvalue(), "auto",
                          source_name="scrapecreators")
@@ -749,6 +801,10 @@ def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: 
     out["rows_with_errors"] = len(batch.errors)
     out["batch_id"] = batch.id
     db.commit()
+    # Phase 1-4 수집 부족 기준과 같은 셈(owner_type=creator, 전체 배치 기준)으로 '모자람'을 바로 알린다.
+    total_earned = sum(1 for d in db.scalars(select(PostRow.data).where(PostRow.project_id == project.id))
+                       if d.get("brand_id") == item.brand_id and d.get("owner_type") == "creator")
+    out["coverage_short"] = total_earned < INFLUENCER_TARGET
     return out
 
 
