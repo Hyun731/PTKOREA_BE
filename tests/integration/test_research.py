@@ -135,7 +135,8 @@ class Fakes:
                 "relevant": True, "relevance_note": "", "activity_date": "2026-03-01",
                 "summary": "성수동 팝업에서 신제품 체험 공간을 열어 방문객을 모은 활동입니다.",
                 "market_aspect": "channel",  # Phase 3-2: only applied when the material's section_id is "market"
-                "facts": [{"label": "방문객", "metric": "count", "value": "12000", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
+                "facts": [{"label": "방문객", "metric": "count", "value": "12000", "quote": "행사 기간 방문객은 12000명으로 집계됐다.",
+                          "substituted": True},  # Phase 3-2: only applied when section_id is "market_kpi"
                           {"label": "가짜", "metric": "count", "value": "999", "quote": "원문에 없는 문장."}],
                 "claims": [{"kind": "fact", "text": "성수동 팝업에 신제품 체험 공간 배치", "quote": "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다."},
                            {"kind": "interpretation", "text": "방문객 {{1}} 규모의 체험형 접점", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
@@ -346,6 +347,27 @@ def test_market_item_classifies_aspect_and_does_not_leak_to_other_sections(clien
     campaign_mats = [m for m in ok(client.get(f"/v1/projects/{pid2}/materials", params={"section_id": "campaign"}))
                      if m["source"]["source_type"] != "social"]
     assert campaign_mats and all(m["market_aspect"] is None for m in campaign_mats)  # market_aspect는 market 전용
+
+
+def test_market_kpi_item_only_appears_for_metric_industries_and_marks_substituted(client, fakes):
+    """Phase 3-2: 업종 KPI는 지표 중심 업종에서만 켜지고, 대체 지표는 표시된다."""
+    pid, plan = setup_project(client)
+    assert not any(i["section_id"] == "market_kpi" for i in plan["items"])  # 업종 미설정 — 기본 꺼짐
+
+    p = ok(client.get(f"/v1/projects/{pid}"))
+    brand = p["config"]["brands"][0]
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": p["version"],
+                                                 "changes": {"brands": [{**brand, "industry": "금융"}]}}))
+    plan2 = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    kpi_it = item(plan2, "market_kpi", "경쟁X")  # the fake's canned article titles only name "경쟁X"
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [kpi_it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+
+    mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market_kpi"}))
+           if m["source"]["source_type"] != "social"]
+    assert mats
+    facts = [f for m in mats for f in m["facts"]]
+    assert facts and all(f["dims"].get("substituted") == "true" for f in facts)
 
 
 def test_budget_and_provider_failure_keep_existing_material(client, fakes, monkeypatch):

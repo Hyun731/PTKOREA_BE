@@ -19,7 +19,8 @@ UNIT_ALIASES = {"count": "count", "krw": "krw", "percent": "percent", "rank": "r
 def make_manual_fact(*, brand_id: str, entity: str, metric: str, value, measured_at: date, source: str,
                      source_id: Optional[str] = None, evidence_id: Optional[str] = None, label: Optional[str] = None,
                      period_start: Optional[date] = None, period_end: Optional[date] = None, url: Optional[str] = None,
-                     confidence: str = "verified", status: str = "candidate") -> Fact:
+                     confidence: str = "verified", status: str = "candidate",
+                     dims: Optional[dict[str, str]] = None) -> Fact:
     if metric not in MANUAL_METRICS:
         raise ValueError(f"지원하지 않는 직접 입력 지표 {metric}")
     v = parse_decimal(value) if not isinstance(value, Decimal) else value
@@ -32,11 +33,14 @@ def make_manual_fact(*, brand_id: str, entity: str, metric: str, value, measured
         raise ValueError("건수 지표는 정수여야 합니다")
     start = period_start or measured_at
     end = period_end or measured_at
+    dims = dims or {}
     payload = {"brand": brand_id, "entity": entity, "metric": metric, "value": canonical_decimal(v), "unit": unit,
                "period": f"{start}~{end}", "measured_at": measured_at.isoformat(), "source": source,
                "source_id": source_id, "evidence_id": evidence_id, "label": label}
+    if dims:  # keep the hash unchanged for the common case (no dims) — only a tagged fact gets a distinct id
+        payload["dims"] = dims
     h = content_hash(payload)
     return Fact(id=fact_id_from_hash(h), content_hash=h, brand_id=brand_id, entity=entity, metric=metric, value=v,
-                unit=unit, dims={}, period_start=start, period_end=end, measured_at=measured_at, source=source,
+                unit=unit, dims=dims, period_start=start, period_end=end, measured_at=measured_at, source=source,
                 source_id=source_id, evidence_id=evidence_id, url=url, confidence=confidence,
                 verification_status=status, label=label, source_locator=evidence_id)

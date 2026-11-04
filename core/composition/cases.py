@@ -580,6 +580,73 @@ def _market_footnote(rows_src: list[CaseMaterial]) -> list[Part]:
     return parts + [T(" · 서로 다른 정의의 수치는 한 축으로 합치지 않음")]
 
 
+# ---------------------------------------------------------------- M2 (Phase 3-2 업종 KPI)
+
+def kpi_pages(materials: list[CaseMaterial], pf: PartFactory, self_name: Optional[str], badge: list[Block]) -> list[SlideSpec]:
+    """M2 업종 KPI: 자사·경쟁사별 최근 3년 지표 — 숫자마다 출처·기준 시점이 있어야 올라온다(채택된
+    지표만). 내부 자료가 필요해 공개 지표로 대신한 숫자는 '(공개 지표로 대체)'로 표시한다."""
+    rows_src = [m for m in materials if m.review_status == "accepted"]
+    columns = [TableColumn(key="who", label="구분", width=0.14), TableColumn(key="metric", label="지표", width=0.30),
+               TableColumn(key="value", label="수치", width=0.18), TableColumn(key="src", label="출처(기준 시점)", width=0.38)]
+    built = []
+    for m in rows_src:
+        for fid in m.metric_fact_ids:
+            fact = pf.registry.get(fid)
+            if fact is None or getattr(fact, "verification_status", "eligible") != "eligible":
+                continue
+            asof = m.source.published_at or m.activity_date
+            if asof is None:  # 출처의 기준 시점을 알 수 없는 숫자는 쓰지 않는다
+                continue
+            substituted = fact.dims.get("substituted") == "true"
+            label = fact.label or METRIC_LABELS.get(fact.metric, fact.metric)
+            metric_cell = [N(label)] + ([T(" (공개 지표로 대체)")] if substituted else [])
+            formatter = UNIT_FORMATTER.get(fact.unit, "int")
+            who = "자사" if self_name and m.entity == self_name else "경쟁사"
+            src = [N(_publisher(m)), T(" "), D(asof)]
+            cells = [TableCell(paragraphs=[P(N(who))]), TableCell(paragraphs=[P(*metric_cell)], align="l"),
+                     TableCell(paragraphs=[P(pf.fact(fid, formatter, bold=True))]), TableCell(paragraphs=[P(*src)])]
+            h = max(_cell_height(cell.paragraphs, 1184 * col.width - 12, 10) for col, cell in zip(columns, cells))
+            built.append(((m, who, label, asof), TableRow(cells=cells, ref=m.id), max(40, math.ceil(h + 10))))
+    if not built:
+        return []
+    built.sort(key=lambda b: (b[0][1] != "자사", b[0][2], b[0][3]))  # 자사 먼저, 지표별, 연도순
+    limit_first, limit_next = 440, 470
+    chunks, cur, used = [], [], 0
+    for item in built:
+        limit = limit_first if not chunks else limit_next
+        if cur and max(used, item[2]) * (len(cur) + 1) > limit:
+            chunks.append(cur)
+            cur, used = [], 0
+        cur.append(item)
+        used = max(used, item[2])
+    if cur:
+        chunks.append(cur)
+    slides = []
+    for i, chunk in enumerate(chunks):
+        row_h = max(r[2] for r in chunk)
+        table_h = 32 + row_h * len(chunk)
+        table = TableBlock(block_id="table", region=Region(x=48, y=131, w=1184, h=table_h), columns=columns,
+                           rows=[r[1] for r in chunk], row_height=row_h, header_height=32, size=10, header_size=10)
+        sub = "업종 KPI"
+        sub_parts = [T(sub)]
+        if len(chunks) > 1:
+            sub_parts += [T(" "), Part(type="meta", key="page", text=f"({i + 1}/{len(chunks)})")]
+        lead = lead_block([P(T("자사·경쟁사 업종 KPI — 출처가 있는 숫자만, 공개 지표로 대체한 숫자는 표시"))])
+        dates = sorted(r[0][3] for r in chunk)
+        foot = [T("*각 행 출처·기준 시점 표기")]
+        if dates:
+            foot += [T(" · 기준 "), D(dates[0])]
+            if dates[-1] != dates[0]:
+                foot += [T("~"), D(dates[-1])]
+        foot.append(T(" · 공개 지표로 대체한 숫자는 괄호로 표시"))
+        blocks = [title_block("Market", sub_parts=sub_parts), lead, table, footnote_block([P(*foot)]), *badge]
+        slides.append(SlideSpec(slide_id="M2" + (f"-p{i + 1}" if i else ""), template_id="market_evidence.v1",
+                                page_role="content", section_id="campaign", title=sub, blocks=blocks,
+                                source_ids=[r[0][0].source.id for r in chunk], needs_review=True, is_data=True,
+                                parent_slide_id="M2" if i else None))
+    return slides
+
+
 # ---------------------------------------------------------------- A-source
 
 def source_pages(sources: list[tuple[SourceRef, str]], badge: list[Block]) -> list[SlideSpec]:

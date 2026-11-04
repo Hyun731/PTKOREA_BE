@@ -22,6 +22,8 @@ SECTIONS = [
      "data": "기사·공식 자료·게시물 URL + 이미지 + 근거 문장", "default_window": "사용자 지정"},
     {"id": "market", "label": "시장·타겟", "templates": ["M1"],
      "data": "공식 보고서·통계의 확인된 사실", "default_window": "사용자 지정"},
+    {"id": "market_kpi", "label": "업종 KPI", "templates": ["M2"],
+     "data": "공식 통계·공시의 업종 지표(자사·경쟁사 최근 3년)", "default_window": "최근 3년"},
     {"id": "voc", "label": "소비자 원문(VOC)", "templates": ["5-1", "5-2"],
      "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색 + 원문 수집, AI 감성·주제·인식 경로 분류)",
      "default_window": "24M"},

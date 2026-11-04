@@ -31,13 +31,24 @@ def test_catalog_runs_company_competitor_customer():
 def test_everything_is_in_by_default_and_slides_follow_items():
     p = project()
     r = by_id(p)
-    assert all(x["enabled"] for x in r.values())
+    # 3-10(업종 KPI)은 지표 중심 업종에서만 기본으로 켜진다 — 이 프로젝트는 업종 미설정.
+    assert all(x["enabled"] for iid, x in r.items() if iid != "3-10") and not r["3-10"]["enabled"]
     assert {"2-1", "2-4", "2-8a", "3-1", "C1", "M1", "cover", "A-source"} <= set(scope.slides(p))
     off = project(scope=[{"item_id": "2-6", "enabled": False}, {"item_id": "2-8", "enabled": False}])
     left = set(scope.slides(off))
     assert "2-1" not in left and "1-6" not in left and "C1" in left  # 3-7 still brings the case cards
     assert (r["4-1"]["start"], r["4-1"]["end"]) == (date(2026, 4, 1), date(2026, 9, 30))  # 최근 6개월
     assert r["2-8"]["automation"] == "auto" and r["2-1"]["automation"] == "manual"
+
+
+def test_industry_kpi_item_defaults_on_only_for_metric_industries():
+    review = project(brands=[{"id": "B1", "name": "샘소나이트", "competitors": ["리모와"], "categories": ["러기지"],
+                              "industry": "패션"}])
+    assert by_id(review)["3-10"]["enabled"] is False  # 리뷰 중심 업종
+    metric = project(brands=[{"id": "B1", "name": "은행A", "competitors": ["은행B"], "categories": ["금융"],
+                              "industry": "금융"}])
+    assert by_id(metric)["3-10"]["enabled"] is True  # 지표 중심 업종
+    assert "M2" in scope.slides(metric)
 
 
 def test_direction_reads_like_a_plan():

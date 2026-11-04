@@ -23,8 +23,9 @@ CAUSES = {
     "access": ("접근 불가", "찾은 글에 접근할 수 없었습니다"),
 }
 # Slot template -> the research section that feeds it.
-SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "3-1": "influencer",
-           "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned", "5-1": "voc", "5-2": "voc"}
+SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
+           "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
+           "5-1": "voc", "5-2": "voc"}
 UPLOAD = {"2-8a", "2-8b", "2-8c", "2-8d"}  # search volumes come from a CSV (no Naver API)
 
 

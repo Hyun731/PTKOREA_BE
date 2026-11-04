@@ -155,6 +155,11 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
         return [f"{cat} {k} {year}" for k in asked] + [
             f"{cat} 시장 규모 성장률 {year}", f"{cat} 유통 채널 점유율 {year}", f"{cat} 주요 브랜드 경쟁 구도 {year}",
             f"{age} {cat} 이용 조사 {year}".strip()]
+    if item.section_id == "market_kpi":
+        # 지표 중심 업종(거래량·ARPU·판매 대수 등) — 공식 통계·공시에서 자사·경쟁사 숫자를 찾는다.
+        return [f"{item.entity} {k} {year}" for k in asked] + [
+            f"{item.entity} 거래량 실적 {year}", f"{item.entity} ARPU {year}", f"{item.entity} 판매 대수 실적 {year}",
+            f"{item.entity} 공시 지표 {year}"]
     # Different kinds of activity surface different articles (PRD 13: 12 queries per run).
     queries = [f"{item.entity} {k} {year}" for k in asked] + [
         f"{item.entity} 캠페인 {year}", f"{item.entity} 광고 모델 {year}", f"{item.entity} 콜라보 {year}",
@@ -182,9 +187,11 @@ EXTRACT_SCHEMA = {
         "target_segment": {"anyOf": [{"type": "string", "enum": list(TARGET_SEGMENTS)}, {"type": "null"}]},
         "market_aspect": {"anyOf": [{"type": "string", "enum": list(MARKET_ASPECTS)}, {"type": "null"}]},
         "facts": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False, "required": ["label", "metric", "value", "quote"],
+            "type": "object", "additionalProperties": False,
+            "required": ["label", "metric", "value", "quote", "substituted"],
             "properties": {"label": {"type": "string"}, "metric": {"type": "string", "enum": METRICS},
-                           "value": {"type": "string"}, "quote": {"type": "string"}}}},
+                           "value": {"type": "string"}, "quote": {"type": "string"},
+                           "substituted": {"type": "boolean"}}}},
         "claims": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["kind", "text", "quote"],
             "properties": {"kind": {"type": "string", "enum": ["fact", "interpretation"]},
@@ -199,6 +206,7 @@ EXTRACT_SYSTEM = """당신은 브랜드 마케팅 진단 보고서를 돕는 리
 - relevant: 원문이 대상 브랜드의 해당 활동을 실제로 다루면 true.
 - summary: 기획자가 이 원문을 읽지 않고도 이해하도록 2~3문장으로 씁니다 — 무엇을 했고, 왜 했고(목적), 어떻게 통했는지(성과·반응). 원문에 있는 내용만 쓰고, 성과가 원문에 없으면 "성과는 원문에 나오지 않음"이라고 씁니다.
 - facts: 원문에 숫자로 명시된 성과·규모만. value는 원문 숫자를 쉼표 없이 그대로(단위 변환·추정 금지). quote는 그 숫자가 들어 있는 원문 문장을 글자 그대로 복사.
+  substituted: 조사 대상이 '업종 KPI'(거래량·ARPU 등 지표 중심 업종)일 때만, 원래 묻는 내부 지표 대신 공개된 대체 지표(예: 공시·추정치·유사 지표)를 쓴 숫자면 true, 원래 지표 그대로면 false. 그 외 조사에서는 항상 false.
 - claims: 최대 3개. kind=fact는 원문이 직접 말하는 활동 사실, kind=interpretation은 그 사실에서 바로 이어지는 제한된 시사점(원문 범위를 넘는 인과·전략 제언 금지).
   text는 명사형으로 끝나는 짧은 한 문장(40자 안팎). text에는 숫자를 쓰지 말고, 수치가 필요하면 facts 순서대로 {{1}}, {{2}}처럼 참조합니다.
   quote는 근거가 되는 원문 문장을 글자 그대로 복사합니다.
@@ -248,7 +256,8 @@ def validate_extraction(data: dict, page_text: str) -> tuple[list[dict], list[di
             if m_unit:
                 value = value * {"조": Decimal(10) ** 12, "억": Decimal(10) ** 8, "만": Decimal(10) ** 4}[m_unit.group(1)]
         index_map[i] = len(facts)
-        facts.append({"label": f.get("label") or "수치", "metric": f["metric"], "value": str(value), "quote": quote})
+        facts.append({"label": f.get("label") or "수치", "metric": f["metric"], "value": str(value), "quote": quote,
+                      "substituted": bool(f.get("substituted"))})
     claims: list[dict] = []
     for j, c in enumerate((data.get("claims") or [])[:3], start=1):
         quote = _norm(c.get("quote", ""))
@@ -552,9 +561,10 @@ def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Mate
     fact_ids: list[str] = []
     for f in facts:
         try:
+            dims = {"substituted": "true"} if item.section_id == "market_kpi" and f.get("substituted") else None
             fact = make_manual_fact(brand_id=item.brand_id, entity=item.entity, metric=f["metric"], value=f["value"],
                                     measured_at=date.today(), source=src.title, source_id=src.id, evidence_id=m.id,
-                                    label=f["label"], url=src.original_url)
+                                    label=f["label"], url=src.original_url, dims=dims)
         except ValueError:
             fact_ids.append("")
             continue
@@ -1266,7 +1276,7 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
             item.execution_status, item.latest_job_id = "running", job_id
             s.commit()
             try:
-                if item.section_id in ("campaign", "market"):
+                if item.section_id in ("campaign", "market", "market_kpi"):
                     if not settings.provider_configured("perplexity"):
                         raise ProviderError("PROVIDER_AUTH", "Perplexity 키가 없습니다")
                     r = run_web_item(s, ledger, project, item, state, ai_enabled)

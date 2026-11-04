@@ -13,7 +13,7 @@ from typing import Optional
 
 from app.services.catalog import CHANNELS, shift_months
 from core.ingestion.csv_import import window_months
-from core.schemas.project import Project, ScopeSetting
+from core.schemas.project import INDUSTRY_TYPES, Project, ScopeSetting
 
 PARTS = [
     {"id": "company", "no": "1", "label": "자사 분석", "en": "Company",
@@ -30,6 +30,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "influencer": {"instagram", "youtube"},
     "campaign": {"web"},
     "market": {"web"},
+    "market_kpi": {"web"},
     "search": {"search_naver"},
     "voc": {"community", "naver_blog"},
 }
@@ -121,6 +122,12 @@ ITEMS: list[dict] = [
      "templates": ["C1", "C2"], "channels": ["web", "instagram", "youtube"], "period": "inherit",
      "period_hint": "권장 최근 24개월", "limit": {"label": "새 사례 카드 상한", "default": 10},
      "output": "3-7과 같은 카드 + 벤치마크 표기"},
+    # Phase 3-2: 지표 중심 업종(core.schemas.project.INDUSTRY_TYPES)에서만 기본으로 켠다(_default_setting 참고).
+    {"id": "3-10", "part": "competitor", "group": "경쟁사", "title": "업종 KPI",
+     "question": "{brand}·경쟁사({competitors}) 업종 KPI(거래량·ARPU 등) 최근 3년", "subject": "self_and_competitor",
+     "collector": "market_kpi", "templates": ["M2"], "channels": ["web", "report"], "default_channels": ["web"],
+     "period": 36, "period_hint": "최근 3년(또는 3개 회계연도)",
+     "output": "지표마다 연도별 수치 + 출처, 내부 자료가 필요한 지표는 공개 대체 지표로 표시"},
     # ---------------------------------------------------------------- 3. 소비자 분석 (Customer)
     {"id": "5-1", "part": "customer", "group": "소비자 인식", "title": "소비자 인식 원문",
      "question": "{brand}를 믿고 사는 이유와 다른 브랜드로 넘어가는 이유(소비자 원문)", "subject": "self_and_competitor",
@@ -195,6 +202,8 @@ def _months_window(end: date, months: int) -> tuple[date, date]:
 
 def _default_setting(spec: dict, project: Project) -> ScopeSetting:
     enabled = True  # everything is in by default; the planner only takes out what this project doesn't need
+    if spec["id"] == "3-10":  # 업종 KPI: 지표 중심 업종에서만 기본으로 켠다(사람이 다시 켤 수는 있음)
+        enabled = any("metric" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
     section = next((sec for sec, iid in SECTION_ITEM.items() if iid == spec["id"]), None)
     w = project.window_for(section) if section else None
     if w and (w.start, w.end) != (project.period.start, project.period.end):  # a window set before scope existed
