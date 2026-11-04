@@ -111,3 +111,36 @@ class CaseMaterial(BaseModel):
     # Phase 3-3 사례 귀속 정리 — section_id="campaign" 카드에만 채워짐. 함께 등장하는 다른 자사
     # 브랜드(주 대상은 아님)의 id 목록.
     related_brand_ids: list[str] = Field(default_factory=list)
+
+
+class ReviewKeywordRef(BaseModel):
+    """Phase 2 커머스 리뷰 — 체험단·협찬을 뺀 리뷰 본문에서 뽑은 긍정·부정 키워드(원문 근거 포함)."""
+    id: str
+    sentiment: Literal["positive", "negative"]
+    keyword: str
+    sample_size: int
+    method: str
+    quotes: list[dict] = Field(default_factory=list)  # [{"text": ..., "posted_at": "YYYY-MM-DD"}], ≥1
+    blocks_purchase: bool = False
+    review_status: ReviewStatus = "candidate"
+
+
+class ReviewSnapshotRef(BaseModel):
+    """Phase 2 커머스 리뷰 — 판매 플랫폼 공개 페이지에서 모은 대표 상품 평점·리뷰 스냅샷(CM1/CM2).
+    group_key()(플랫폼+정확한 상품 URL)가 정한 단위 그대로 한 행 — 다른 스냅샷과 합치지 않는다."""
+    id: str
+    brand_id: str
+    entity: str
+    role: Literal["self", "competitor"]
+    platform: str
+    product_name: str
+    product_url: str
+    access_status: Literal["ok", "unavailable"] = "ok"
+    reason: Optional[str] = None
+    rating: Optional[float] = None
+    rating_scale: float = 5.0
+    review_count: Optional[int] = None
+    sponsored_count: int = 0
+    measured_at: date
+    review_status: ReviewStatus = "candidate"
+    keywords: list[ReviewKeywordRef] = Field(default_factory=list)

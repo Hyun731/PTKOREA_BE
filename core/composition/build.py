@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Callable, Optional
 
-from core.composition import cases, customer, overview, owned, quant, synthesis
+from core.composition import cases, commerce, customer, overview, owned, quant, synthesis
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
 )
@@ -22,7 +22,7 @@ from core.metrics.engine import MetricsResult, compute
 from core.rules.config import RulesConfig
 from core.rules.engine import run_rules
 from core.schemas.facts import Fact, Finding, Post
-from core.schemas.materials import AssetRef, CaseMaterial, OwnedPostRef, SourceRef
+from core.schemas.materials import AssetRef, CaseMaterial, OwnedPostRef, ReviewSnapshotRef, SourceRef
 from core.schemas.project import Brand, Project
 from core.schemas.slidespec import (
     BarChartBlock, Binding, DeckSpec, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, SlotPlan, TableBlock,
@@ -43,13 +43,15 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
 TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-4": "owned",
                     "2-5": "owned", "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search",
                     "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "M2": "campaign",
-                    "TR1": "search_trend", "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
+                    "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
+                    "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
                     "ES": "recap", "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
                   "M1": "시장·타겟 근거", "M2": "업종 KPI", "TR1": "검색 추이(Google Trends)",
+                  "CM1": "판매·리뷰 자산", "CM2": "경쟁사 리뷰 비교",
                   "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
                   "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트",
                   "SWOT": "SWOT", "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
@@ -74,14 +76,15 @@ BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
 SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap", "M1"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
-                    "M2": "competitor", "TR1": "competitor", "2-8a": "competitor", "2-8b": "competitor",
+                    "M2": "competitor", "TR1": "competitor", "CM1": "company", "CM2": "competitor",
+                    "2-8a": "competitor", "2-8b": "competitor",
                     "2-8c": "competitor", "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
                     "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
-PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "M1", "M2", "2-8a", "2-8b", "2-8c",
-              "2-8d", "TR1", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT", "PROBLEM",
-              "SOLUTION", "A-source"]
+PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
+              "2-8c", "2-8d", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
+              "PROBLEM", "SOLUTION", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
@@ -104,6 +107,8 @@ class BuildInputs:
     synthesis: dict = field(default_factory=dict)
     # {brand_id: [query, ...]} — Phase 3-4 Google Trends 연관 검색어, 그 브랜드의 최신 search_trend 수집 결과.
     trend_related: dict[str, list[str]] = field(default_factory=dict)
+    # Phase 2 커머스 리뷰(CM1/CM2) — 채택 여부와 무관하게 전부 싣고, composition이 accepted만 골라 쓴다.
+    reviews: list[ReviewSnapshotRef] = field(default_factory=list)
     generated_on: Optional[date] = None
     deck_id: str = "deck"
     deck_version: int = 1
@@ -283,17 +288,24 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
                  "채택된 시장·타겟 근거 없음", part=part)
         self_name = c.project.brands[0].name if c.project.brands else None
+        self_id = c.project.brands[0].id if c.project.brands else None
         if on("M2"):
             # KPI materials carry a real brand/competitor name as entity, so the usual name filter
             # above already scopes `mats` correctly per brand — no category dedup needed (unlike M1).
             kpi = [m for m in mats if m.section_id == "market_kpi"]
             slot("M2", "M2", cases.kpi_pages(kpi, pf, self_name, badge if _uses_synthetic(kpi, metrics) else []),
                  "채택된 업종 KPI 근거 없음", part=part)
+        reviews = [r for r in inputs.reviews if r.brand_id == self_id] if self_id else []
+        if on("CM1"):
+            slot("CM1", "CM1", commerce.review_asset_page(reviews, self_name),
+                 "채택된 리뷰 스냅샷 없음(대표 상품 확정·수집 필요)", part=part)
         if on("TR1"):
-            self_id = c.project.brands[0].id if c.project.brands else None
             related = inputs.trend_related.get(self_id, []) if self_id else []
             slot("TR1", "TR1", [s] if (s := quant.trend_page(c, related)) else [],
                  "Google Trends 수집 결과 없음(요청 빈도 제한으로 자주 막힘)", part=part)
+        if on("CM2"):
+            slot("CM2", "CM2", commerce.competitor_review_page(reviews),
+                 "채택된 경쟁사 리뷰 스냅샷 없음", part=part)
         voc = [m for m in mats if m.section_id == "voc" and m.entity == self_name]
         if on("5-1"):
             s = customer.voc_summary_page(c.project, voc)

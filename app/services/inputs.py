@@ -7,12 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, ResearchItem, Source, SynthesisRun,
+    Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, ResearchItem, ReviewKeyword,
+    ReviewSnapshot, Source, SynthesisRun,
 )
 from app.storage import get_storage
 from core.composition.build import BuildInputs
 from core.schemas.facts import Fact, Post
-from core.schemas.materials import AssetRef, CaseMaterial, ClaimRef, OwnedPostRef, SourceRef
+from core.schemas.materials import (
+    AssetRef, CaseMaterial, ClaimRef, OwnedPostRef, ReviewKeywordRef, ReviewSnapshotRef, SourceRef,
+)
 from core.schemas.project import Project as CoreProject
 from core.schemas.slidespec import Crop, Paragraph, Part
 
@@ -90,6 +93,23 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
                                         url=op.url, posted_at=op.posted_at, likes=op.likes, comments=op.comments,
                                         asset=asset_ref(asset) if asset else None))
 
+    # Phase 2 커머스 리뷰: 스냅샷·키워드 모두 싣고(채택 여부 무관), composition이 accepted만 골라 쓴다.
+    reviews: list[ReviewSnapshotRef] = []
+    snaps = list(db.scalars(select(ReviewSnapshot).where(ReviewSnapshot.project_id == project.id)))
+    kws_by_snap: dict[str, list[ReviewKeyword]] = {}
+    if snaps:
+        for k in db.scalars(select(ReviewKeyword).where(ReviewKeyword.snapshot_id.in_([s.id for s in snaps]))):
+            kws_by_snap.setdefault(k.snapshot_id, []).append(k)
+    for s in snaps:
+        reviews.append(ReviewSnapshotRef(
+            id=s.id, brand_id=s.brand_id, entity=s.entity, role=s.role, platform=s.platform,
+            product_name=s.product_name, product_url=s.product_url, access_status=s.access_status, reason=s.reason,
+            rating=s.rating, rating_scale=s.rating_scale, review_count=s.review_count,
+            sponsored_count=s.sponsored_count, measured_at=s.measured_at, review_status=s.review_status,
+            keywords=[ReviewKeywordRef(id=k.id, sentiment=k.sentiment, keyword=k.keyword, sample_size=k.sample_size,
+                                       method=k.method, quotes=k.quotes, blocks_purchase=k.blocks_purchase,
+                                       review_status=k.review_status) for k in kws_by_snap.get(s.id, [])]))
+
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}
     leads = {k: [Paragraph.model_validate(p) for p in v] for k, v in (project.lead_overrides or {}).items()}
     synthesis: dict[str, dict] = {}
@@ -104,5 +124,5 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
             trend_related[ri.brand_id] = queries
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
                        owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, synthesis=synthesis,
-                       trend_related=trend_related, generated_on=date.today(),
+                       trend_related=trend_related, reviews=reviews, generated_on=date.today(),
                        deck_id=project.id)

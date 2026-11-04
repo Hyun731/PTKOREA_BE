@@ -19,7 +19,8 @@ from app.config import ROOT, settings
 from app.db import get_db
 from app.errors import ApiError, not_found, stale_version
 from app.models import (
-    Asset, Claim, FactRow, ImportBatch, Material, PostRow, ResearchItem, Source, new_id, utcnow,
+    Asset, Claim, FactRow, ImportBatch, Material, PostRow, ResearchItem, ReviewKeyword, ReviewSnapshot, Source,
+    new_id, utcnow,
 )
 from app.routers.projects import actor, get_project
 from app.services.assets import inspect_upload, normalized_derivative, validate_crop
@@ -402,6 +403,64 @@ def review_material(material_id: str, body: ReviewIn, db: Session = Depends(get_
     audit(db, m.project_id, "material", m.id, "review", before=before, after=body.status, reason=body.reason, actor=who)
     db.commit()
     return material_out(db, m)
+
+
+def review_snapshot_out(db: Session, s: ReviewSnapshot) -> dict:
+    keywords = list(db.scalars(select(ReviewKeyword).where(ReviewKeyword.snapshot_id == s.id)
+                               .order_by(ReviewKeyword.id)))
+    return {
+        "id": s.id, "brand_id": s.brand_id, "entity": s.entity, "role": s.role, "platform": s.platform,
+        "product_name": s.product_name, "product_url": s.product_url, "access_status": s.access_status,
+        "reason": s.reason, "rating": s.rating, "rating_scale": s.rating_scale, "review_count": s.review_count,
+        "sponsored_count": s.sponsored_count, "measured_at": s.measured_at, "review_status": s.review_status,
+        "keywords": [{"id": k.id, "sentiment": k.sentiment, "keyword": k.keyword, "sample_size": k.sample_size,
+                     "method": k.method, "quotes": k.quotes, "blocks_purchase": k.blocks_purchase,
+                     "review_status": k.review_status} for k in keywords],
+    }
+
+
+@router.get("/projects/{project_id}/review-snapshots")
+def list_review_snapshots(project_id: str, brand_id: Optional[str] = None, status: Optional[str] = None,
+                          db: Session = Depends(get_db)):
+    """Phase 2 커머스 리뷰 — 플랫폼에서 모은 평점·리뷰 스냅샷(사람이 채택해야 CM1/CM2에 실린다)."""
+    get_project(db, project_id)
+    q = select(ReviewSnapshot).where(ReviewSnapshot.project_id == project_id)
+    if brand_id:
+        q = q.where(ReviewSnapshot.brand_id == brand_id)
+    if status:
+        q = q.where(ReviewSnapshot.review_status == status)
+    return [review_snapshot_out(db, s) for s in db.scalars(q.order_by(ReviewSnapshot.created_at))]
+
+
+class SnapshotReviewIn(BaseModel):
+    status: Literal["candidate", "accepted", "excluded"]
+
+
+@router.patch("/review-snapshots/{snapshot_id}/review")
+def review_review_snapshot(snapshot_id: str, body: SnapshotReviewIn, db: Session = Depends(get_db),
+                           who: str = Depends(actor)):
+    s = db.get(ReviewSnapshot, snapshot_id)
+    if s is None:
+        raise not_found("리뷰 스냅샷")
+    before = s.review_status
+    s.review_status = body.status
+    audit(db, s.project_id, "review_snapshot", s.id, "review", before=before, after=body.status, actor=who)
+    db.commit()
+    return review_snapshot_out(db, s)
+
+
+@router.patch("/review-keywords/{keyword_id}/review")
+def review_review_keyword(keyword_id: str, body: SnapshotReviewIn, db: Session = Depends(get_db),
+                          who: str = Depends(actor)):
+    k = db.get(ReviewKeyword, keyword_id)
+    if k is None:
+        raise not_found("리뷰 키워드")
+    s = db.get(ReviewSnapshot, k.snapshot_id)
+    before = k.review_status
+    k.review_status = body.status
+    audit(db, s.project_id, "review_keyword", k.id, "review", before=before, after=body.status, actor=who)
+    db.commit()
+    return review_snapshot_out(db, s)
 
 
 class DuplicateIn(BaseModel):

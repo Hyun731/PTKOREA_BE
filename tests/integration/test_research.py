@@ -658,6 +658,46 @@ def test_commerce_review_item_requires_a_confirmed_hero_product(client, fakes):
     assert res["status"] == "failed" and res["errors"][0]["code"] == "NO_PRODUCT"
 
 
+def test_commerce_review_needs_adoption_then_appears_on_cm1_once_accepted(client, fakes, monkeypatch):
+    """Phase 2 커머스 리뷰: 수집 직후엔 '채택 대기'로 뜨고, 사람이 채택해야 CM1에 실린다(자동 채택 금지)."""
+    from integrations.commerce import musinsa
+
+    p = ok(client.post("/v1/projects", json={
+        "name": "커머스 리뷰 채택 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "categories": ["신발"], "industry": "패션",
+                   "hero_products": [{"name": "에어맥스 95", "status": "confirmed"}]}]}), 201)
+    pid = p["id"]
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "commerce_review", "브랜드A")
+
+    monkeypatch.setattr(musinsa, "find_product",
+                        lambda name, **kw: {"goods_no": "123", "url": "https://www.musinsa.com/products/123"})
+    monkeypatch.setattr(musinsa, "fetch_product", lambda goods_no, **kw: {
+        "platform": "musinsa", "product_name": "에어맥스 95", "product_url": "https://www.musinsa.com/products/123",
+        "brand_name": "나이키", "rating": 4.5, "rating_scale": 5.0, "review_count": 120, "access_status": "ok"})
+    monkeypatch.setattr(musinsa, "fetch_reviews", lambda goods_no, **kw: [
+        {"text": "쿠션감이 좋아요 재구매 의사 있습니다", "rating": 5, "posted_at": "2026-08-01", "sponsored": False},
+    ])
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]["status"] == "succeeded"
+
+    project = ok(client.get(f"/v1/projects/{pid}"))
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": project["version"],
+                                                "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["CM1"]}}))
+    missing = {m["slot_id"]: m for m in ok(client.get(f"/v1/projects/{pid}/outline"))["missing"]}
+    assert missing["CM1"]["cause"] == "adopt"  # 모은 스냅샷이 채택을 기다리는 중
+
+    snaps = ok(client.get(f"/v1/projects/{pid}/review-snapshots"))
+    assert len(snaps) == 1 and snaps[0]["review_status"] == "candidate"
+    snap = snaps[0]
+    ok(client.patch(f"/v1/review-snapshots/{snap['id']}/review", json={"status": "accepted"}))
+    for kw in snap["keywords"]:
+        ok(client.patch(f"/v1/review-keywords/{kw['id']}/review", json={"status": "accepted"}))
+
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    assert next(s for s in sp["plan"] if s["slot_id"] == "CM1")["readiness"] == "ready"
+
+
 def test_deck_build_asks_before_building_with_pending_review(client, fakes):
     """Phase 3-5: 확인 대기 자료가 있으면 그냥 만들지 않고 묻는다 — 확인하면 그대로 진행하고 감사 기록을 남긴다."""
     from app.models import AuditLog

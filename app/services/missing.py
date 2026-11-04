@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Material, Project, ResearchItem, ResearchPlan, Source
+from app.models import Material, Project, ResearchItem, ResearchPlan, ReviewSnapshot, Source
 from core.schemas.project import Project as CoreProject
 from core.schemas.slidespec import SlotPlan
 
@@ -25,7 +25,7 @@ CAUSES = {
 # Slot template -> the research section that feeds it.
 SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
            "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
-           "5-1": "voc", "5-2": "voc", "TR1": "search_trend"}
+           "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review"}
 UPLOAD = {"2-8a", "2-8b", "2-8c", "2-8d"}  # search volumes come from a CSV (no Naver API)
 
 
@@ -49,6 +49,10 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
     waiting = list(db.scalars(select(Material).join(Source, Source.id == Material.source_id).where(
         Material.project_id == project.id, Material.review_status == "candidate", Material.duplicate_of.is_(None),
         Source.access_status != "unavailable")))
+    # Phase 2 커머스 리뷰: Material이 아니라 ReviewSnapshot에 쌓이므로 따로 센다.
+    waiting_reviews = list(db.scalars(select(ReviewSnapshot).where(
+        ReviewSnapshot.project_id == project.id, ReviewSnapshot.review_status == "candidate",
+        ReviewSnapshot.access_status == "ok")))
     # voc 전용: 글은 찾았지만 전부 접근 불가(로그인 벽 등)였던 경우를 "수집 필요"와 구분해 보여준다.
     unavailable = list(db.scalars(select(Material).join(Source, Source.id == Material.source_id).where(
         Material.project_id == project.id, Material.section_id == "voc", Material.duplicate_of.is_(None),
@@ -73,7 +77,8 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             cause = "upload"
         elif section is None:
             cause = None  # built from the other pages (1-1, recap): nothing of its own to fetch
-        elif any(mine(m.brand_id, m.entity, m.section_id) for m in waiting):
+        elif any(mine(m.brand_id, m.entity, m.section_id) for m in waiting) or \
+                any(mine(r.brand_id, r.entity, "commerce_review") for r in waiting_reviews):
             cause = "adopt"
         elif section == "owned" and not any(p.status == "confirmed" for b in brands for p in b.official_profiles):
             cause = "setup"  # a candidate account still needs a person's check before it can be collected
@@ -92,5 +97,6 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             slot.action = CAUSES[cause][1]
         # Items to run again: only web-collected ones that did not just succeed with new cards.
         if cause in ("collect", "access"):
-            slot.item_ids = [i.id for i in related if i.section_id in ("campaign", "market", "voc", "search_trend")
+            slot.item_ids = [i.id for i in related
+                             if i.section_id in ("campaign", "market", "voc", "search_trend", "commerce_review")
                              and i.execution_status not in ("queued", "running")]
