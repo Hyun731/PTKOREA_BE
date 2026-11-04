@@ -22,6 +22,8 @@ def doubt(m: Material, src: Source) -> str | None:
         return "같은 사례의 추가 출처"
     if src.access_status not in ("ok", "unknown") and src.source_type != "social":
         return "원문 확보 실패"
+    if m.section_id == "voc" and m.voc_sponsored:
+        return "체험단·협찬 표기 — 키워드 집계에서 빠짐"
     reason = m.review_reason or ""
     return next((d for d in DOUBTS if reason.startswith(d)), None)
 

@@ -77,7 +77,9 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
             asset=asset_ref(asset) if asset else None, metric_fact_ids=manual_by_mat.get(m.id, []),
             claims=[claim_ref(c) for c in sorted(claims_by_mat.get(m.id, []), key=lambda c: c.created_at)],
             comment=m.comment, review_status=m.review_status, input_path=m.input_path, featured=m.featured, order=m.order,
-            target_segment=m.target_segment, ai_detail=m.ai_detail, ai_implication=m.ai_implication))
+            target_segment=m.target_segment, ai_detail=m.ai_detail, ai_implication=m.ai_implication,
+            voc_sentiment=m.voc_sentiment, voc_topic=m.voc_topic, voc_awareness=m.voc_awareness,
+            voc_sponsored=m.voc_sponsored))
     owned_posts: list[OwnedPostRef] = []
     for op in db.scalars(select(OwnedPost).where(OwnedPost.project_id == project.id).order_by(OwnedPost.likes.desc())):
         asset = assets.get(op.asset_id) if op.asset_id else None

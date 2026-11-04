@@ -22,6 +22,9 @@ SECTIONS = [
      "data": "기사·공식 자료·게시물 URL + 이미지 + 근거 문장", "default_window": "사용자 지정"},
     {"id": "market", "label": "시장·타겟", "templates": ["M1"],
      "data": "공식 보고서·통계의 확인된 사실", "default_window": "사용자 지정"},
+    {"id": "voc", "label": "소비자 원문(VOC)", "templates": ["5-1", "5-2"],
+     "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색 + 원문 수집, AI 감성·주제·인식 경로 분류)",
+     "default_window": "24M"},
     {"id": "recap", "label": "Recap", "templates": ["5-recap"], "data": "본문 Finding 요약", "default_window": "-"},
     {"id": "appendix", "label": "출처 표", "templates": ["A-source"], "data": "사용 자료 출처", "default_window": "-"},
 ]
@@ -55,14 +58,15 @@ CHANNELS = {
     "instagram": {"label": "Instagram 공개 게시물", "support": "auto", "provider": "scrapecreators"},
     "youtube": {"label": "YouTube 공개 영상", "support": "auto", "provider": "scrapecreators"},
     "tiktok": {"label": "TikTok", "support": "manual_only", "provider": None},
-    "naver_blog": {"label": "네이버 블로그·카페", "support": "manual_only", "provider": None},
+    "naver_blog": {"label": "네이버 블로그·카페·티스토리·다음 카페", "support": "auto", "provider": "perplexity"},
     "offline": {"label": "오프라인·팝업", "support": "manual_only", "provider": None},
     "sales": {"label": "판매·매출 데이터", "support": "unsupported", "provider": None},
     # Sources the AE factbook scope names (팩트북 표준 목차 §4) that have no collector yet: a person
     # enters or uploads what they find there.
     "dart": {"label": "DART 공시·감사보고서", "support": "manual_only", "provider": None},
     "tvcf": {"label": "TVCF 광고 아카이브", "support": "manual_only", "provider": None},
-    "community": {"label": "커뮤니티 (클리앙·더쿠·네이버 카페 등)", "support": "manual_only", "provider": None},
+    "community": {"label": "커뮤니티 (디시인사이드·에펨코리아·더쿠·루리웹·클리앙·오늘의유머)",
+                  "support": "auto", "provider": "perplexity"},
     "commerce_review": {"label": "커머스 리뷰 (무신사·29CM·네이버쇼핑)", "support": "manual_only", "provider": None},
     "commerce_rank": {"label": "커머스 랭킹", "support": "manual_only", "provider": None},
     "app_review": {"label": "앱스토어·구글플레이 리뷰", "support": "manual_only", "provider": None},

@@ -808,6 +808,159 @@ def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: 
     return out
 
 
+# ------------------------------------------------------------------ voc (5-1/5-2 소비자 원문)
+
+# 카페·블로그 vs 커뮤니티는 Phase 1-4 수집 현황 표의 두 채널과 그대로 맞춘다.
+CAFE_BLOG_SITES = ("blog.naver.com", "cafe.naver.com", "tistory.com", "cafe.daum.net")
+COMMUNITY_SITES = ("dcinside.com", "fmkorea.com", "theqoo.net", "ruliweb.com", "clien.net", "todayhumor.co.kr")
+VOC_SITE_CHANNEL = {**{s: "cafe_blog" for s in CAFE_BLOG_SITES}, **{s: "community" for s in COMMUNITY_SITES}}
+MAX_VOC_PER_RUN = 20  # per item — keeps one run's AI-classification cost bounded
+# fetch_page has no login-wall detection of its own (a walled page still answers 200): a best-effort
+# check on the final URL / a very short page behind a login-looking title catches the common cases.
+LOGIN_WALL_MARKERS = re.compile(r"login|로그인|sign.?in|accounts\.google\.com|nid\.naver\.com", re.IGNORECASE)
+VOC_TOPICS = ("price", "quality", "design", "shipping", "cs", "other")
+VOC_AWARENESS = ("ad", "referral", "influencer", "store", "search", "other")
+VOC_SYSTEM = """당신은 소비자가 쓴 블로그·카페·커뮤니티 원문을 읽고 분류하는 리서처입니다. <brand>를 다루는
+글 하나를 보고 답합니다.
+- relevant: 이 글이 실제로 <brand>를 다루면 true. 다른 브랜드가 주제면 false.
+- headline: 이 글이 <brand>에 대해 말하는 핵심을 한 문장(명사형, 20자 이내)으로. 원문에 없는 수치는 쓰지 않습니다.
+- sentiment: 글쓴이가 <brand>에 대해 전반적으로 긍정적(positive)·부정적(negative)·중립(neutral)인지.
+- topic: 글의 핵심 주제 하나 — price(가격)·quality(품질)·design(디자인)·shipping(배송)·cs(AS)·other(기타).
+- awareness: <brand>를 처음 알거나 확인한 경로가 원문에 나와 있으면 — ad(광고)·referral(지인 추천)·
+  influencer(인플루언서·SNS)·store(매장 방문)·search(검색). 나와 있지 않으면 other.
+- sponsored: 체험단·협찬·제품 제공·광고비 수령 등 대가를 받고 쓴 글이라는 표시가 있으면 true."""
+VOC_SCHEMA = {"type": "object", "additionalProperties": False,
+             "required": ["relevant", "headline", "sentiment", "topic", "awareness", "sponsored"],
+             "properties": {"relevant": {"type": "boolean"}, "headline": {"type": "string"},
+                            "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]},
+                            "topic": {"type": "string", "enum": list(VOC_TOPICS)},
+                            "awareness": {"type": "string", "enum": list(VOC_AWARENESS)},
+                            "sponsored": {"type": "boolean"}}}
+
+
+def _voc_host_channel(url: str) -> Optional[str]:
+    host = _host(url)
+    return next((ch for site, ch in VOC_SITE_CHANNEL.items() if host == site or host.endswith(f".{site}")), None)
+
+
+def _is_login_wall(page) -> bool:
+    if LOGIN_WALL_MARKERS.search(page.final_url):
+        return True
+    return len(page.text) < 80 and bool(LOGIN_WALL_MARKERS.search(page.title or ""))
+
+
+def _voc_prompt(entity: str, text: str) -> str:
+    return f"<brand>{entity}</brand>\n<text>\n{text[:PAGE_CHARS_FOR_AI]}\n</text>"
+
+
+def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem, ai_enabled: bool) -> dict:
+    """5-1/5-2: 카페·블로그·커뮤니티 공개 글에서 소비자 원문을 모으고 감성·주제·인식 경로·협찬 여부를
+    분류한다. 캠페인 사례와 달리 '같은 활동 묶기'는 하지 않는다 — 원문 하나하나가 독립된 증언이다."""
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    out: dict = {"created": 0, "pages": 0, "access_unavailable": 0, "channels": {}, "errors": []}
+    names = brand.names_for(item.entity)
+    queries = [f"{n} 후기" for n in names[:2]]
+    sites = list(CAFE_BLOG_SITES + COMMUNITY_SITES)
+    try:
+        res = ledger.call("perplexity", "search", {"queries": queries, "sites": sites, "max_results": 20}, 0.005,
+                          lambda: p["search"](queries, max_results=20, country="KR", languages=["ko"], sites=sites))
+    except ProviderError as exc:
+        out["errors"].append({"code": exc.code, "message": f"검색 실패: {exc.message}"})
+        return out
+
+    existing_urls = {s.original_url for s in db.scalars(select(Source).join(Material, Material.source_id == Source.id)
+                                                         .where(Material.project_id == project.id))}
+    cards: list[tuple[Source, Material, str]] = []
+    for r in res.data["results"]:
+        if len(cards) >= MAX_VOC_PER_RUN:
+            break
+        url = r["url"]
+        if url in existing_urls:
+            out["skipped_existing"] = out.get("skipped_existing", 0) + 1
+            continue
+        channel = _voc_host_channel(url)
+        if channel is None:  # a result outside the configured site list
+            continue
+        if not period.published_in_search_window(_safe_date(r.get("date")), item.period_start, item.period_end):
+            out["out_of_period"] = out.get("out_of_period", 0) + 1
+            continue
+        existing_urls.add(url)
+        src = Source(id=new_id("SRC"), project_id=project.id, title=html.unescape(r["title"] or url)[:300],
+                     original_url=url, publisher=_host(url), published_at=_safe_date(r.get("date")), fetched_at=utcnow(),
+                     source_type="web", access_status="unknown")
+        db.add(src)
+        db.flush()
+        m = Material(id=new_id("EV"), project_id=project.id, source_id=src.id, research_item_id=item.id,
+                     brand_id=item.brand_id, entity=item.entity, section_id="voc", title=src.title,
+                     excerpt=_norm(r.get("snippet", ""))[:1200], input_path="auto", review_status="candidate",
+                     comment="", order=0)
+        db.add(m)
+        cards.append((src, m, channel))
+    db.commit()
+    if not cards:
+        if not out.get("skipped_existing") and not out.get("out_of_period"):
+            out["errors"].append({"code": "NO_MATERIAL", "message": f"‘{item.entity}’를 다룬 글을 찾지 못했습니다"})
+        return out
+
+    def fetch(url: str):
+        try:
+            return p["fetch_page"](url), None
+        except ProviderError as exc:
+            return None, exc
+
+    with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="voc_fetch") as pool:
+        fetched = list(pool.map(lambda sm: fetch(sm[0].original_url), cards))
+
+    extract_jobs = []
+    for (src, m, channel), (page, err) in zip(cards, fetched):
+        out["created"] += 1
+        if err or _is_login_wall(page):
+            src.access_status = "unavailable"
+            m.review_reason = f"원문 확보 실패: {err.message}" if err else "접근 불가: 로그인이 필요한 페이지"
+            out["access_unavailable"] += 1
+            continue
+        out["pages"] += 1
+        src.access_status, src.content_hash = "ok", page.content_hash
+        src.text = page.text[:SOURCE_TEXT_CHARS] if page.text else None
+        src.publisher = page.publisher or src.publisher
+        src.published_at = src.published_at or _safe_date(page.published)
+        if page.title:
+            src.title = m.title = html.unescape(page.title)[:300]
+        out["channels"][channel] = out["channels"].get(channel, 0) + 1
+        if ai_enabled and page.text:
+            extract_jobs.append((src, m, _voc_prompt(item.entity, page.text)))
+    db.commit()
+
+    def extract(job):
+        src, m, user = job
+        try:
+            return ledger.call("anthropic", "voc_classify", {"url": src.original_url, "hash": src.content_hash}, 0.01,
+                               lambda: p["structured"](VOC_SYSTEM, user, VOC_SCHEMA, max_tokens=500)), None
+        except ProviderError as exc:
+            return None, exc
+
+    with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="voc_extract") as pool:
+        answers = list(pool.map(extract, extract_jobs))
+    for (src, m, _), (res2, err) in zip(extract_jobs, answers):
+        if err:
+            if err.code == "BUDGET_EXCEEDED":
+                raise err
+            out["errors"].append({"code": err.code, "message": f"AI 분류 실패: {err.message}"})
+            continue
+        d = res2.data
+        if not d.get("relevant"):
+            m.review_reason = "AI 판단: 관련성 낮음"
+        m.event_name = (d.get("headline") or "").strip()[:200] or None
+        m.voc_sentiment = d.get("sentiment") if d.get("sentiment") in ("positive", "negative", "neutral") else None
+        m.voc_topic = d.get("topic") if d.get("topic") in VOC_TOPICS else None
+        m.voc_awareness = d.get("awareness") if d.get("awareness") in VOC_AWARENESS else None
+        m.voc_sponsored = bool(d.get("sponsored"))
+    db.commit()
+    return out
+
+
 # ------------------------------------------------------------------ owned (2-1 채널 인벤토리)
 
 MAX_OWNED_PAGES = 40  # per channel per item — paging starts at today, so it must reach back past period_start
@@ -1127,6 +1280,11 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                         raise ProviderError("PROVIDER_AUTH", "ScrapeCreators 키가 없습니다")
                     r = run_owned_item(s, ledger, project, item)
                     made = r.get("facts", 0)
+                elif item.section_id == "voc":
+                    if not settings.provider_configured("perplexity"):
+                        raise ProviderError("PROVIDER_AUTH", "Perplexity 키가 없습니다")
+                    r = run_voc_item(s, ledger, project, item, ai_enabled)
+                    made = r["created"]
                 else:
                     r = {"errors": [{"code": "NOT_IN_STAGE", "message": "자동 수집 대상이 아닙니다"}]}
                     made = 0

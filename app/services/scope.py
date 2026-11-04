@@ -31,6 +31,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "campaign": {"web"},
     "market": {"web"},
     "search": {"search_naver"},
+    "voc": {"community", "naver_blog"},
 }
 
 # subject: self | competitor | benchmark | market — whom one research item looks at, per self brand.
@@ -122,14 +123,16 @@ ITEMS: list[dict] = [
      "output": "3-7과 같은 카드 + 벤치마크 표기"},
     # ---------------------------------------------------------------- 3. 소비자 분석 (Customer)
     {"id": "5-1", "part": "customer", "group": "소비자 인식", "title": "소비자 인식 원문",
-     "question": "{brand}를 믿고 사는 이유와 다른 브랜드로 넘어가는 이유(소비자 원문)", "subject": "self",
-     "collector": None, "channels": ["community", "commerce_review", "app_review", "naver_blog"],
-     "default_channels": ["community", "commerce_review"], "period": 24, "period_hint": "커뮤니티 표본 확보를 위해 넓게",
-     "output": "양쪽 각 원문 4~5개 + 매체 + 일자"},
+     "question": "{brand}를 믿고 사는 이유와 다른 브랜드로 넘어가는 이유(소비자 원문)", "subject": "self_and_competitor",
+     "collector": "voc", "templates": ["5-1"],
+     "channels": ["community", "naver_blog", "commerce_review", "app_review"],
+     "default_channels": ["community", "naver_blog"], "period": 24, "period_hint": "커뮤니티 표본 확보를 위해 넓게",
+     "output": "긍정·부정 키워드 TOP5 + 불만 요인 3개, 키워드마다 원문·일자"},
     {"id": "5-2", "part": "customer", "group": "소비자 인식", "title": "브랜드 인식 경로",
-     "question": "{category} 연령대별로 브랜드를 처음 알고 확인하는 곳, 인플루언서·리뷰의 영향", "subject": "market",
-     "collector": None, "channels": ["report", "upload"], "period": 12, "period_hint": "최신 조사",
-     "uploads": ["브랜드 트래커"], "output": "연령대 × 매체 접점 표 + 조사 기관·연도·n"},
+     "question": "{brand} 소비자가 브랜드를 처음 알거나 확인한 경로(광고·지인·인플루언서·매장·검색 등)", "subject": "self_and_competitor",
+     "collector": "voc", "templates": ["5-2"], "channels": ["community", "naver_blog", "report", "upload"],
+     "default_channels": ["community", "naver_blog"], "period": 24, "period_hint": "5-1과 같은 원문에서 뽑음",
+     "uploads": ["브랜드 트래커"], "output": "접점별 비중 + 표본 수 + 분류 방법"},
     {"id": "5-3", "part": "customer", "group": "구매 여정", "title": "구매 여정과 이탈 지점",
      "question": "인지 → 탐색 → 검증 → 구매 → 확산 단계마다 접점·상태·끊기는 곳", "subject": "self",
      "collector": "generated", "channels": [], "period": "inherit", "from": ["2-4", "2-6", "3-2", "5-1"],
@@ -152,6 +155,10 @@ ALWAYS_SLIDES = ["cover", "index", "divider", "1-1", "5-recap", "A-source", "end
 
 # Sections the deck reads a window from (metrics, rules, footnotes) and the scope item that sets it.
 SECTION_ITEM = {"owned": "2-6", "influencer": "2-7", "campaign": "2-8", "search": "3-2", "market": "3-1"}
+# "voc" is deliberately not in SECTION_ITEM: _default_setting()'s legacy-window check below would
+# misread 5-1's own 24-month default (vs. the project's shorter period) as a legacy override and
+# turn it into an invalid "custom" setting with no start/end. The voc slides read each item's own
+# resolved period directly instead of a section-wide window.
 
 
 def _default_channels(spec: dict) -> list[str]:

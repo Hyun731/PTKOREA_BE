@@ -97,3 +97,14 @@ def test_owned_channel_targets_narrow_which_competitors_but_never_drop_self():
     p = project(scope=[{"item_id": "2-6", "targets": ["리모와"]}])
     rows = [r for r in scope.generate_items(p) if r["scope_id"] == "2-6"]
     assert {r["entity"] for r in rows} == {"샘소나이트", "리모와"}
+
+
+def test_voc_items_default_to_their_own_months_period_not_a_broken_custom_window():
+    """5-1's 24-month default is wider than a typical project period — resolving it twice (as a
+    real save does, once section_windows is recomputed) must not turn it into an invalid 'custom'
+    ScopeSetting with no start/end (regression: _default_setting()'s legacy-window heuristic)."""
+    p = project()  # period.start..end is a single 9-month window
+    core = Project.model_validate({**p.model_dump(mode="json"), "section_windows": scope.section_windows(p)})
+    r = by_id(core)["5-1"]
+    assert r["period"] == "months" and r["months"] == 24
+    assert core.scope == []  # nothing was silently written as an override either

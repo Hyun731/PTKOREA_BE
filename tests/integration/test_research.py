@@ -869,12 +869,35 @@ def test_collection_mix_flags_press_heavy_research_and_thin_channels(client, fak
     assert row["channels"]["influencer"] == {"count": 4, "min": 10, "enough": False,
                                              "label": "SNS·인플루언서", "action": "조사 계획에서 인플루언서 항목을 다시 모으세요"}
     assert row["channels"]["owned"]["enough"] is False and row["channels"]["owned"]["total"] == 0  # 공식 계정 미등록
-    for c in ("cafe_blog", "community", "review"):
-        assert row["channels"][c] == {"count": 0, "label": {"cafe_blog": "카페·블로그", "community": "커뮤니티",
-                                                             "review": "리뷰"}[c], "enough": False, "not_implemented": True}
+    assert row["channels"]["review"] == {"count": 0, "label": "리뷰", "enough": False, "not_implemented": True}
+    assert row["channels"]["cafe_blog"]["count"] == 0 and row["channels"]["cafe_blog"]["enough"] is False
+    assert row["channels"]["community"]["count"] == 0 and row["channels"]["community"]["sites"] == 0
     assert row["access_unavailable"] == 1
     # press(2) / total(2 press + 4 influencer) = 1/3 ≈ 0.333 — not over 40% yet with this mix
     assert row["press_ratio"] == round(2 / 6, 3)
+
+
+def test_collection_mix_community_needs_posts_spread_across_three_sites(client, fakes):
+    pid, plan = setup_project(client)
+    with SessionLocal() as db:
+        def voc(i, url):
+            src = Source(id=new_id("SRC"), project_id=pid, title=f"글{i}", original_url=url, source_type="web")
+            db.add(src)
+            db.flush()
+            db.add(Material(id=new_id("EV"), project_id=pid, source_id=src.id, brand_id="B1", entity="브랜드A",
+                            section_id="voc", title=f"글{i}", review_status="candidate"))
+        # 2 cafe_blog posts (same site) + 2 community posts split across only 2 sites — short of 3.
+        voc(1, "https://blog.naver.com/a/1")
+        voc(2, "https://blog.naver.com/a/2")
+        voc(3, "https://gall.dcinside.com/b/1")
+        voc(4, "https://www.fmkorea.com/c/1")
+        db.commit()
+
+    r = ok(client.get(f"/v1/projects/{pid}/collection-mix"))
+    row = next(b for b in r["brands"] if b["brand_id"] == "B1")
+    assert row["channels"]["cafe_blog"]["count"] == 2 and row["channels"]["cafe_blog"]["enough"] is False  # 20건 미만
+    assert row["channels"]["community"]["count"] == 2 and row["channels"]["community"]["sites"] == 2
+    assert row["channels"]["community"]["enough"] is False  # 20건도, 3곳도 안 됨
 
 
 def test_collection_mix_owned_channel_enough_once_every_confirmed_account_is_recent(client, fakes):
@@ -892,6 +915,91 @@ def test_collection_mix_owned_channel_enough_once_every_confirmed_account_is_rec
     row = next(b for b in r["brands"] if b["brand_id"] == "B1")
     assert row["channels"]["owned"] == {"count": 1, "total": 1, "enough": True, "label": "공식 채널",
                                         "action": "자료 확인에서 '다시 모으기'로 최근 자료를 받으세요"}
+
+
+def test_voc_item_collects_and_classifies_consumer_posts(client, fakes):
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "voc", "브랜드A")
+
+    def search(queries, sites=None, **kw):
+        fakes._hit("search")
+        assert sites and "blog.naver.com" in sites and "dcinside.com" in sites
+        return CallResult(data={"id": "s", "results": [
+            {"title": "브랜드A 후기", "url": "https://blog.naver.com/x/1", "snippet": "좋아요", "date": "2026-05-01"},
+            {"title": "브랜드A 솔직 후기", "url": "https://gall.dcinside.com/board/view/?id=x&no=1", "snippet": "별로", "date": "2026-05-02"},
+            {"title": "브랜드A 카페 글", "url": "https://cafe.naver.com/x/2", "snippet": "", "date": "2026-05-03"},
+        ]}, cost_usd=0.005)
+
+    def fetch_page(url, **kw):
+        fakes._hit("fetch_page")
+        if "cafe.naver.com" in url:
+            return Page(url=url, final_url="https://nid.naver.com/nidlogin.login?url=" + url, title="네이버 로그인",
+                       text="로그인 후 이용해주세요", content_hash="hlogin", published=None, publisher=None, image_urls=[])
+        if "dcinside" in url:
+            return Page(url=url, final_url=url, title="디시 글", text="협찬 받아서 써봤는데 디자인이 별로였어요 #협찬",
+                       content_hash="h2", published="2026-05-02", publisher="dcinside", image_urls=[])
+        return Page(url=url, final_url=url, title="네이버 블로그 글", text="가격도 괜찮고 품질도 좋아서 친구 추천으로 알게 됐어요",
+                   content_hash="h1", published="2026-05-01", publisher="네이버 블로그", image_urls=[])
+
+    def structured(system, user, schema, **kw):
+        if set(schema["properties"]) == {"relevant", "headline", "sentiment", "topic", "awareness", "sponsored"}:
+            fakes._hit("voc_classify")
+            if "협찬" in user:
+                return CallResult(data={"relevant": True, "headline": "디자인이 별로였음", "sentiment": "negative",
+                                        "topic": "design", "awareness": "other", "sponsored": True}, cost_usd=0.001)
+            return CallResult(data={"relevant": True, "headline": "가격이 합리적", "sentiment": "positive",
+                                    "topic": "price", "awareness": "referral", "sponsored": False}, cost_usd=0.001)
+        return fakes.structured(system, user, schema, **kw)
+
+    research.PROVIDERS["search"] = search
+    research.PROVIDERS["fetch_page"] = fetch_page
+    research.PROVIDERS["structured"] = structured
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["created"] == 3 and res["access_unavailable"] == 1
+    assert res["channels"] == {"cafe_blog": 1, "community": 1}
+    assert fakes.calls["voc_classify"] == 2  # the login-walled card never reaches AI classification
+
+    mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "voc"}
+    blog = mats["https://blog.naver.com/x/1"]
+    assert blog["voc_sentiment"] == "positive" and blog["voc_topic"] == "price" and blog["voc_awareness"] == "referral"
+    assert blog["voc_sponsored"] is False
+    dc = mats["https://gall.dcinside.com/board/view/?id=x&no=1"]
+    assert dc["voc_sponsored"] is True
+    walled = mats["https://cafe.naver.com/x/2"]
+    assert walled["source"]["access_status"] == "unavailable"
+
+    # 묶음 채택: 접근 불가·협찬 표기 카드는 사람의 확인을 기다리고, 나머지만 한 번에 채택된다.
+    out = ok(client.post(f"/v1/projects/{pid}/materials/accept-all"))
+    assert out["accepted"] == 1 and out["left"] == 2
+
+
+def test_voc_item_reports_access_cause_when_every_post_is_login_walled(client, fakes):
+    pid, plan = setup_project(client)
+    clear_cache()
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"],
+                                                 "changes": {"enabled_slides": proj["config"]["enabled_slides"] + ["5-1"]}}))
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "voc", "브랜드A")
+
+    def search(queries, sites=None, **kw):
+        return CallResult(data={"id": "s", "results": [
+            {"title": "브랜드A 카페 글", "url": "https://cafe.naver.com/x/9", "snippet": "", "date": "2026-05-03"}]},
+                          cost_usd=0.005)
+
+    def fetch_page(url, **kw):
+        return Page(url=url, final_url="https://nid.naver.com/nidlogin.login", title="네이버 로그인",
+                   text="로그인 후 이용해주세요", content_hash="hlogin", published=None, publisher=None, image_urls=[])
+
+    research.PROVIDERS["search"] = search
+    research.PROVIDERS["fetch_page"] = fetch_page
+    ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    slot = next((s for s in sp["plan"] if s["slot_id"].startswith("5-1")), None)
+    assert slot is not None and slot["readiness"] == "needs_input" and slot["cause"] == "access"
 
 
 def test_research_runs_without_a_run_budget(client, fakes, monkeypatch):

@@ -163,6 +163,11 @@ class Material(Base):
     # P4 사례 카드 해설 (06_AI_프롬프트_템플릿.md): set only once a CaseCommentary proposal is accepted.
     ai_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ai_implication: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Phase 1-3 소비자 원문(VOC) 분류 — section_id="voc" 카드에만 채워짐.
+    voc_sentiment: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # positive|negative|neutral
+    voc_topic: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # price|quality|design|shipping|cs|other
+    voc_awareness: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # ad|referral|influencer|store|search|other
+    voc_sponsored: Mapped[bool] = mapped_column(Boolean, default=False)  # 체험단·협찬 — 키워드 집계에서 뺀다
     # Person-picked for a one-slide deep dive (full image + period + numbered insights) instead of the card grid.
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     order: Mapped[int] = mapped_column(Integer, default=0)

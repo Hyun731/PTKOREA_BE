@@ -95,3 +95,8 @@ class CaseMaterial(BaseModel):
     target_segment: Optional[str] = None  # one of TARGET_SEGMENTS, or None if not evident in the source
     ai_detail: Optional[str] = None  # P4 사례 카드 해설: 무엇을 했고 왜 통했나 (accepted CaseCommentary only)
     ai_implication: Optional[str] = None  # P4: 자사에 적용할 시사점
+    # Phase 1-3 소비자 원문(VOC) 분류 — section_id="voc" 카드에만 채워짐.
+    voc_sentiment: Optional[Literal["positive", "negative", "neutral"]] = None
+    voc_topic: Optional[Literal["price", "quality", "design", "shipping", "cs", "other"]] = None
+    voc_awareness: Optional[Literal["ad", "referral", "influencer", "store", "search", "other"]] = None
+    voc_sponsored: bool = False

@@ -14,16 +14,25 @@ ENDPOINT = "https://api.perplexity.ai/search"
 EST_COST_PER_REQUEST = 0.005
 
 
+def _site_scoped(query: str, sites: list[str]) -> str:
+    # The Search API (distinct from Sonar's search_domain_filter) has no domain-filter param, so the
+    # fallback is a site: OR-group in the query text itself — works with any text search backend.
+    return f"{query} ({' OR '.join(f'site:{s}' for s in sites)})" if sites else query
+
+
 def search(queries: list[str], *, max_results: int = 5, country: str = "KR",
            languages: Optional[list[str]] = None, max_tokens_per_page: int = 1024,
            published_after: Optional[str] = None, published_before: Optional[str] = None,
-           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
-    """published_after/before: MM/DD/YYYY publish-date window (search_after/before_date_filter)."""
+           sites: Optional[list[str]] = None, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """published_after/before: MM/DD/YYYY publish-date window (search_after/before_date_filter).
+    sites: restrict results to these domains via a site: OR-group (no native domain-filter param)."""
     key = os.environ.get("PERPLEXITY_API_KEY")
     if not key:
         raise ProviderError("PROVIDER_AUTH", "PERPLEXITY_API_KEY가 설정되지 않았습니다")
     if not 1 <= len(queries) <= 5:
         raise ValueError("queries must have 1-5 items")
+    if sites:
+        queries = [_site_scoped(q, sites) for q in queries]
     body = {"query": queries if len(queries) > 1 else queries[0], "max_results": max(1, min(20, max_results)),
             "country": country, "max_tokens_per_page": max_tokens_per_page}
     if languages:
