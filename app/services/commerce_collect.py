@@ -1,11 +1,13 @@
-"""Phase 2 커머스 리뷰 수집 — 확정된 대표 상품(Brand.hero_products_for)의 판매 플랫폼 리뷰를
-공개 페이지에서 모은다. 지금은 무신사만 자동 연동(쉬운 곳부터 — 핸드오프 문서 순서)한다.
+"""Phase 2 커머스 리뷰 수집 — 확정된 대표 상품(Brand.hero_products_for)마다 연동된 플랫폼을
+전부 돌며 판매 플랫폼 리뷰를 공개 페이지에서 모은다. 플랫폼 하나가 막혀도(차단) 그 플랫폼만
+접근 불가로 남고 나머지 플랫폼·상품은 계속 수집한다 — 검색 한 번 막혔다고 항목 전체를
+실패시키지 않는다.
 자동 채택은 없다: 모든 행이 candidate로 시작하고, 사람이 자료 확인에서 채택해야 장표에 쓰인다.
 """
 from __future__ import annotations
 
 from datetime import date
-from typing import Callable
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -14,7 +16,13 @@ from app.services import commerce
 from app.services.inputs import core_project
 from app.services.ledger import RunLedger
 from integrations.base import CallResult, ProviderError
-from integrations.commerce import musinsa
+from integrations.commerce import coupang, musinsa, oliveyoung, smartstore, twentyninecm
+
+# 핸드오프 문서 순서(쉬운 곳부터): 무신사·29CM·올리브영 → 스마트스토어 → 쿠팡.
+PLATFORM_MODULES = {
+    "musinsa": musinsa, "29cm": twentyninecm, "oliveyoung": oliveyoung,
+    "smartstore": smartstore, "coupang": coupang,
+}
 
 KEYWORD_SYSTEM = """당신은 커머스 리뷰를 분류하는 보조입니다. <reviews>는 번호가 매겨진 리뷰 목록입니다
 (체험단·협찬 리뷰는 이미 빠져 있습니다).
@@ -79,24 +87,31 @@ def classify_reviews(reviews: list[dict], ledger: RunLedger) -> dict[tuple[str, 
     return out
 
 
-def _musinsa_search(ledger: RunLedger, name: str):
-    return ledger.call("commerce", "musinsa_search", {"q": name}, 0.0,
-                       lambda: CallResult(data=musinsa.find_product(name) or {}), cache_days=7).data or None
+def _search(ledger: RunLedger, platform: str, module, name: str) -> tuple[Optional[dict], Optional[str]]:
+    """(찾은 상품, 차단 사유) — 검색 자체가 막히면(ProviderError) 이 플랫폼만 접근 불가로 남기고
+    항목 전체를 실패시키지 않는다."""
+    try:
+        data = ledger.call("commerce", f"{platform}_search", {"q": name}, 0.0,
+                           lambda: CallResult(data=module.find_product(name) or {}), cache_days=7).data
+        return (data or None), None
+    except ProviderError as exc:
+        return None, exc.message
 
 
-def _musinsa_product(ledger: RunLedger, goods_no: str) -> dict:
-    return ledger.call("commerce", "musinsa_product", {"goods_no": goods_no}, 0.0,
-                       lambda: CallResult(data=musinsa.fetch_product(goods_no)), cache_days=1).data
+def _fetch_product(ledger: RunLedger, platform: str, module, product_id: str) -> dict:
+    return ledger.call("commerce", f"{platform}_product", {"id": product_id}, 0.0,
+                       lambda: CallResult(data=module.fetch_product(product_id)), cache_days=1).data
 
 
-def _musinsa_reviews(ledger: RunLedger, goods_no: str) -> list[dict]:
-    return ledger.call("commerce", "musinsa_reviews", {"goods_no": goods_no}, 0.0,
-                       lambda: CallResult(data={"reviews": musinsa.fetch_reviews(goods_no)}), cache_days=1
+def _fetch_reviews(ledger: RunLedger, platform: str, module, product_id: str) -> list[dict]:
+    return ledger.call("commerce", f"{platform}_reviews", {"id": product_id}, 0.0,
+                       lambda: CallResult(data={"reviews": module.fetch_reviews(product_id)}), cache_days=1
                        ).data["reviews"]
 
 
 def run_commerce_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
-    """item.entity(자사 브랜드 또는 경쟁사)의 확정된 대표 상품마다 무신사에서 평점·리뷰를 모은다."""
+    """item.entity(자사 브랜드 또는 경쟁사)의 확정된 대표 상품마다, 연동된 플랫폼을 전부 돌며
+    평점·리뷰를 모은다(플랫폼별로 한 행 — group_key()가 정한 단위, 서로 합치지 않는다)."""
     core = core_project(project)
     brand = core.brand(item.brand_id)
     products = brand.hero_products_for(item.entity)
@@ -108,53 +123,56 @@ def run_commerce_item(db: Session, ledger: RunLedger, project: Project, item: Re
     role = "self" if item.entity == brand.name else "competitor"
     today = date.today()
     for product in products:
-        found = _musinsa_search(ledger, product.name)
-        if not found:
+        for platform, module in PLATFORM_MODULES.items():
+            found, blocked = _search(ledger, platform, module, product.name)
+            if not found:
+                snap = ReviewSnapshot(id=new_id("REV"), project_id=project.id, brand_id=item.brand_id,
+                                      entity=item.entity, role=role, platform=platform, product_name=product.name,
+                                      product_url="", access_status="unavailable",
+                                      reason=blocked or "검색 결과에서 상품을 찾지 못함",
+                                      rating_scale=commerce.DEFAULT_SCALE.get(platform, 5.0), measured_at=today)
+                db.add(snap)
+                db.commit()
+                out["created"] += 1
+                continue
+            data = _fetch_product(ledger, platform, module, found["id"])
+            data["measured_at"] = today  # 파서는 측정일을 모른다 — 검증 전에 수집 시점을 채운다
+            bad = commerce.validate_snapshot(data)
+            if bad:
+                out["errors"].append({"code": "INVALID_SNAPSHOT", "message": f"{product.name}({platform}): {bad}"})
+                continue
             snap = ReviewSnapshot(id=new_id("REV"), project_id=project.id, brand_id=item.brand_id, entity=item.entity,
-                                  role=role, platform="musinsa", product_name=product.name, product_url="",
-                                  access_status="unavailable", reason="검색 결과에서 상품을 찾지 못함",
-                                  rating_scale=5.0, measured_at=today)
+                                  role=role, platform=data["platform"],
+                                  product_name=data["product_name"] or product.name, product_url=data["product_url"],
+                                  access_status=data["access_status"], reason=data.get("reason"),
+                                  rating=data.get("rating"),
+                                  rating_scale=data.get("rating_scale") or commerce.DEFAULT_SCALE.get(platform, 5.0),
+                                  review_count=data.get("review_count"), measured_at=today)
             db.add(snap)
+            # 커밋해 쓰기 잠금을 바로 풀어준다 — ledger.call()이 리뷰·키워드 분류마다 별도 커넥션으로
+            # commit하는데, 여기서 플러시만 하고 열어 두면 같은 sqlite 파일에 "database is locked"가 난다.
             db.commit()
             out["created"] += 1
-            continue
-        data = _musinsa_product(ledger, found["goods_no"])
-        data["measured_at"] = today  # 파서는 측정일을 모른다 — 검증 전에 수집 시점을 채운다
-        bad = commerce.validate_snapshot(data)
-        if bad:
-            out["errors"].append({"code": "INVALID_SNAPSHOT", "message": f"{product.name}: {bad}"})
-            continue
-        snap = ReviewSnapshot(id=new_id("REV"), project_id=project.id, brand_id=item.brand_id, entity=item.entity,
-                              role=role, platform=data["platform"], product_name=data["product_name"] or product.name,
-                              product_url=data["product_url"], access_status=data["access_status"],
-                              reason=data.get("reason"), rating=data.get("rating"),
-                              rating_scale=data.get("rating_scale") or 5.0, review_count=data.get("review_count"),
-                              measured_at=today)
-        db.add(snap)
-        # 커밋해 쓰기 잠금을 바로 풀어준다 — ledger.call()이 리뷰·키워드 분류마다 별도 커넥션으로
-        # commit하는데, 여기서 플러시만 하고 열어 두면 같은 sqlite 파일에 "database is locked"가 난다.
-        db.commit()
-        out["created"] += 1
-        out["snapshots"] += 1
-        if data["access_status"] != "ok":
-            continue
-        reviews = _musinsa_reviews(ledger, found["goods_no"])
-        sponsored = [r for r in reviews if r["sponsored"]]
-        snap.sponsored_count = len(sponsored)
-        organic = [r for r in reviews if not r["sponsored"] and r.get("text")]
-        groups = classify_reviews(organic, ledger)
-        for (sentiment, keyword), info in groups.items():
-            quotes = [{"text": organic[i]["text"][:300], "posted_at": organic[i]["posted_at"]}
-                     for i in info["indices"][:3] if organic[i].get("posted_at")]
-            kw_data = {"sentiment": sentiment, "keyword": keyword, "sample_size": len(info["indices"]),
-                      "method": METHOD_NOTE, "quotes": quotes, "blocks_purchase": info["blocks_purchase"]}
-            bad = commerce.validate_keyword(kw_data)
-            if bad:
-                out.setdefault("dropped", []).append(f"{keyword}: {bad}")
+            out["snapshots"] += 1
+            if data["access_status"] != "ok":
                 continue
-            db.add(ReviewKeyword(id=new_id("RK"), snapshot_id=snap.id, sentiment=sentiment, keyword=keyword,
-                                 sample_size=kw_data["sample_size"], method=METHOD_NOTE, quotes=quotes,
-                                 blocks_purchase=info["blocks_purchase"]))
-            out["keywords"] += 1
-        db.commit()
+            reviews = _fetch_reviews(ledger, platform, module, found["id"])
+            sponsored = [r for r in reviews if r["sponsored"]]
+            snap.sponsored_count = len(sponsored)
+            organic = [r for r in reviews if not r["sponsored"] and r.get("text")]
+            groups = classify_reviews(organic, ledger)
+            for (sentiment, keyword), info in groups.items():
+                quotes = [{"text": organic[i]["text"][:300], "posted_at": organic[i]["posted_at"]}
+                         for i in info["indices"][:3] if organic[i].get("posted_at")]
+                kw_data = {"sentiment": sentiment, "keyword": keyword, "sample_size": len(info["indices"]),
+                          "method": METHOD_NOTE, "quotes": quotes, "blocks_purchase": info["blocks_purchase"]}
+                bad = commerce.validate_keyword(kw_data)
+                if bad:
+                    out.setdefault("dropped", []).append(f"{keyword}: {bad}")
+                    continue
+                db.add(ReviewKeyword(id=new_id("RK"), snapshot_id=snap.id, sentiment=sentiment, keyword=keyword,
+                                     sample_size=kw_data["sample_size"], method=METHOD_NOTE, quotes=quotes,
+                                     blocks_purchase=info["blocks_purchase"]))
+                out["keywords"] += 1
+            db.commit()
     return out

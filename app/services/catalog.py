@@ -27,7 +27,9 @@ SECTIONS = [
     {"id": "search_trend", "label": "검색 추이(Google Trends)", "templates": ["TR1"],
      "data": "Google Trends 공개 경로 — 카테고리·브랜드 키워드 상대 지수(0~100)·연관 검색어", "default_window": "최근 12개월"},
     {"id": "commerce_review", "label": "커머스 리뷰", "templates": ["CM1", "CM2"],
-     "data": "판매 플랫폼 공개 리뷰(무신사 자동) — 대표 상품 평점·리뷰 수·긍정부정 키워드", "default_window": "최신 수집 시점"},
+     "data": "판매 플랫폼 공개 리뷰(무신사·29CM·올리브영·스마트스토어·쿠팡 자동 시도) — 대표 상품 평점·"
+             "리뷰 수·긍정부정 키워드. 무신사 외에는 봇 차단으로 접근 불가가 흔함",
+     "default_window": "최신 수집 시점"},
     {"id": "voc", "label": "소비자 원문(VOC)", "templates": ["5-1", "5-2"],
      "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색 + 원문 수집, AI 감성·주제·인식 경로 분류)",
      "default_window": "24M"},
@@ -75,8 +77,10 @@ CHANNELS = {
     "tvcf": {"label": "TVCF 광고 아카이브", "support": "manual_only", "provider": None},
     "community": {"label": "커뮤니티 (디시인사이드·에펨코리아·더쿠·루리웹·클리앙·오늘의유머)",
                   "support": "auto", "provider": "perplexity"},
-    # Phase 2: 무신사 공개 페이지만 자동 수집(쉬운 곳부터) — 나머지 플랫폼은 아직 수동.
-    "commerce_review": {"label": "커머스 리뷰 (무신사 자동 · 29CM·올리브영·스마트스토어·쿠팡 수동)",
+    # Phase 2: 무신사·29CM·올리브영·스마트스토어·쿠팡 모두 공개 페이지 자동 수집을 시도한다.
+    # 무신사만 정직한 봇 식별 요청을 허용하고, 나머지는 봇 차단(Cloudflare·Akamai 등)으로
+    # 접근 불가가 흔하다 — 우회 없이 "접근 불가"로 남긴다.
+    "commerce_review": {"label": "커머스 리뷰 (무신사·29CM·올리브영·스마트스토어·쿠팡 자동 시도)",
                         "support": "auto", "provider": "commerce"},
     "commerce_rank": {"label": "커머스 랭킹", "support": "manual_only", "provider": None},
     "app_review": {"label": "앱스토어·구글플레이 리뷰", "support": "manual_only", "provider": None},

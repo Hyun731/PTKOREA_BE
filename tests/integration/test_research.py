@@ -316,6 +316,16 @@ def item(plan, section, entity=None):
     return next(i for i in plan["items"] if i["section_id"] == section and (entity is None or i["entity"] == entity))
 
 
+def mute_other_commerce_platforms(monkeypatch, *, keep: str = "musinsa"):
+    """커머스 리뷰 테스트가 무신사 하나만 다루고 싶을 때, 나머지 플랫폼은 '찾지 못함'으로 고정해
+    실제 네트워크를 타지 않게 한다(app/services/commerce_collect.py가 플랫폼 전부를 돈다)."""
+    from app.services.commerce_collect import PLATFORM_MODULES
+
+    for platform, module in PLATFORM_MODULES.items():
+        if platform != keep:
+            monkeypatch.setattr(module, "find_product", lambda name, **kw: None)
+
+
 def clear_cache():
     with SessionLocal() as db:
         db.query(ProviderCache).delete()
@@ -619,12 +629,13 @@ def test_commerce_review_item_collects_rating_and_keywords_excluding_sponsored(c
     it = item(plan, "commerce_review", "브랜드A")
     assert it["role"] == "self"
 
+    mute_other_commerce_platforms(monkeypatch)
     monkeypatch.setattr(musinsa, "find_product",
-                        lambda name, **kw: {"goods_no": "123", "url": "https://www.musinsa.com/products/123"})
-    monkeypatch.setattr(musinsa, "fetch_product", lambda goods_no, **kw: {
+                        lambda name, **kw: {"id": "123", "url": "https://www.musinsa.com/products/123"})
+    monkeypatch.setattr(musinsa, "fetch_product", lambda product_id, **kw: {
         "platform": "musinsa", "product_name": "에어맥스 95", "product_url": "https://www.musinsa.com/products/123",
         "brand_name": "나이키", "rating": 4.5, "rating_scale": 5.0, "review_count": 120, "access_status": "ok"})
-    monkeypatch.setattr(musinsa, "fetch_reviews", lambda goods_no, **kw: [
+    monkeypatch.setattr(musinsa, "fetch_reviews", lambda product_id, **kw: [
         {"text": "쿠션감이 좋아요 재구매 의사 있습니다", "rating": 5, "posted_at": "2026-08-01", "sponsored": False},
         {"text": "쿠션감이 부족해서 별로예요", "rating": 2, "posted_at": "2026-08-02", "sponsored": False},
         {"text": "체험단으로 제공받아 작성한 후기입니다. 쿠션감이 좋아요", "rating": 5, "posted_at": "2026-08-03", "sponsored": True},
@@ -635,7 +646,12 @@ def test_commerce_review_item_collects_rating_and_keywords_excluding_sponsored(c
     assert res["status"] == "succeeded" and res["snapshots"] == 1
 
     with SessionLocal() as db:
-        snap = db.scalars(select(ReviewSnapshot).where(ReviewSnapshot.project_id == pid)).one()
+        snaps = db.scalars(select(ReviewSnapshot).where(ReviewSnapshot.project_id == pid)).all()
+        # 무신사 1건(평점 확보) + 나머지 4개 플랫폼은 '찾지 못함'으로 접근 불가 — 플랫폼마다 한 행.
+        assert len(snaps) == 5
+        others = [s for s in snaps if s.platform != "musinsa"]
+        assert all(s.access_status == "unavailable" for s in others)
+        snap = next(s for s in snaps if s.platform == "musinsa")
         assert snap.rating == 4.5 and snap.review_count == 120 and snap.review_status == "candidate"
         assert snap.sponsored_count == 1  # 체험단 리뷰 1건은 따로 셈
         kws = db.scalars(select(ReviewKeyword).where(ReviewKeyword.snapshot_id == snap.id)).all()
@@ -644,6 +660,49 @@ def test_commerce_review_item_collects_rating_and_keywords_excluding_sponsored(c
         assert by_sentiment["positive"].sample_size == 1  # 체험단 리뷰는 키워드 집계에서 빠짐(2건이 아니라 1건)
         assert by_sentiment["negative"].blocks_purchase is True
         assert by_sentiment["negative"].quotes[0]["posted_at"] == "2026-08-02"
+
+
+def test_commerce_review_item_checks_every_platform_and_one_blocked_platform_does_not_abort_others(client, fakes, monkeypatch):
+    """Phase 2 커머스 리뷰: 대표 상품마다 연동된 플랫폼 5개를 전부 돈다 — 한 플랫폼이 차단돼도
+    (ProviderError) 그 플랫폼만 접근 불가로 남고 나머지는 계속 수집한다(항목 전체 실패 아님)."""
+    from app.models import ReviewSnapshot
+    from integrations.base import ProviderError
+    from integrations.commerce import coupang, musinsa, oliveyoung, smartstore, twentyninecm
+
+    p = ok(client.post("/v1/projects", json={
+        "name": "멀티 플랫폼 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "categories": ["신발"], "industry": "패션",
+                   # 다른 테스트와 같은 (플랫폼, 상품명) 조합을 쓰면 7일 캐시(ledger.call)를 맞고 지나간다.
+                   "hero_products": [{"name": "멀티플랫폼용 상품", "status": "confirmed"}]}]}), 201)
+    pid = p["id"]
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "commerce_review", "브랜드A")
+
+    monkeypatch.setattr(musinsa, "find_product",
+                        lambda name, **kw: {"id": "123", "url": "https://www.musinsa.com/products/123"})
+    monkeypatch.setattr(musinsa, "fetch_product", lambda product_id, **kw: {
+        "platform": "musinsa", "product_name": "에어맥스 95", "product_url": "https://www.musinsa.com/products/123",
+        "rating": 4.5, "rating_scale": 5.0, "review_count": 120, "access_status": "ok"})
+    monkeypatch.setattr(musinsa, "fetch_reviews", lambda product_id, **kw: [])
+
+    def blocked(name, **kw):  # 29CM처럼 검색 자체가 막힌 경우를 흉내
+        raise ProviderError("SOURCE_UNAVAILABLE", "29CM 접근 실패 (403)", 403)
+
+    monkeypatch.setattr(twentyninecm, "find_product", blocked)
+    monkeypatch.setattr(oliveyoung, "find_product", lambda name, **kw: None)  # 찾지 못함(차단 아님)
+    monkeypatch.setattr(smartstore, "find_product", lambda name, **kw: None)
+    monkeypatch.setattr(coupang, "find_product", lambda name, **kw: None)
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded" and res["snapshots"] == 1  # 무신사만 평점 확보, 항목은 성공
+
+    with SessionLocal() as db:
+        snaps = {s.platform: s for s in db.scalars(select(ReviewSnapshot).where(ReviewSnapshot.project_id == pid))}
+        assert set(snaps) == {"musinsa", "29cm", "oliveyoung", "smartstore", "coupang"}
+        assert snaps["musinsa"].access_status == "ok" and snaps["musinsa"].rating == 4.5
+        assert snaps["29cm"].access_status == "unavailable" and "403" in snaps["29cm"].reason
+        assert snaps["oliveyoung"].access_status == "unavailable" and snaps["oliveyoung"].reason == "검색 결과에서 상품을 찾지 못함"
 
 
 def test_commerce_review_item_requires_a_confirmed_hero_product(client, fakes):
@@ -671,12 +730,13 @@ def test_commerce_review_needs_adoption_then_appears_on_cm1_once_accepted(client
     plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
     it = item(plan, "commerce_review", "브랜드A")
 
+    mute_other_commerce_platforms(monkeypatch)
     monkeypatch.setattr(musinsa, "find_product",
-                        lambda name, **kw: {"goods_no": "123", "url": "https://www.musinsa.com/products/123"})
-    monkeypatch.setattr(musinsa, "fetch_product", lambda goods_no, **kw: {
+                        lambda name, **kw: {"id": "123", "url": "https://www.musinsa.com/products/123"})
+    monkeypatch.setattr(musinsa, "fetch_product", lambda product_id, **kw: {
         "platform": "musinsa", "product_name": "에어맥스 95", "product_url": "https://www.musinsa.com/products/123",
         "brand_name": "나이키", "rating": 4.5, "rating_scale": 5.0, "review_count": 120, "access_status": "ok"})
-    monkeypatch.setattr(musinsa, "fetch_reviews", lambda goods_no, **kw: [
+    monkeypatch.setattr(musinsa, "fetch_reviews", lambda product_id, **kw: [
         {"text": "쿠션감이 좋아요 재구매 의사 있습니다", "rating": 5, "posted_at": "2026-08-01", "sponsored": False},
     ])
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
@@ -689,8 +749,9 @@ def test_commerce_review_needs_adoption_then_appears_on_cm1_once_accepted(client
     assert missing["CM1"]["cause"] == "adopt"  # 모은 스냅샷이 채택을 기다리는 중
 
     snaps = ok(client.get(f"/v1/projects/{pid}/review-snapshots"))
-    assert len(snaps) == 1 and snaps[0]["review_status"] == "candidate"
-    snap = snaps[0]
+    # 무신사 1건(평점 확보) + 나머지 4개 플랫폼은 '찾지 못함'으로 접근 불가 — 플랫폼마다 한 행.
+    assert len(snaps) == 5 and all(s["review_status"] == "candidate" for s in snaps)
+    snap = next(s for s in snaps if s["platform"] == "musinsa")
     ok(client.patch(f"/v1/review-snapshots/{snap['id']}/review", json={"status": "accepted"}))
     for kw in snap["keywords"]:
         ok(client.patch(f"/v1/review-keywords/{kw['id']}/review", json={"status": "accepted"}))

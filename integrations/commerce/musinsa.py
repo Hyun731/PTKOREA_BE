@@ -8,13 +8,13 @@ schema.org JSON-LD(<script type="application/ld+json">)에서 읽는다. 리뷰 
 """
 from __future__ import annotations
 
-import json
 import re
 from typing import Optional
 
 import httpx
 
 from integrations.base import ProviderError
+from integrations.commerce import schema_org
 
 PLATFORM = "musinsa"
 USER_AGENT = "Mozilla/5.0 (compatible; PTK-ResearchBot/0.1; +https://example.invalid/bot)"
@@ -23,7 +23,6 @@ PRODUCT_URL = "https://www.musinsa.com/products/{goods_no}"
 REVIEW_API = "https://goods.musinsa.com/api2/review/v1/view/list"
 
 PRODUCT_LINK_RE = re.compile(r"/products/(\d+)")
-LD_JSON_RE = re.compile(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
 # 체험단·협찬 고지 문구(표시광고법상 리뷰 본문에 필수 고지) — 공개 API에 별도 플래그가 없어 본문에서 찾는다.
 SPONSORED_PATTERN = re.compile(r"체험단|협찬|제공\s*받[아은]|원고료|무상\s*제공")
 
@@ -45,27 +44,12 @@ def find_product(keyword: str, *, transport: Optional[httpx.BaseTransport] = Non
         if not m:
             return None
         goods_no = m.group(1)
-        return {"goods_no": goods_no, "url": PRODUCT_URL.format(goods_no=goods_no)}
+        return {"id": goods_no, "url": PRODUCT_URL.format(goods_no=goods_no)}
 
 
 def parse_product_page(html: str, url: str) -> dict:
     """schema.org JSON-LD에서 상품명·브랜드·평점·리뷰 수를 읽는다. 못 찾으면 접근 불가로 남긴다."""
-    for m in LD_JSON_RE.finditer(html):
-        try:
-            data = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            continue
-        if data.get("@type") != "Product":
-            continue
-        rating = data.get("aggregateRating") or {}
-        return {
-            "platform": PLATFORM, "product_name": data.get("name") or "", "product_url": url,
-            "brand_name": (data.get("brand") or {}).get("name"),
-            "rating": rating.get("ratingValue"), "rating_scale": rating.get("bestRating") or 5.0,
-            "review_count": rating.get("reviewCount"), "access_status": "ok",
-        }
-    return {"platform": PLATFORM, "product_name": "", "product_url": url, "access_status": "unavailable",
-           "reason": "상품 정보(JSON-LD)를 찾을 수 없음 — 페이지 구조가 바뀌었거나 접근이 막혔을 수 있음"}
+    return schema_org.extract_product(html, url, PLATFORM)
 
 
 def fetch_product(goods_no: str, *, transport: Optional[httpx.BaseTransport] = None) -> dict:
