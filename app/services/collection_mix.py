@@ -3,10 +3,12 @@
 채널별 '수집 부족' 기준(핸드오프 §Phase 1-4):
 - 공식 채널: 확인된(채택된) 공식 계정 전부가 최근 6개월 안에 수집됐는지
 - 인플루언서: 게시물 10건 이상
-- 카페·블로그: 20건 이상 (아직 수집기가 없어 Phase 1-3 전에는 항상 0건)
-- 커뮤니티: 20건 이상, 서로 다른 3곳 이상 (위와 같은 이유로 항상 0건)
-- 리뷰: 2개 플랫폼 이상, 원문 30건 이상 (Phase 2 전에는 항상 0건)
+- 카페·블로그: 20건 이상
+- 커뮤니티: 20건 이상, 서로 다른 3곳 이상
+- 리뷰: 2개 플랫폼 이상, 원문 30건 이상(Phase 2 — 플랫폼 공개 리뷰 수, 제외되지 않은 스냅샷만)
 언론은 최소 건수 대신 전체에서 차지하는 비율로 본다 — 40%를 넘으면 경고.
+전자·뷰티·패션처럼 리뷰가 필수인 업종은 소비자 원문(카페·블로그+커뮤니티+리뷰) 중 리뷰 비중이
+50% 미만이면 커뮤니티·카페만으로 채운 것으로 보고 따로 경고한다(핸드오프 Phase 2 §5).
 """
 from __future__ import annotations
 
@@ -16,16 +18,17 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import FactRow, Material, PostRow, Project, Source
-from core.schemas.project import Project as CoreProject
+from app.models import FactRow, Material, PostRow, Project, ReviewSnapshot, Source
+from core.schemas.project import REQUIRED_REVIEW_INDUSTRIES, Project as CoreProject
 
 PRESS_WARN_RATIO = 0.4
 RECENT_DAYS = 183  # ~6 months
 INFLUENCER_MIN = 10
 VOC_MIN = 20
 COMMUNITY_SITES_MIN = 3
-# Not implemented yet (Phase 2): always 0, shown so the gap is visible, not hidden.
-NOT_IMPLEMENTED = ("review",)
+REVIEW_MIN = 30
+REVIEW_PLATFORMS_MIN = 2
+REVIEW_SHARE_MIN = 0.5  # 리뷰 필수 업종: 소비자 원문 중 리뷰 비중 최소치
 CHANNEL_LABEL = {"press": "언론", "owned": "공식 채널", "influencer": "SNS·인플루언서",
                  "cafe_blog": "카페·블로그", "community": "커뮤니티", "review": "리뷰"}
 
@@ -83,6 +86,16 @@ def _voc(db: Session, project_id: str, brand_id: str, entity: str) -> dict:
     return {"cafe_blog": cafe_blog, "community": community}
 
 
+def _review(snapshots: list[ReviewSnapshot], brand_id: str, entity: str) -> dict:
+    rows = [s for s in snapshots if s.brand_id == brand_id and s.entity == entity
+           and s.review_status != "excluded" and s.access_status == "ok"]
+    count = sum(s.review_count or 0 for s in rows)
+    platforms = len({s.platform for s in rows})
+    return {"count": count, "min": REVIEW_MIN, "platforms": platforms, "platforms_min": REVIEW_PLATFORMS_MIN,
+           "enough": count >= REVIEW_MIN and platforms >= REVIEW_PLATFORMS_MIN,
+           "action": "조사 계획에서 커머스 리뷰 항목을 다시 모으세요"}
+
+
 def _access_unavailable(db: Session, project_id: str, brand_id: str) -> int:
     rows = db.scalars(select(Source.id).join(Material, Material.source_id == Source.id).where(
         Material.project_id == project_id, Material.brand_id == brand_id, Source.access_status == "unavailable"))
@@ -94,6 +107,7 @@ def compute(db: Session, project: Project) -> list[dict]:
     materials = list(db.scalars(select(Material).where(Material.project_id == project.id)))
     facts = list(db.scalars(select(FactRow).where(FactRow.project_id == project.id)))
     posts = list(db.scalars(select(PostRow).where(PostRow.project_id == project.id)))
+    snapshots = list(db.scalars(select(ReviewSnapshot).where(ReviewSnapshot.project_id == project.id)))
 
     out = []
     for b in core.brands:
@@ -101,16 +115,22 @@ def compute(db: Session, project: Project) -> list[dict]:
         owned = {**_owned(facts, b, b.id), "label": CHANNEL_LABEL["owned"]}
         influencer = {**_influencer(posts, b.id), "label": CHANNEL_LABEL["influencer"]}
         voc = _voc(db, project.id, b.id, b.name)
-        not_ready = {c: {"count": 0, "label": CHANNEL_LABEL[c], "enough": False, "not_implemented": True}
-                    for c in NOT_IMPLEMENTED}
+        review = {**_review(snapshots, b.id, b.name), "label": CHANNEL_LABEL["review"]}
         channels = {"press": press, "owned": owned, "influencer": influencer,
                    "cafe_blog": {**voc["cafe_blog"], "label": CHANNEL_LABEL["cafe_blog"]},
-                   "community": {**voc["community"], "label": CHANNEL_LABEL["community"]}, **not_ready}
+                   "community": {**voc["community"], "label": CHANNEL_LABEL["community"]}, "review": review}
         total = sum(c["count"] for c in channels.values())
         press_ratio = round(press["count"] / total, 3) if total else 0.0
+        # 리뷰 필수 업종: 소비자 원문(카페·블로그+커뮤니티+리뷰) 중 리뷰 비중이 낮으면 커뮤니티만으로
+        # 채운 것 — 업종 KPI(3-10)와 같은 기준의 REQUIRED_REVIEW_INDUSTRIES를 그대로 쓴다.
+        consumer_total = channels["cafe_blog"]["count"] + channels["community"]["count"] + review["count"]
+        review_share = round(review["count"] / consumer_total, 3) if consumer_total else 0.0
+        review_required = b.industry in REQUIRED_REVIEW_INDUSTRIES
         out.append({
             "brand_id": b.id, "brand_name": b.name, "channels": channels,
             "access_unavailable": _access_unavailable(db, project.id, b.id),
             "press_ratio": press_ratio, "press_over_warning": press_ratio > PRESS_WARN_RATIO and total > 0,
+            "review_share": review_share,
+            "review_share_warning": review_required and consumer_total > 0 and review_share < REVIEW_SHARE_MIN,
         })
     return out

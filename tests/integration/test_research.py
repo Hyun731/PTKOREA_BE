@@ -2,6 +2,7 @@
 influencer collection and AI lead proposals (DEVELOPMENT_PLAN 단계 2 완료 조건; PRD A10, A14)."""
 import io
 import re
+from datetime import date
 
 import pytest
 from PIL import Image
@@ -1165,12 +1166,57 @@ def test_collection_mix_flags_press_heavy_research_and_thin_channels(client, fak
     assert row["channels"]["influencer"] == {"count": 4, "min": 10, "enough": False,
                                              "label": "SNS·인플루언서", "action": "조사 계획에서 인플루언서 항목을 다시 모으세요"}
     assert row["channels"]["owned"]["enough"] is False and row["channels"]["owned"]["total"] == 0  # 공식 계정 미등록
-    assert row["channels"]["review"] == {"count": 0, "label": "리뷰", "enough": False, "not_implemented": True}
+    assert row["channels"]["review"] == {"count": 0, "label": "리뷰", "enough": False, "min": 30, "platforms": 0,
+                                         "platforms_min": 2, "action": "조사 계획에서 커머스 리뷰 항목을 다시 모으세요"}
     assert row["channels"]["cafe_blog"]["count"] == 0 and row["channels"]["cafe_blog"]["enough"] is False
     assert row["channels"]["community"]["count"] == 0 and row["channels"]["community"]["sites"] == 0
     assert row["access_unavailable"] == 1
     # press(2) / total(2 press + 4 influencer) = 1/3 ≈ 0.333 — not over 40% yet with this mix
     assert row["press_ratio"] == round(2 / 6, 3)
+
+
+def test_collection_mix_flags_review_required_industry_filled_with_community_only(client, fakes):
+    """Phase 2 §5: 리뷰 필수 업종(전자·뷰티·패션)인데 소비자 원문이 커뮤니티뿐이면 '수집 부족'으로 본다."""
+    from app.models import ReviewSnapshot
+
+    p = ok(client.post("/v1/projects", json={
+        "name": "리뷰 비중 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "industry": "패션"}]}), 201)
+    pid = p["id"]
+    with SessionLocal() as db:
+        def voc(i, url):
+            src = Source(id=new_id("SRC"), project_id=pid, title=f"글{i}", original_url=url, source_type="web")
+            db.add(src)
+            db.flush()
+            db.add(Material(id=new_id("EV"), project_id=pid, source_id=src.id, brand_id="B1", entity="브랜드A",
+                            section_id="voc", title=f"글{i}", review_status="candidate"))
+        for i in range(25):
+            voc(i, f"https://cafe.naver.com/x/{i}")
+        db.commit()
+
+    r = ok(client.get(f"/v1/projects/{pid}/collection-mix"))
+    row = next(b for b in r["brands"] if b["brand_id"] == "B1")
+    assert row["channels"]["review"]["count"] == 0
+    assert row["review_share"] == 0.0
+    assert row["review_share_warning"] is True  # 커뮤니티만 25건 — 리뷰 비중 0%, 필수 업종인데 부족
+
+    with SessionLocal() as db:
+        db.add(ReviewSnapshot(id=new_id("REV"), project_id=pid, brand_id="B1", entity="브랜드A", role="self",
+                              platform="musinsa", product_name="상품", product_url="https://musinsa.com/products/1",
+                              access_status="ok", rating=4.5, rating_scale=5.0, review_count=120,
+                              measured_at=date(2026, 9, 1), review_status="candidate"))
+        db.add(ReviewSnapshot(id=new_id("REV"), project_id=pid, brand_id="B1", entity="브랜드A", role="self",
+                              platform="29cm", product_name="상품", product_url="https://29cm.co.kr/products/1",
+                              access_status="ok", rating=4.2, rating_scale=5.0, review_count=80,
+                              measured_at=date(2026, 9, 1), review_status="candidate"))
+        db.commit()
+
+    r2 = ok(client.get(f"/v1/projects/{pid}/collection-mix"))
+    row2 = next(b for b in r2["brands"] if b["brand_id"] == "B1")
+    assert row2["channels"]["review"]["count"] == 200 and row2["channels"]["review"]["platforms"] == 2
+    assert row2["channels"]["review"]["enough"] is True  # 30건 이상, 2개 플랫폼 이상
+    assert row2["review_share"] == round(200 / 225, 3)
+    assert row2["review_share_warning"] is False  # 이제 리뷰 비중이 50% 넘음
 
 
 def test_collection_mix_community_needs_posts_spread_across_three_sites(client, fakes):
