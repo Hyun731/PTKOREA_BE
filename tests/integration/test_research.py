@@ -134,6 +134,7 @@ class Fakes:
             return CallResult(data={
                 "relevant": True, "relevance_note": "", "activity_date": "2026-03-01",
                 "summary": "성수동 팝업에서 신제품 체험 공간을 열어 방문객을 모은 활동입니다.",
+                "market_aspect": "channel",  # Phase 3-2: only applied when the material's section_id is "market"
                 "facts": [{"label": "방문객", "metric": "count", "value": "12000", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
                           {"label": "가짜", "metric": "count", "value": "999", "quote": "원문에 없는 문장."}],
                 "claims": [{"kind": "fact", "text": "성수동 팝업에 신제품 체험 공간 배치", "quote": "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다."},
@@ -324,6 +325,27 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
     assert fakes.calls["search"] == before["search"]
     assert r3["skipped_existing"] == 2 and len(ok(client.get(f"/v1/projects/{pid}/materials"))) == len(mats)
     assert any(r.status == "cache_hit" and r.job_id == job3["id"] for r in ledger_rows(pid))
+
+
+def test_market_item_classifies_aspect_and_does_not_leak_to_other_sections(client, fakes):
+    """Phase 3-2: 산업 카테고리 분석 원문은 market_aspect로 분류되고, 다른 조사 항목에는 영향이 없다."""
+    pid, plan = setup_project(client)
+    market_it = item(plan, "market")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [market_it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    # Social cards (e.g. the fake's YouTube result) skip AI extraction entirely — only web pages are classified.
+    market_mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market"}))
+                  if m["source"]["source_type"] != "social"]
+    assert market_mats and all(m["market_aspect"] == "channel" for m in market_mats)
+
+    # A separate project avoids colliding with the fake's fixed URLs from the market run above.
+    pid2, plan2 = setup_project(client)
+    campaign_it = item(plan2, "campaign", "경쟁X")
+    job2 = ok(client.post(f"/v1/projects/{pid2}/research-runs", json={"item_ids": [campaign_it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job2['id']}"))["state"] == "succeeded"
+    campaign_mats = [m for m in ok(client.get(f"/v1/projects/{pid2}/materials", params={"section_id": "campaign"}))
+                     if m["source"]["source_type"] != "social"]
+    assert campaign_mats and all(m["market_aspect"] is None for m in campaign_mats)  # market_aspect는 market 전용
 
 
 def test_budget_and_provider_failure_keep_existing_material(client, fakes, monkeypatch):

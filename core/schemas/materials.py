@@ -19,6 +19,12 @@ TARGET_SEGMENTS: tuple[str, ...] = (
     "대학생·Gen Z", "20~30대", "직장인", "30~40대·가족", "외국인 관광객", "팝업·OOH·PR",
 )
 
+# Phase 3-2 산업 카테고리 분석(M1): section_id="market" 원문이 주로 다루는 내용 — AI 추출이 분류.
+MARKET_ASPECTS: tuple[str, ...] = ("size_growth", "channel", "player")
+MARKET_ASPECT_LABEL: dict[str, str] = {
+    "size_growth": "시장 규모·성장", "channel": "유통 채널 구조", "player": "주요 플레이어 지도",
+}
+
 
 class SourceRef(BaseModel):
     id: str
@@ -100,3 +106,5 @@ class CaseMaterial(BaseModel):
     voc_topic: Optional[Literal["price", "quality", "design", "shipping", "cs", "other"]] = None
     voc_awareness: Optional[Literal["ad", "referral", "influencer", "store", "search", "other"]] = None
     voc_sponsored: bool = False
+    # Phase 3-2 산업 카테고리 분석 — section_id="market" 카드에만 채워짐.
+    market_aspect: Optional[Literal["size_growth", "channel", "player"]] = None

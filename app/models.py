@@ -185,6 +185,8 @@ class Material(Base):
     voc_topic: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # price|quality|design|shipping|cs|other
     voc_awareness: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # ad|referral|influencer|store|search|other
     voc_sponsored: Mapped[bool] = mapped_column(Boolean, default=False)  # 체험단·협찬 — 키워드 집계에서 뺀다
+    # Phase 3-2 산업 카테고리 분석 — section_id="market" 카드에만 채워짐 (core.schemas.materials.MARKET_ASPECTS).
+    market_aspect: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # Person-picked for a one-slide deep dive (full image + period + numbered insights) instead of the card grid.
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     order: Mapped[int] = mapped_column(Integer, default=0)

@@ -79,7 +79,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
             comment=m.comment, review_status=m.review_status, input_path=m.input_path, featured=m.featured, order=m.order,
             target_segment=m.target_segment, ai_detail=m.ai_detail, ai_implication=m.ai_implication,
             voc_sentiment=m.voc_sentiment, voc_topic=m.voc_topic, voc_awareness=m.voc_awareness,
-            voc_sponsored=m.voc_sponsored))
+            voc_sponsored=m.voc_sponsored, market_aspect=m.market_aspect))
     owned_posts: list[OwnedPostRef] = []
     for op in db.scalars(select(OwnedPost).where(OwnedPost.project_id == project.id).order_by(OwnedPost.likes.desc())):
         asset = assets.get(op.asset_id) if op.asset_id else None

@@ -11,7 +11,7 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Optional
+from typing import Callable, Optional
 
 from core.composition import cases, customer, overview, owned, quant, synthesis
 from core.composition.chrome import (
@@ -23,7 +23,7 @@ from core.rules.config import RulesConfig
 from core.rules.engine import run_rules
 from core.schemas.facts import Fact, Finding, Post
 from core.schemas.materials import AssetRef, CaseMaterial, OwnedPostRef, SourceRef
-from core.schemas.project import Project
+from core.schemas.project import Brand, Project
 from core.schemas.slidespec import (
     BarChartBlock, Binding, DeckSpec, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, SlotPlan, TableBlock,
     TextBlock,
@@ -70,7 +70,7 @@ CHAPTER_ORDER = list(CHAPTERS)
 # channel tables, recap) stay shared: they open the deck as 브랜드 비교, the recap stays in 종합. "exec"
 # (Executive Summary) is also per self brand — Phase 3-1: 자사 브랜드가 여럿이면 브랜드마다 따로 쓴다.
 BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
-SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap"}
+SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap", "M1"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
                     "2-8a": "competitor", "2-8b": "competitor", "2-8c": "competitor", "2-8d": "competitor",
@@ -274,7 +274,8 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                                                  prefix=detail_id)
                 slot(detail_id, "C2", detail, f"채택된 {what} 자료 없음 (이미지·근거 문장 채택 필요)", label=f"{title_sub} 상세",
                      chapter=chapter, key=detail_id, part=part)
-        if on("M1"):
+        if not multi and on("M1"):
+            # Several self brands: handled once per distinct category, below (Phase 3-2).
             market = [m for m in mats if m.section_id == "market"]
             slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
                  "채택된 시장·타겟 근거 없음", part=part)
@@ -314,6 +315,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             c = replace(ctx, project=project.model_copy(update={"brands": [b]}),
                         findings=[f for f in findings if f.brand_id == b.id])
             brand_part(c, mats, [o for o in inputs.owned_posts if o.brand_id == b.id], b.id, "own")
+        _market_by_category(project.brands, inputs.materials, enabled, slot, pf, badge, metrics)
     if "A-source" in enabled:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
@@ -371,6 +373,35 @@ def _uses_synthetic(materials: list[CaseMaterial], metrics: MetricsResult) -> bo
         if m.source.source_type == "synthetic":
             return True
     return False
+
+
+def _market_by_category(brands: list[Brand], materials: list[CaseMaterial], enabled: set[str], slot: Callable,
+                        pf: PartFactory, badge: list, metrics: MetricsResult) -> None:
+    """M1 산업 카테고리 분석(Phase 3-2): 자사 카테고리마다 한 번 — 두 브랜드가 같은 카테고리면
+    브랜드 비교 장처럼 한 번만 공유하고, 다르면 각자의 장에 따로 둔다."""
+    if "M1" not in enabled:
+        return
+    owners: dict[str, list[Brand]] = {}
+    for b in brands:
+        cat = b.categories[0] if b.categories else b.name
+        owners.setdefault(cat, []).append(b)
+    market = [m for m in materials if m.section_id == "market"]
+    shared_n = 0
+    for cat, owning in owners.items():
+        cat_mats = [m for m in market if m.entity == cat]
+        pages = cases.market_pages(cat_mats, pf, badge if _uses_synthetic(cat_mats, metrics) else [])
+        label = f"시장·타겟 근거 · {cat}" if len(owners) > 1 else None
+        if len(owning) == 1:
+            slot("M1", "M1", pages, "채택된 시장·타겟 근거 없음", label=label, part=owning[0].id, key="M1")
+            continue
+        slot_id = "M1" if shared_n == 0 else f"M1-{shared_n}"
+        shared_n += 1
+        if slot_id != "M1":
+            for s in pages:
+                s.slide_id = slot_id if s.slide_id == "M1" else s.slide_id.replace("M1", slot_id, 1)
+                if s.parent_slide_id:
+                    s.parent_slide_id = slot_id
+        slot(slot_id, "M1", pages, "채택된 시장·타겟 근거 없음", label=label, key="M1")
 
 
 def _refresh_facts(p: Paragraph, pf: PartFactory) -> Paragraph:

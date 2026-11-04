@@ -31,7 +31,7 @@ from app.services.inputs import core_project
 from app.services.ledger import RunLedger
 from app.storage import get_storage
 from core.ingestion.manual import make_manual_fact
-from core.schemas.materials import TARGET_SEGMENTS
+from core.schemas.materials import MARKET_ASPECTS, TARGET_SEGMENTS
 from integrations.base import CallResult, ProviderError
 
 # PRD 13 default caps per run
@@ -151,8 +151,10 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     asked = (scope.setting_for(core, item.scope_id) or {}).get("keywords") or []
     if item.section_id == "market":
         age = brand.target.label.split("·")[0].strip() if brand.target else ""
+        # Phase 3-2: 시장 규모·성장, 유통 채널 구조, 주요 플레이어를 각각 겨냥 — 한 질의가 셋을 다 못 챙긴다.
         return [f"{cat} {k} {year}" for k in asked] + [
-            f"{cat} 시장 규모 {year}", f"{cat} 소비자 트렌드 조사 {year}", f"{age} {cat} 이용 조사 {year}".strip()]
+            f"{cat} 시장 규모 성장률 {year}", f"{cat} 유통 채널 점유율 {year}", f"{cat} 주요 브랜드 경쟁 구도 {year}",
+            f"{age} {cat} 이용 조사 {year}".strip()]
     # Different kinds of activity surface different articles (PRD 13: 12 queries per run).
     queries = [f"{item.entity} {k} {year}" for k in asked] + [
         f"{item.entity} 캠페인 {year}", f"{item.entity} 광고 모델 {year}", f"{item.entity} 콜라보 {year}",
@@ -168,7 +170,7 @@ EXTRACT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["relevant", "relevance_note", "summary", "activity_date", "activity_date_end", "event_name", "same_as",
-                "target_segment", "facts", "claims"],
+                "target_segment", "market_aspect", "facts", "claims"],
     "properties": {
         "relevant": {"type": "boolean"},
         "summary": {"type": "string"},
@@ -178,6 +180,7 @@ EXTRACT_SCHEMA = {
         "event_name": {"type": "string"},
         "same_as": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "target_segment": {"anyOf": [{"type": "string", "enum": list(TARGET_SEGMENTS)}, {"type": "null"}]},
+        "market_aspect": {"anyOf": [{"type": "string", "enum": list(MARKET_ASPECTS)}, {"type": "null"}]},
         "facts": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["label", "metric", "value", "quote"],
             "properties": {"label": {"type": "string"}, "metric": {"type": "string", "enum": METRICS},
@@ -204,6 +207,7 @@ EXTRACT_SYSTEM = """당신은 브랜드 마케팅 진단 보고서를 돕는 리
 - event_name: 이 원문이 다루는 활동을 가리키는 짧은 이름(예: "키크니 협업 직장인 공감 이벤트"). 협업 상대·제품명·장소처럼 활동을 구별하는 말을 넣습니다.
 - same_as: <existing>에 나열된 기존 자료 중 이 원문과 같은 활동(같은 협업·같은 팝업·같은 출시)을 다룬 것이 있으면 그 ID, 없으면 null. 같은 브랜드의 다른 활동이면 null입니다.
 - target_segment: 이 활동이 겨냥한 대상이 원문에 명시적으로 드러날 때만 다음 중 하나를 고릅니다 — "대학생·Gen Z"(대학생·캠퍼스·Z세대), "20~30대", "직장인", "30~40대·가족"(가족 단위·자녀 동반), "외국인 관광객"(인바운드·방한 관광객), "팝업·OOH·PR"(팝업스토어·옥외광고·전시 행사 자체가 핵심일 때). 원문에 뚜렷한 근거가 없으면 추측하지 말고 null.
+- market_aspect: 조사 대상이 '산업 카테고리 분석'(시장 규모·유통 구조·주요 플레이어)일 때만, 이 원문이 주로 다루는 내용 하나를 고릅니다 — "size_growth"(시장 규모·성장률·전망), "channel"(유통 채널 구조·판매 경로 비중), "player"(주요 플레이어·경쟁 구도·점유율). 그 외 조사에서는 null.
 원문에 없는 내용, 다른 브랜드의 수치, 추정치는 넣지 않습니다. 관련 내용이 없으면 relevant=false와 빈 배열을 돌려줍니다."""
 
 
@@ -538,6 +542,8 @@ def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Mate
     m.summary = (data.get("summary") or "").strip()[:800] or m.summary
     if data.get("target_segment") in TARGET_SEGMENTS:
         m.target_segment = data["target_segment"]
+    if m.section_id == "market" and data.get("market_aspect") in MARKET_ASPECTS:
+        m.market_aspect = data["market_aspect"]
     same_id = data.get("same_as")
     same = db.get(Material, same_id) if same_id in existing_ids else None
     if same and not same.duplicate_of and same.id != m.id:  # the AI judged it the same activity

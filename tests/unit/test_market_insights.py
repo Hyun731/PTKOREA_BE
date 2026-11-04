@@ -39,3 +39,20 @@ def test_market_page_insight_falls_back_to_fact_without_interpretation():
     slide = market_page([m], pf, badge=[])
     insights = next(b for b in slide.blocks if isinstance(b, TextBlock) and b.block_id == "insights")
     assert "사실만 있음" in insights.paragraphs[0].plain()
+
+
+def test_market_page_groups_rows_by_aspect():
+    """Phase 3-2: 시장 규모·성장 → 유통 채널 구조 → 주요 플레이어 지도 순으로 묶이고, 구분 열에 라벨이 붙는다."""
+    pf = PartFactory(FactRegistry())
+    player = _market_material(1, "A사 점유율 1위", "경쟁 구도 고착")
+    player.market_aspect = "player"
+    size = _market_material(2, "시장 규모 확대", "성장 지속 전망")
+    size.market_aspect = "size_growth"
+    channel = _market_material(3, "온라인 채널 비중 확대", "오프라인 축소 추세")
+    channel.market_aspect = "channel"
+    other = _market_material(4, "기타 동향", "참고 사항")
+    slide = market_page([player, size, channel, other], pf, badge=[])
+    table = next(b for b in slide.blocks if b.block_id == "table")
+    assert [c.label for c in table.columns][:2] == ["구분", "항목"]
+    labels = [row.cells[0].paragraphs[0].plain() for row in table.rows]
+    assert labels == ["시장 규모·성장", "유통 채널 구조", "주요 플레이어 지도", "기타"]

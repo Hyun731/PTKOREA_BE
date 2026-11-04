@@ -19,7 +19,7 @@ from core.composition.formatters import UNIT_FORMATTER
 from core.composition.measure import PX_PER_PT, height_at, line_count, text_width
 from core.composition.tokens import region, type_spec
 from core.metrics.registry import FactRegistry
-from core.schemas.materials import CaseMaterial, ClaimRef, SourceRef
+from core.schemas.materials import MARKET_ASPECT_LABEL, CaseMaterial, ClaimRef, SourceRef
 from core.schemas.slidespec import (
     Block, ImageBlock, Paragraph, Part, Region, ShapeBlock, SlideSpec, TableBlock, TableCell, TableColumn, TableRow,
 )
@@ -487,14 +487,19 @@ def market_page(materials: list[CaseMaterial], pf: PartFactory, badge: list[Bloc
     return pages[0] if pages else None
 
 
+MARKET_ASPECT_ORDER = {"size_growth": 0, "channel": 1, "player": 2}
+
+
 def market_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block]) -> list[SlideSpec]:
-    """M1 market evidence, continued on as many pages as the accepted rows need (none is dropped)."""
+    """M1 산업 카테고리 분석: 시장 규모·성장 → 유통 채널 구조 → 주요 플레이어 지도 순으로 묶어, 이어지는
+    만큼 페이지를 더 쓴다(어느 행도 빠뜨리지 않음)."""
     rows_src = [m for m in materials if m.review_status == "accepted"
                 and [c for c in m.claims if c.review_status == "accepted"]]
     if not rows_src:
         return []
-    columns = [TableColumn(key="item", label="항목", width=0.22), TableColumn(key="body", label="내용", width=0.53, align="l"),
-               TableColumn(key="src", label="출처", width=0.25)]
+    rows_src = sorted(rows_src, key=lambda m: MARKET_ASPECT_ORDER.get(m.market_aspect, 9))
+    columns = [TableColumn(key="aspect", label="구분", width=0.14), TableColumn(key="item", label="항목", width=0.18),
+               TableColumn(key="body", label="내용", width=0.46, align="l"), TableColumn(key="src", label="출처", width=0.22)]
     built = []
     for m in rows_src:
         paras = [Paragraph(parts=_claim_parts(c, pf), bullet="▸" if c.kind == "fact" else "→",
@@ -504,8 +509,9 @@ def market_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Blo
         src = [N(_publisher(m))]
         if m.source.published_at:
             src += [T(" "), D(m.source.published_at)]
-        cells = [TableCell(paragraphs=[P(N(m.title))]), TableCell(paragraphs=paras + metric, align="l"),
-                 TableCell(paragraphs=[P(*src)])]
+        aspect = [N(MARKET_ASPECT_LABEL.get(m.market_aspect, "기타"))]
+        cells = [TableCell(paragraphs=[P(*aspect)]), TableCell(paragraphs=[P(N(m.title))]),
+                 TableCell(paragraphs=paras + metric, align="l"), TableCell(paragraphs=[P(*src)])]
         h = max(_cell_height(cell.paragraphs, 1184 * col.width - 12, 10) for col, cell in zip(columns, cells))
         built.append((m, TableRow(cells=cells, ref=m.id), max(52, math.ceil(h + 10))))
     # Greedy pages: the table may use the body down to the footnote; the first page keeps room for insights.

@@ -267,7 +267,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
                                               .where(Material.duplicate_of == m.id).order_by(Material.created_at))],
         "target_segment": m.target_segment, "ai_detail": m.ai_detail, "ai_implication": m.ai_implication,
         "voc_sentiment": m.voc_sentiment, "voc_topic": m.voc_topic, "voc_awareness": m.voc_awareness,
-        "voc_sponsored": m.voc_sponsored,
+        "voc_sponsored": m.voc_sponsored, "market_aspect": m.market_aspect,
         "created_at": m.created_at, "updated_at": m.updated_at,
     }
     if detail:

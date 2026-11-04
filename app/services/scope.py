@@ -85,7 +85,7 @@ ITEMS: list[dict] = [
      "channels": ["web"], "period": 6, "output": "리스크 이슈와 1:1로 짝지은 대응"},
     # ---------------------------------------------------------------- 2. 경쟁사 분석 (Competitor)
     {"id": "3-1", "part": "competitor", "group": "시장 환경", "title": "산업 현황",
-     "question": "{category} 시장·타겟 공식 자료 (시장 규모·성장률)", "subject": "market", "collector": "market",
+     "question": "{category} 시장 규모·성장률, 유통 채널 구조, 주요 플레이어 지도 (공식 자료)", "subject": "market", "collector": "market",
      "templates": ["M1"], "channels": ["web", "report"], "default_channels": ["web"], "period": "inherit",
      "period_hint": "권장 최근 3년", "output": "수치마다 발표 기관 + 연도"},
     {"id": "3-2", "part": "competitor", "group": "시장 환경", "title": "경쟁 구도 (검색·점유)",
