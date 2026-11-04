@@ -1,0 +1,36 @@
+{
+  "data": {
+    "total": 3,
+    "page": 0,
+    "list": [
+      {
+        "no": 1,
+        "type": "general",
+        "typeName": "일반",
+        "content": "쿠션감이 좋고 발볼도 편해서 오래 걸어도 편합니다. 사이즈는 정사이즈로 추천해요.",
+        "grade": "5",
+        "goodsOption": "250",
+        "createDate": "2026-09-10T12:00:00.000+09:00"
+      },
+      {
+        "no": 2,
+        "type": "general",
+        "typeName": "일반",
+        "content": "밑창이 생각보다 얇아서 쿠션감이 부족하게 느껴졌어요. 디자인은 예쁩니다.",
+        "grade": "3",
+        "goodsOption": "245",
+        "createDate": "2026-09-05T09:30:00.000+09:00"
+      },
+      {
+        "no": 3,
+        "type": "general",
+        "typeName": "일반",
+        "content": "브랜드로부터 제품을 무상 제공받아 체험단으로 작성한 솔직 후기입니다. 발볼이 넓어 편해요.",
+        "grade": "5",
+        "goodsOption": "250",
+        "createDate": "2026-08-28T15:10:00.000+09:00"
+      }
+    ]
+  },
+  "meta": {"result": "SUCCESS", "errorCode": null, "message": null}
+}
