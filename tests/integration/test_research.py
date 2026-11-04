@@ -10,8 +10,8 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import FactRow, Material, PostRow, ProviderCache, ProviderCall, Source, new_id, utcnow
 from app.services import (
-    aliases, case_commentary, direction, industry, insights, material_ai, official_accounts, outline, research,
-    synthesis,
+    aliases, case_commentary, direction, hero_products, industry, insights, material_ai, official_accounts, outline,
+    research, synthesis,
 )
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
@@ -71,6 +71,10 @@ class Fakes:
             self._hit("official_accounts")
             return CallResult(data={"profiles": [
                 {"channel": "instagram", "url": "https://instagram.com/competitorx_official", "confident": True}]},
+                              usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"products"}:  # 대표 상품 후보 (Phase 2)
+            self._hit("hero_products")
+            return CallResult(data={"products": [{"name": "에어맥스 95", "confident": True}]},
                               usage={"model": "fake"}, cost_usd=0.001)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
@@ -242,6 +246,10 @@ def fakes(monkeypatch):
     official_accounts.STRUCTURED.append(f.structured)
     official_accounts.SEARCH.clear()
     official_accounts.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
+    hero_products.STRUCTURED.clear()
+    hero_products.STRUCTURED.append(f.structured)
+    hero_products.SEARCH.clear()
+    hero_products.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
@@ -266,6 +274,8 @@ def fakes(monkeypatch):
     industry.STRUCTURED.clear()
     official_accounts.STRUCTURED.clear()
     official_accounts.SEARCH.clear()
+    hero_products.STRUCTURED.clear()
+    hero_products.SEARCH.clear()
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
     direction.STRUCTURED.clear()
@@ -1434,6 +1444,11 @@ def test_create_project_fills_industry_and_official_accounts(client, fakes):
     assert brand["competitor_profiles"]["경쟁X"][0]["channel"] == "instagram"
     assert fakes.calls["industry"] == 1
     assert fakes.calls["official_accounts"] == 2  # self + 경쟁X, 한 번씩
+    # Phase 2 커머스 리뷰: 대표 상품도 같은 방식으로 후보만 채운다(확정은 사람이).
+    assert [p["status"] for p in brand["hero_products"]] == ["candidate"]
+    assert brand["hero_products"][0]["name"] == "에어맥스 95"
+    assert brand["competitor_hero_products"]["경쟁X"][0]["status"] == "candidate"
+    assert fakes.calls["hero_products"] == 2  # self + 경쟁X, 한 번씩
 
     # A planner-set industry is never overwritten, and an entity with an account already on file
     # (even just a candidate) is not searched again.
@@ -1443,6 +1458,7 @@ def test_create_project_fills_industry_and_official_accounts(client, fakes):
     assert patched["config"]["brands"][0]["industry"] == "뷰티"
     assert fakes.calls["industry"] == 1  # still just the one call from create
     assert fakes.calls["official_accounts"] == 2
+    assert fakes.calls["hero_products"] == 2  # a brand/competitor with a candidate already on file isn't re-searched
 
 
 def test_missing_slides_say_why_and_what_to_do(client, fakes):

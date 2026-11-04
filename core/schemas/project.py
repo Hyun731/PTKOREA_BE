@@ -72,6 +72,13 @@ class OfficialProfile(BaseModel):
         return self
 
 
+class HeroProduct(BaseModel):
+    """Phase 2 커머스 리뷰: 매출을 끄는 대표 상품(Hero)·기획 상품 — 리뷰 수집은 이 상품만 쓴다."""
+    name: str = Field(min_length=1)
+    # confirmed: 사람이 확인·입력함 · candidate: AI가 찾아 사람 확인 대기.
+    status: Literal["confirmed", "candidate"] = "confirmed"
+
+
 class Brand(BaseModel):
     id: str
     name: str = Field(min_length=1)
@@ -91,6 +98,11 @@ class Brand(BaseModel):
     # so search results that use that spelling still count as being about it. Filled by the AI; a name
     # with an empty list was looked up and has no other spelling.
     entity_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    # Phase 2 커머스 리뷰: 리뷰 수집 대상 상품(매출을 끄는 대표 상품 + 기획 상품). AI가 공개 정보로
+    # 후보를 내고 사람이 확인한다 — 리뷰 수집은 confirmed된 상품만 쓴다.
+    hero_products: list[HeroProduct] = Field(default_factory=list)
+    # Competitors have no Brand object of their own, so their hero products live here, by name.
+    competitor_hero_products: dict[str, list[HeroProduct]] = Field(default_factory=dict)
 
     @field_validator("id")
     @classmethod
@@ -113,6 +125,8 @@ class Brand(BaseModel):
                                for k, v in self.entity_aliases.items() if k in known}
         self.competitor_profiles = {k: v for k, v in self.competitor_profiles.items()
                                     if k in {*self.competitors, *self.benchmarks}}
+        self.competitor_hero_products = {k: v for k, v in self.competitor_hero_products.items()
+                                         if k in {*self.competitors, *self.benchmarks}}
         return self
 
     def names_for(self, entity: str) -> list[str]:
@@ -123,6 +137,11 @@ class Brand(BaseModel):
     def profiles_for(self, entity: str) -> list[OfficialProfile]:
         """This entity's own official accounts: self from official_profiles, anyone else by name."""
         return self.official_profiles if entity == self.name else self.competitor_profiles.get(entity, [])
+
+    def hero_products_for(self, entity: str) -> list[HeroProduct]:
+        """This entity's confirmed hero/기획 products — review collection reads this, never candidates."""
+        products = self.hero_products if entity == self.name else self.competitor_hero_products.get(entity, [])
+        return [p for p in products if p.status == "confirmed"]
 
     @property
     def entity_set(self) -> list[str]:

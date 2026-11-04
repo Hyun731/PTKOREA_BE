@@ -161,6 +161,28 @@ def _fill_official_accounts(db: Session, p: Project) -> bool:
     return True
 
 
+def _fill_hero_products(db: Session, p: Project) -> bool:
+    """Let the AI propose candidate hero/기획 products (self + competitors) where none exist yet
+    (Phase 2 커머스 리뷰) — review collection reads only the ones a person confirms."""
+    from app.services import hero_products
+    from app.services.ledger import RunLedger
+    from integrations.base import ProviderError
+
+    if not settings.provider_configured("anthropic") or not settings.provider_configured("perplexity"):
+        return False
+    if not any(hero_products.missing(b) for b in p.config.get("brands", [])):
+        return False
+    db.commit()
+    cfg = json.loads(json.dumps(p.config))
+    try:
+        if not hero_products.fill(cfg, RunLedger(db, p.id, None)):
+            return False
+        p.config = json.loads(CoreProject.model_validate(cfg).model_dump_json())
+    except (ProviderError, ValidationError, ValueError):
+        return False
+    return True
+
+
 def project_out(db: Session, p: Project) -> dict:
     core = CoreProject.model_validate(p.config)
     cmp_start, cmp_end = comparison_window(core)
@@ -236,6 +258,8 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db), who: str = De
         db.commit()
     if _fill_official_accounts(db, p):
         db.commit()
+    if _fill_hero_products(db, p):
+        db.commit()
     return project_out(db, p)
 
 
@@ -283,6 +307,8 @@ def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get
         if _fill_industry(db, p):
             db.commit()
         if _fill_official_accounts(db, p):
+            db.commit()
+        if _fill_hero_products(db, p):
             db.commit()
     return project_out(db, p)
 
@@ -457,6 +483,8 @@ def start_run(project_id: str, body: RunIn, db: Session = Depends(get_db), who: 
     if _fill_industry(db, p):
         db.commit()
     if _fill_official_accounts(db, p):
+        db.commit()
+    if _fill_hero_products(db, p):
         db.commit()
     clash = [i for i in items if i.id in busy]
     if clash:
