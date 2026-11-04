@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.errors import ApiError, not_found
 from app.jobs import create_job, dispatch
-from app.models import Deck, Export, Job, new_id, utcnow
+from app.models import Deck, Export, Job, Material, Source, new_id, utcnow
 from app.routers.projects import actor, get_project
 from app.services.audit import audit
 from app.services.deck import current_fingerprint, next_deck_version
@@ -218,10 +218,26 @@ def job_out(j: Job) -> dict:
             "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at}
 
 
+def pending_review_count(db: Session, project_id: str) -> int:
+    """확인 대기(candidate, 접근 불가 제외) 자료 수 — Phase 3-5 출력 전 확인 알림."""
+    return db.scalar(select(func.count(Material.id)).select_from(Material)
+                     .join(Source, Source.id == Material.source_id)
+                     .where(Material.project_id == project_id, Material.review_status == "candidate",
+                           Material.duplicate_of.is_(None), Source.access_status != "unavailable")) or 0
+
+
+class DeckBuildIn(BaseModel):
+    confirm_pending: bool = False  # 확인 대기 자료가 있어도 그대로 만들기로 한 경우 true
+
+
 @router.post("/projects/{project_id}/deck-builds", status_code=202)
-def start_build(project_id: str, db: Session = Depends(get_db), who: str = Depends(actor),
-                idempotency_key: Optional[str] = Header(default=None)):
+def start_build(project_id: str, body: DeckBuildIn = DeckBuildIn(), db: Session = Depends(get_db),
+                who: str = Depends(actor), idempotency_key: Optional[str] = Header(default=None)):
     p = get_project(db, project_id)
+    pending = pending_review_count(db, project_id)
+    if pending and not body.confirm_pending:
+        raise ApiError(409, "PENDING_REVIEW", f"확인 대기 {pending}건이 있습니다. 그래도 만들까요?",
+                       "확인하러 가기 또는 그대로 만들기를 선택하세요", {"pending": pending})
     running = db.scalar(select(Job).where(Job.project_id == project_id, Job.kind == "deck_build",
                                           Job.state.in_(("queued", "running"))))
     if running and _is_stuck(running):
@@ -246,6 +262,8 @@ def start_build(project_id: str, db: Session = Depends(get_db), who: str = Depen
     job, _ = create_job(db, project_id, p.version, "deck_build", {"deck_id": deck.id}, idempotency_key)
     deck.job_id = job.id
     audit(db, project_id, "deck", deck.id, "build", actor=who)
+    if pending:  # confirm_pending이었던 경우만 — 그대로 만들기로 한 결정을 감사 기록에 남긴다
+        audit(db, project_id, "deck", deck.id, "build_with_pending_review", after={"pending": pending}, actor=who)
     db.commit()
     dispatch(job.id)
     db.refresh(job)

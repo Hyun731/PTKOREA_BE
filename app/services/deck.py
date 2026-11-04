@@ -56,10 +56,30 @@ def current_fingerprint(db: Session, project: Project) -> str:
     return fingerprint(load_inputs(db, project))
 
 
+def _recollect_missing(db: Session, project: Project, progress: Callable[[int], None]) -> None:
+    """Phase 3-5: 만들기 전에, 원인이 "수집 필요"인 빠진 장표만 한 번 더 자동으로 수집을 시도한다
+    (기존 "빠진 자료 다시 모으기"와 같은 경로 — item_ids를 모아 research_run을 한 번 돌릴 뿐)."""
+    from app.jobs import create_job
+    from app.services import missing
+    from app.services.research import run_research
+    from core.schemas.project import Project as CoreProject
+
+    inputs = load_inputs(db, project)
+    result = build_deck(inputs)
+    core = CoreProject.model_validate(project.config)
+    missing.annotate(db, project, core, result.deck.plan)
+    item_ids = sorted({iid for s in result.deck.plan if s.cause == "collect" for iid in (s.item_ids or [])})
+    if not item_ids:
+        return
+    job, _ = create_job(db, project.id, project.version, "research_run", {"item_ids": item_ids})
+    run_research(db, job, lambda pct: progress(10 + pct // 10))  # 0~10%만 이 단계에 배정 (끝에서 db.expire_all())
+
+
 @register("deck_build")
 def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     project = db.get(Project, job.project_id)
     deck = db.get(Deck, job.params["deck_id"])
+    _recollect_missing(db, project, progress)
     inputs = load_inputs(db, project)
     inputs.deck_id, inputs.deck_version = deck.id, deck.version
     inputs.generated_on = deck.created_at.astimezone(SEOUL).date()

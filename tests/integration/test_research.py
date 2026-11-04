@@ -579,6 +579,45 @@ def test_search_trend_item_fails_quietly_when_google_trends_blocks_it(client, fa
     assert missing["TR1"]["cause"] == "collect"
 
 
+def test_deck_build_asks_before_building_with_pending_review(client, fakes):
+    """Phase 3-5: 확인 대기 자료가 있으면 그냥 만들지 않고 묻는다 — 확인하면 그대로 진행하고 감사 기록을 남긴다."""
+    from app.models import AuditLog
+
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    mats = ok(client.get(f"/v1/projects/{pid}/materials"))
+    assert any(m["review_status"] == "candidate" for m in mats)  # 아직 아무것도 채택하지 않음
+
+    r = client.post(f"/v1/projects/{pid}/deck-builds")
+    assert r.status_code == 409
+    err = r.json()["error"]
+    assert err["code"] == "PENDING_REVIEW" and err["detail"]["pending"] > 0
+
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds", json={"confirm_pending": True}), 202)
+    assert ok(client.get(f"/v1/jobs/{out['job']['id']}"))["state"] == "succeeded"
+    with SessionLocal() as db:
+        row = db.scalars(select(AuditLog).where(AuditLog.project_id == pid,
+                                                AuditLog.action == "build_with_pending_review")).one()
+        assert row.after["pending"] > 0
+
+
+def test_deck_build_recollects_missing_items_before_building(client, fakes):
+    """Phase 3-5: 만들기 전에, 원인이 '수집 필요'인 항목만 한 번 더 자동으로 수집을 시도한다."""
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+    assert it["execution_status"] == "not_started"
+
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
+    assert ok(client.get(f"/v1/jobs/{out['job']['id']}"))["state"] == "succeeded"
+
+    again = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "campaign", "경쟁X")
+    assert again["execution_status"] == "succeeded"  # 만들기 전에 자동으로 한 번 수집을 시도함
+    mats = ok(client.get(f"/v1/projects/{pid}/materials"))
+    assert any(m["source"]["url"] == "https://news.example.com/a1" for m in mats)
+
+
 def test_lead_proposal_rewrite_then_accept(client, fakes):
     pid, _ = setup_project(client)
     for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
