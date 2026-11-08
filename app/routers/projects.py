@@ -183,6 +183,28 @@ def _fill_hero_products(db: Session, p: Project) -> bool:
     return True
 
 
+def _fill_industry_keywords(db: Session, p: Project) -> bool:
+    """Let the AI propose candidate industry keyword hints where the brand's industry has no
+    curated profile yet (피드백 #1 업종별 variation) — 시장 조사(3-1)가 confirmed된 것만 쓴다."""
+    from app.services import industry_keywords
+    from app.services.ledger import RunLedger
+    from integrations.base import ProviderError
+
+    if not settings.provider_configured("anthropic") or not settings.provider_configured("perplexity"):
+        return False
+    if not any(industry_keywords.missing(b) for b in p.config.get("brands", [])):
+        return False
+    db.commit()
+    cfg = json.loads(json.dumps(p.config))
+    try:
+        if not industry_keywords.fill(cfg, RunLedger(db, p.id, None)):
+            return False
+        p.config = json.loads(CoreProject.model_validate(cfg).model_dump_json())
+    except (ProviderError, ValidationError, ValueError):
+        return False
+    return True
+
+
 def project_out(db: Session, p: Project) -> dict:
     core = CoreProject.model_validate(p.config)
     cmp_start, cmp_end = comparison_window(core)
@@ -260,6 +282,8 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db), who: str = De
         db.commit()
     if _fill_hero_products(db, p):
         db.commit()
+    if _fill_industry_keywords(db, p):
+        db.commit()
     return project_out(db, p)
 
 
@@ -327,6 +351,8 @@ def patch_project(project_id: str, body: ProjectPatch, db: Session = Depends(get
         if _fill_official_accounts(db, p):
             db.commit()
         if _fill_hero_products(db, p):
+            db.commit()
+        if _fill_industry_keywords(db, p):
             db.commit()
     return project_out(db, p)
 
@@ -503,6 +529,8 @@ def start_run(project_id: str, body: RunIn, db: Session = Depends(get_db), who: 
     if _fill_official_accounts(db, p):
         db.commit()
     if _fill_hero_products(db, p):
+        db.commit()
+    if _fill_industry_keywords(db, p):
         db.commit()
     clash = [i for i in items if i.id in busy]
     if clash:

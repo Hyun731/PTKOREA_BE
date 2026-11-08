@@ -7,6 +7,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from core.industry_profiles import INDUSTRY_PROFILES
+
 BRAND_ID_RE = re.compile(r"^[A-Z][A-Z0-9]{0,4}$")
 
 ReportProfile = Literal["diagnostic", "proposal"]
@@ -79,6 +81,13 @@ class HeroProduct(BaseModel):
     status: Literal["confirmed", "candidate"] = "confirmed"
 
 
+class IndustryKeywordHint(BaseModel):
+    """업종별 리서치 variation — core.industry_profiles에 프로필이 없는 업종만 후보로 쌓인다."""
+    text: str = Field(min_length=1)
+    # confirmed: 사람이 확인·입력함 · candidate: AI가 찾아 사람 확인 대기.
+    status: Literal["confirmed", "candidate"] = "confirmed"
+
+
 class Brand(BaseModel):
     id: str
     name: str = Field(min_length=1)
@@ -103,6 +112,9 @@ class Brand(BaseModel):
     hero_products: list[HeroProduct] = Field(default_factory=list)
     # Competitors have no Brand object of their own, so their hero products live here, by name.
     competitor_hero_products: dict[str, list[HeroProduct]] = Field(default_factory=dict)
+    # 피드백 #1(업종별 variation): core.industry_profiles에 프로필이 없는 업종만 후보가 쌓인다.
+    # 프로필이 있는 업종은 keyword_hints()가 그 프로필을 그대로 쓰고 이 목록은 비워 둔다.
+    industry_keywords: list[IndustryKeywordHint] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
@@ -142,6 +154,14 @@ class Brand(BaseModel):
         """This entity's confirmed hero/기획 products — review collection reads this, never candidates."""
         products = self.hero_products if entity == self.name else self.competitor_hero_products.get(entity, [])
         return [p for p in products if p.status == "confirmed"]
+
+    def keyword_hints(self) -> list[str]:
+        """시장(3-1) 검색에 덧붙일 업종 특화 키워드. 프로필이 있는 업종은 그 값을 그대로(사람이 미리
+        코드로 확인해 둔 값), 없으면 확정된(confirmed) 후보만 — candidate는 아직 쓰지 않는다."""
+        profile = INDUSTRY_PROFILES.get(self.industry or "")
+        if profile:
+            return list(profile.keyword_hints)
+        return [k.text for k in self.industry_keywords if k.status == "confirmed"]
 
     @property
     def entity_set(self) -> list[str]:

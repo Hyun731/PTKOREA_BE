@@ -10,6 +10,7 @@ from core.composition.build import TEMPLATE_LABEL
 from core.composition.tokens import tokens
 from core.rendering.preview import backend as render_backend
 from core.schemas.facts import MANUAL_METRICS
+from core.industry_profiles import INDUSTRY_PROFILES
 from core.schemas.project import INDUSTRIES, INDUSTRY_TYPES, REQUIRED_REVIEW_INDUSTRIES
 
 router = APIRouter()
@@ -31,7 +32,10 @@ def meta():
         "manual_metrics": list(MANUAL_METRICS),
         "render_backend": render_backend(),
         "tokens": tokens(),
-        "industries": [{"id": i, "types": list(INDUSTRY_TYPES.get(i, ())), "review_required": i in REQUIRED_REVIEW_INDUSTRIES}
+        "industries": [{"id": i, "types": list(INDUSTRY_TYPES.get(i, ())), "review_required": i in REQUIRED_REVIEW_INDUSTRIES,
+                        # 피드백 #1(업종별 variation): 프로필이 있으면 키워드 힌트가 코드로 이미 확정돼
+                        # 있어, 브랜드별 후보 확인 UI가 필요 없다.
+                        "has_keyword_profile": i in INDUSTRY_PROFILES}
                        for i in INDUSTRIES],
         "official_channels": [{"id": c, "label": official_accounts.CHANNEL_LABEL[c],
                                "auto_collect": c in official_accounts.AUTO_COLLECTABLE}

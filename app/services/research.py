@@ -154,9 +154,15 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     if item.section_id == "market":
         age = brand.target.label.split("·")[0].strip() if brand.target else ""
         # Phase 3-2: 시장 규모·성장, 유통 채널 구조, 주요 플레이어를 각각 겨냥 — 한 질의가 셋을 다 못 챙긴다.
-        return [f"{cat} {k} {year}" for k in asked] + [
+        queries = [f"{cat} {k} {year}" for k in asked] + [
             f"{cat} 시장 규모 성장률 {year}", f"{cat} 유통 채널 점유율 {year}", f"{cat} 주요 브랜드 경쟁 구도 {year}",
             f"{age} {cat} 이용 조사 {year}".strip()]
+        # 피드백 #1(업종별 variation): 업종 특화 서브트렌드 키워드를 한 질의로 묶어 덧붙인다(한도
+        # 안에서 밀려나도 핵심 질의 4개는 남도록 맨 뒤에 둔다).
+        hints = brand.keyword_hints()
+        if hints:
+            queries.append(f"{cat} {' '.join(hints[:3])} {year}")
+        return queries
     if item.section_id == "market_kpi":
         # 지표 중심 업종(거래량·ARPU·판매 대수 등) — 공식 통계·공시에서 자사·경쟁사 숫자를 찾는다.
         return [f"{item.entity} {k} {year}" for k in asked] + [

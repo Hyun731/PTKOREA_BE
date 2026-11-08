@@ -11,8 +11,8 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import FactRow, Material, PostRow, ProviderCache, ProviderCall, Source, new_id, utcnow
 from app.services import (
-    aliases, case_commentary, commerce_collect, direction, hero_products, industry, insights, material_ai,
-    official_accounts, outline, research, synthesis,
+    aliases, case_commentary, commerce_collect, direction, hero_products, industry, industry_keywords, insights,
+    material_ai, official_accounts, outline, research, synthesis,
 )
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
@@ -89,6 +89,10 @@ class Fakes:
                 else:
                     rows.append({"index": idx, "sentiment": "neutral", "keywords": [], "blocks_purchase": False})
             return CallResult(data={"reviews": rows}, usage={"model": "fake"}, cost_usd=0.002)
+        if set(props) == {"keywords"}:  # 업종별 키워드 힌트 후보 (피드백 #1)
+            self._hit("industry_keywords")
+            return CallResult(data={"keywords": [{"text": "트래블룩", "confident": True}]},
+                              usage={"model": "fake"}, cost_usd=0.001)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
             data: dict = {}
@@ -265,6 +269,10 @@ def fakes(monkeypatch):
     hero_products.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     commerce_collect.STRUCTURED.clear()
     commerce_collect.STRUCTURED.append(f.structured)
+    industry_keywords.STRUCTURED.clear()
+    industry_keywords.STRUCTURED.append(f.structured)
+    industry_keywords.SEARCH.clear()
+    industry_keywords.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     insights.STRUCTURED.clear()
     insights.STRUCTURED.append(f.structured)
     case_commentary.STRUCTURED.clear()
@@ -292,6 +300,8 @@ def fakes(monkeypatch):
     hero_products.STRUCTURED.clear()
     hero_products.SEARCH.clear()
     commerce_collect.STRUCTURED.clear()
+    industry_keywords.STRUCTURED.clear()
+    industry_keywords.SEARCH.clear()
     insights.STRUCTURED.clear()
     case_commentary.STRUCTURED.clear()
     direction.STRUCTURED.clear()
@@ -1665,6 +1675,9 @@ def test_create_project_fills_industry_and_official_accounts(client, fakes):
     assert brand["hero_products"][0]["name"] == "에어맥스 95"
     assert brand["competitor_hero_products"]["경쟁X"][0]["status"] == "candidate"
     assert fakes.calls["hero_products"] == 2  # self + 경쟁X, 한 번씩
+    # 피드백 #1(업종별 variation): "패션"은 이미 커튜레이션된 프로필이 있어 AI 후보가 필요 없다.
+    assert brand.get("industry_keywords") == []
+    assert "industry_keywords" not in fakes.calls
 
     # A planner-set industry is never overwritten, and an entity with an account already on file
     # (even just a candidate) is not searched again.
@@ -1675,6 +1688,11 @@ def test_create_project_fills_industry_and_official_accounts(client, fakes):
     assert fakes.calls["industry"] == 1  # still just the one call from create
     assert fakes.calls["official_accounts"] == 2
     assert fakes.calls["hero_products"] == 2  # a brand/competitor with a candidate already on file isn't re-searched
+    # "뷰티"는 프로필이 없어 AI가 후보 키워드를 낸다 — 확인 전까지는 시장 조사 검색에 쓰이지 않는다.
+    beauty_brand = patched["config"]["brands"][0]
+    assert [k["status"] for k in beauty_brand["industry_keywords"]] == ["candidate"]
+    assert beauty_brand["industry_keywords"][0]["text"] == "트래블룩"
+    assert fakes.calls["industry_keywords"] == 1
 
 
 def test_missing_slides_say_why_and_what_to_do(client, fakes):

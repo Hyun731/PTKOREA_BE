@@ -104,6 +104,26 @@ def test_requested_keywords_lead_the_search_queries():
     assert queries[0] == "투미 팝업스토어 2026" and "투미 캠페인 2026" in queries
 
 
+def test_market_queries_append_industry_keyword_hints_when_available():
+    """피드백 #1(업종별 variation): 프로필 있는 업종은 시장 조사 질의에 서브트렌드 키워드가 덧붙는다."""
+    from datetime import date as d
+    from types import SimpleNamespace as NS
+
+    from app.services.research import build_queries
+    item = NS(brand_id="B1", entity="샘소나이트", role="self", section_id="market", scope_id="3-1",
+             period_start=d(2026, 1, 1), period_end=d(2026, 9, 30))
+
+    travel = project(brands=[{"id": "B1", "name": "샘소나이트", "competitors": ["리모와"], "categories": ["러기지"],
+                             "industry": "여행"}])
+    queries = build_queries(item, NS(config=travel.model_dump(mode="json")))
+    assert any("트래블룩" in q for q in queries)
+
+    none_yet = project(brands=[{"id": "B1", "name": "샘소나이트", "competitors": ["리모와"], "categories": ["러기지"],
+                                "industry": "금융"}])
+    queries2 = build_queries(item, NS(config=none_yet.model_dump(mode="json")))
+    assert not any("트래블룩" in q for q in queries2)  # 프로필도 확정 후보도 없으면 덧붙지 않는다
+
+
 def test_upload_line_only_when_an_upload_channel_is_chosen():
     p = project()
     assert not any("내부 자료" in x for x in scope.direction(scope.BY_ID["2-7"], by_id(p)["2-7"], p))
