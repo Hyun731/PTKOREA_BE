@@ -133,6 +133,58 @@ def youtube_channel(*, url: Optional[str] = None, handle: Optional[str] = None,
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
 
 
+def _x_date(s: Optional[str]) -> Optional[str]:
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%a %b %d %H:%M:%S %z %Y").date().isoformat()
+    except ValueError:
+        return None
+
+
+def twitter_search_posts(query: str, *, cursor: Optional[str] = None,
+                         transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """공개 X(트위터) 게시물 키워드 검색(피드백 #5: SNS 네이티브 검색) — 문서화된
+    GET /v1/twitter/search/posts. 검색 결과 자체에 본문이 있어 별도 페이지 수집이 필요 없다."""
+    params = {"query": query}
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/twitter/search/posts", params, transport)
+    rows = []
+    for t in data.get("posts") or []:
+        legacy = t.get("legacy") or {}
+        text = (legacy.get("full_text") or "").strip()
+        if not text:
+            continue
+        user = (((t.get("core") or {}).get("user_results") or {}).get("result") or {}).get("core") or {}
+        rows.append({"url": t.get("url"), "text": text, "posted_at": _x_date(legacy.get("created_at")),
+                    "author": user.get("screen_name"), "likes": _int(legacy.get("favorite_count"))})
+    return CallResult(data={"posts": rows, "cursor": data.get("cursor")},
+                      usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
+def threads_search(query: str, *, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                   transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """공개 Threads 게시물 키워드 검색(피드백 #5) — 문서화된 GET /v1/threads/search.
+    start_date/end_date는 YYYY-MM-DD."""
+    params: dict[str, Any] = {"query": query}
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+    data = _get("/threads/search", params, transport)
+    rows = []
+    for t in data.get("posts") or []:
+        text = ((t.get("caption") or {}).get("text") or "").strip()
+        if not text:
+            continue
+        ts = t.get("taken_at")
+        posted = datetime.fromtimestamp(int(ts), tz=timezone.utc).date().isoformat() if ts else None
+        rows.append({"url": t.get("url"), "text": text, "posted_at": posted,
+                    "author": (t.get("user") or {}).get("username"), "likes": _int(t.get("like_count"))})
+    return CallResult(data={"posts": rows}, usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
 def instagram_user_posts(handle: str, *, next_max_id: Optional[str] = None,
                          transport: Optional[httpx.BaseTransport] = None) -> CallResult:
     """One page of the account's own feed (채널 인벤토리 2-1/2-4) — not a single post lookup."""

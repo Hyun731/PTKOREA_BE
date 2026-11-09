@@ -237,6 +237,16 @@ class Fakes:
         ]
         return CallResult(data={"comments": comments, "cursor": None}, cost_usd=0.002)
 
+    # 피드백 #5(SNS 네이티브 검색): 기존 VOC 테스트를 건드리지 않도록 기본은 빈 결과 — 전용 테스트가
+    # research.PROVIDERS["twitter_search_posts"]/["threads_search"]를 따로 덮어쓴다.
+    def twitter_search_posts(self, query, cursor=None, **kw):
+        self._hit("twitter_search_posts")
+        return CallResult(data={"posts": [], "cursor": None}, cost_usd=0.002)
+
+    def threads_search(self, query, **kw):
+        self._hit("threads_search")
+        return CallResult(data={"posts": []}, cost_usd=0.002)
+
     def youtube_channel_videos(self, channel_id=None, handle=None, continuation_token=None, **kw):
         self._hit("youtube_channel_videos")
         videos = [{"id": "v1", "url": "https://youtube.com/watch?v=v1", "title": "영상1", "views": 1000,
@@ -277,7 +287,8 @@ def fakes(monkeypatch):
                               instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video,
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
                               instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos,
-                              google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments)
+                              google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments,
+                              twitter_search_posts=f.twitter_search_posts, threads_search=f.threads_search)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -1457,6 +1468,57 @@ def test_voc_item_collects_and_classifies_consumer_posts(client, fakes):
     # 묶음 채택: 접근 불가·협찬 표기 카드는 사람의 확인을 기다리고, 나머지만 한 번에 채택된다.
     out = ok(client.post(f"/v1/projects/{pid}/materials/accept-all"))
     assert out["accepted"] == 1 and out["left"] == 2
+
+
+def test_voc_item_also_collects_x_and_threads_public_posts(client, fakes):
+    """피드백 #5(SNS 네이티브 검색): 검색 결과 자체에 본문이 있어 별도 페이지 수집 없이 바로 쓴다."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "voc", "브랜드A")
+
+    def search(queries, sites=None, **kw):
+        fakes._hit("search")
+        return CallResult(data={"id": "s", "results": []}, cost_usd=0.005)  # 카페·블로그는 이번엔 비움
+
+    def twitter_search_posts(query, **kw):
+        fakes._hit("twitter_search_posts")
+        return CallResult(data={"posts": [
+            {"url": "https://x.com/foo/status/1", "text": "브랜드A 가성비 좋아서 추천함", "posted_at": "2026-05-01",
+             "author": "foo", "likes": 10},
+        ], "cursor": None}, cost_usd=0.002)
+
+    def threads_search(query, **kw):
+        fakes._hit("threads_search")
+        return CallResult(data={"posts": [
+            {"url": "https://www.threads.com/@bar/post/abc", "text": "브랜드A 배송이 너무 느려요", "posted_at": "2026-05-03",
+             "author": "bar", "likes": 1},
+        ]}, cost_usd=0.002)
+
+    def structured(system, user, schema, **kw):
+        if set(schema["properties"]) == {"relevant", "headline", "sentiment", "topic", "awareness", "sponsored"}:
+            fakes._hit("voc_classify")
+            if "느려요" in user:
+                return CallResult(data={"relevant": True, "headline": "배송 지연", "sentiment": "negative",
+                                        "topic": "shipping", "awareness": "other", "sponsored": False}, cost_usd=0.001)
+            return CallResult(data={"relevant": True, "headline": "가성비 호평", "sentiment": "positive",
+                                    "topic": "price", "awareness": "other", "sponsored": False}, cost_usd=0.001)
+        return fakes.structured(system, user, schema, **kw)
+
+    research.PROVIDERS["search"] = search
+    research.PROVIDERS["twitter_search_posts"] = twitter_search_posts
+    research.PROVIDERS["threads_search"] = threads_search
+    research.PROVIDERS["structured"] = structured
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["created"] == 2 and res["channels"] == {"x_search": 1, "threads_search": 1}
+    assert fakes.calls["twitter_search_posts"] == 1 and fakes.calls["threads_search"] == 1
+
+    mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "voc"}
+    tw = mats["https://x.com/foo/status/1"]
+    assert tw["voc_sentiment"] == "positive" and tw["source"]["source_type"] == "social"
+    th = mats["https://www.threads.com/@bar/post/abc"]
+    assert th["voc_sentiment"] == "negative" and th["voc_topic"] == "shipping"
 
 
 def test_voc_item_reports_access_cause_when_every_post_is_login_walled(client, fakes):

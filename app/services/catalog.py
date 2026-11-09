@@ -31,7 +31,8 @@ SECTIONS = [
              "리뷰 수·긍정부정 키워드. 무신사 외에는 봇 차단으로 접근 불가가 흔함",
      "default_window": "최신 수집 시점"},
     {"id": "voc", "label": "소비자 원문(VOC)", "templates": ["5-1", "5-2"],
-     "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색 + 원문 수집, AI 감성·주제·인식 경로 분류)",
+     "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색) + X·Threads 공개 게시물(ScrapeCreators 키워드 검색) — "
+             "AI 감성·주제·인식 경로 분류",
      "default_window": "24M"},
     {"id": "recap", "label": "Recap", "templates": ["5-recap"], "data": "본문 Finding 요약", "default_window": "-"},
     {"id": "appendix", "label": "출처 표", "templates": ["A-source"], "data": "사용 자료 출처", "default_window": "-"},
@@ -77,6 +78,10 @@ CHANNELS = {
     "tvcf": {"label": "TVCF 광고 아카이브", "support": "manual_only", "provider": None},
     "community": {"label": "커뮤니티 (디시인사이드·에펨코리아·더쿠·루리웹·클리앙·오늘의유머·아카라이브·뽐뿌)",
                   "support": "auto", "provider": "perplexity"},
+    # 피드백 #5(SNS 네이티브 검색): 검색 결과 자체에 본문이 있어 커뮤니티처럼 사이트 지정 웹검색이
+    # 아니라 ScrapeCreators의 키워드 검색 API를 직접 쓴다. 페이스북은 문서화된 게시물 검색이 없어 뺐다.
+    "x_search": {"label": "X(트위터) 공개 게시물 검색", "support": "auto", "provider": "scrapecreators"},
+    "threads_search": {"label": "Threads 공개 게시물 검색", "support": "auto", "provider": "scrapecreators"},
     # Phase 2: 무신사·29CM·올리브영·스마트스토어·쿠팡 모두 공개 페이지 자동 수집을 시도한다.
     # 무신사만 정직한 봇 식별 요청을 허용하고, 나머지는 봇 차단(Cloudflare·Akamai 등)으로
     # 접근 불가가 흔하다 — 우회 없이 "접근 불가"로 남긴다.

@@ -6,6 +6,7 @@ failed provider never deletes material that already exists.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 from itertools import zip_longest
 import io
@@ -66,8 +67,8 @@ def _providers():
         from integrations.perplexity.client import search
         from integrations.apify.client import hashtag_posts
         from integrations.scrapecreators.client import (
-            instagram_post, instagram_post_comments, instagram_profile, instagram_user_posts, youtube_channel,
-            youtube_channel_videos, youtube_video,
+            instagram_post, instagram_post_comments, instagram_profile, instagram_user_posts, threads_search,
+            twitter_search_posts, youtube_channel, youtube_channel_videos, youtube_video,
         )
         from integrations.naver.client import search_trend
         from integrations.google_trends.client import search_trend as google_trends_search
@@ -75,7 +76,8 @@ def _providers():
                          instagram_post=instagram_post, instagram_profile=instagram_profile, youtube_video=youtube_video,
                          youtube_channel=youtube_channel, instagram_hashtag=hashtag_posts, naver_search_trend=search_trend,
                          instagram_user_posts=instagram_user_posts, youtube_channel_videos=youtube_channel_videos,
-                         google_trends_search=google_trends_search, instagram_post_comments=instagram_post_comments)
+                         google_trends_search=google_trends_search, instagram_post_comments=instagram_post_comments,
+                         twitter_search_posts=twitter_search_posts, threads_search=threads_search)
     return PROVIDERS
 
 
@@ -912,6 +914,28 @@ def _voc_prompt(entity: str, text: str) -> str:
     return f"<brand>{entity}</brand>\n<text>\n{text[:PAGE_CHARS_FOR_AI]}\n</text>"
 
 
+def _social_posts(ledger: RunLedger, p: dict, name: str) -> list[dict]:
+    """피드백 #5(SNS 네이티브 검색): X·Threads 공개 게시물 키워드 검색 — 검색 결과 자체에 본문이
+    있어 run_web_item처럼 별도 페이지 수집이 필요 없다. 발급키가 없으면 조용히 빈 목록."""
+    from app.config import settings
+    if not settings.provider_configured("scrapecreators"):
+        return []
+    out: list[dict] = []
+    try:
+        tw = ledger.call("scrapecreators", "twitter_search", {"q": name}, 0.002,
+                         lambda: p["twitter_search_posts"](name), cache_days=1)
+        out += [{**post, "channel": "x_search"} for post in tw.data["posts"] if post.get("url") and post.get("text")]
+    except ProviderError:
+        pass
+    try:
+        th = ledger.call("scrapecreators", "threads_search", {"q": name}, 0.002,
+                         lambda: p["threads_search"](name), cache_days=1)
+        out += [{**post, "channel": "threads_search"} for post in th.data["posts"] if post.get("url") and post.get("text")]
+    except ProviderError:
+        pass
+    return out
+
+
 def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem, ai_enabled: bool) -> dict:
     """5-1/5-2: 카페·블로그·커뮤니티 공개 글에서 소비자 원문을 모으고 감성·주제·인식 경로·협찬 여부를
     분류한다. 캠페인 사례와 달리 '같은 활동 묶기'는 하지 않는다 — 원문 하나하나가 독립된 증언이다."""
@@ -957,6 +981,36 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
                      comment="", order=0)
         db.add(m)
         cards.append((src, m, channel))
+    db.commit()  # 커밋해 쓰기 잠금을 풀어준다 — 바로 이어지는 _social_posts()의 ledger.call(별도 커넥션)과 부딪히지 않도록
+
+    # 피드백 #5: X·Threads 네이티브 검색 — 본문이 검색 결과에 이미 있어 fetch() 없이 바로 쓴다.
+    from integrations.fetch.page import Page
+    prefetched: dict[str, Page] = {}
+    for post in _social_posts(ledger, p, names[0] if names else item.entity):
+        if len(cards) >= MAX_VOC_PER_RUN:
+            break
+        url = post["url"]
+        if url in existing_urls:
+            out["skipped_existing"] = out.get("skipped_existing", 0) + 1
+            continue
+        if not period.published_in_search_window(_safe_date(post.get("posted_at")), item.period_start, item.period_end):
+            out["out_of_period"] = out.get("out_of_period", 0) + 1
+            continue
+        existing_urls.add(url)
+        title = post["text"][:80]
+        src = Source(id=new_id("SRC"), project_id=project.id, title=title, original_url=url,
+                     publisher=post.get("author") or _host(url), published_at=_safe_date(post.get("posted_at")),
+                     fetched_at=utcnow(), source_type="social", access_status="unknown")
+        db.add(src)
+        db.flush()
+        m = Material(id=new_id("EV"), project_id=project.id, source_id=src.id, research_item_id=item.id,
+                     brand_id=item.brand_id, entity=item.entity, section_id="voc", title=title,
+                     excerpt=post["text"][:1200], input_path="auto", review_status="candidate", comment="", order=0)
+        db.add(m)
+        cards.append((src, m, post["channel"]))
+        prefetched[url] = Page(url=url, final_url=url, title=title, text=post["text"],
+                               content_hash=hashlib.sha256(post["text"].encode("utf-8")).hexdigest(),
+                               published=post.get("posted_at"), publisher=post.get("author"))
     db.commit()
     if not cards:
         if not out.get("skipped_existing") and not out.get("out_of_period"):
@@ -964,6 +1018,8 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         return out
 
     def fetch(url: str):
+        if url in prefetched:
+            return prefetched[url], None
         try:
             return p["fetch_page"](url), None
         except ProviderError as exc:
