@@ -180,17 +180,20 @@ def top_posts_page(project: Project, owned_posts: list[OwnedPostRef]) -> Optiona
         blocks.append(ImageBlock(block_id=f"panel{i}_image", region=Region(x=x, y=top + 44, w=w, h=img_h),
                                  asset_id=hero.asset.id, crop=hero.asset.crop))
         asset_ids.append(hero.asset.id)
-        columns = [TableColumn(key="rank", label="순위", width=0.14), TableColumn(key="date", label="게시일", width=0.36),
-                  TableColumn(key="likes", label="좋아요", width=0.25, align="r"),
-                  TableColumn(key="comments", label="댓글", width=0.25, align="r")]
+        columns = [TableColumn(key="rank", label="순위", width=0.11), TableColumn(key="date", label="게시일", width=0.27),
+                  TableColumn(key="views", label="조회수", width=0.21, align="r"),
+                  TableColumn(key="likes", label="좋아요", width=0.21, align="r"),
+                  TableColumn(key="comments", label="댓글", width=0.20, align="r")]
         rows = []
         for rank, post in enumerate(posts, start=1):
             date_cell = [P(D(post.posted_at))] if post.posted_at else [P(T("—", color="muted"))]
+            views_cell = [P(N(f"{post.views:,}"))] if post.views is not None else [P(T("—", color="muted"))]
             likes_cell = [P(N(f"{post.likes:,}"))] if post.likes is not None else [P(T("—", color="muted"))]
             comments_cell = [P(N(f"{post.comments:,}"))] if post.comments is not None else [P(T("—", color="muted"))]
             rows.append(TableRow(cells=[
                 TableCell(paragraphs=[P(N(str(rank)))]), TableCell(paragraphs=date_cell),
-                TableCell(paragraphs=likes_cell, align="r"), TableCell(paragraphs=comments_cell, align="r"),
+                TableCell(paragraphs=views_cell, align="r"), TableCell(paragraphs=likes_cell, align="r"),
+                TableCell(paragraphs=comments_cell, align="r"),
             ]))
         table_y = top + 44 + img_h + 10
         blocks.append(TableBlock(block_id=f"panel{i}_table", region=Region(x=x, y=table_y, w=w, h=28 + 26 * len(rows)),

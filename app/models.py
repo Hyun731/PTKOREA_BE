@@ -376,6 +376,9 @@ class OwnedPost(Base):
     posted_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     likes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     comments: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 피드백 #2: ScrapeCreators 응답엔 이미 있었는데(Instagram 동영상 재생수) 저장하지 않고 버려지고
+    # 있었다 — 사진 게시물은 None(플랫폼이 조회수를 공개하지 않음).
+    views: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     asset_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     research_item_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

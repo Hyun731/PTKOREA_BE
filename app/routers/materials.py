@@ -690,7 +690,7 @@ def list_owned_posts(project_id: str, db: Session = Depends(get_db)):
     for r in rows:
         asset = db.get(Asset, r.asset_id) if r.asset_id else None
         out.append({"id": r.id, "brand_id": r.brand_id, "entity": r.entity, "channel": r.channel, "url": r.url,
-                   "posted_at": r.posted_at, "likes": r.likes, "comments": r.comments,
+                   "posted_at": r.posted_at, "likes": r.likes, "comments": r.comments, "views": r.views,
                    "asset": asset_out(asset) if asset else None})
     return out
 

@@ -1123,8 +1123,8 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
             asset = _save_owned_asset(db, project.id, img_data, f"{entity} Instagram 게시물")
             db.add(OwnedPost(id=new_id("OP"), project_id=project.id, brand_id=item.brand_id, entity=entity,
                              channel="instagram", post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
-                             likes=po["likes"], comments=po["comments"], asset_id=asset.id if asset else None,
-                             research_item_id=item.id))
+                             likes=po["likes"], comments=po["comments"], views=po.get("views"),
+                             asset_id=asset.id if asset else None, research_item_id=item.id))
             out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
         ig_by_month = {mo: 0 for mo in period_months}
         for po in posts:

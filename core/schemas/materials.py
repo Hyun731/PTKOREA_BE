@@ -76,6 +76,8 @@ class OwnedPostRef(BaseModel):
     posted_at: Optional[date] = None
     likes: Optional[int] = None
     comments: Optional[int] = None
+    # 피드백 #2(자사 SNS 정량 데이터) — 사진 게시물은 플랫폼이 조회수를 공개하지 않아 None.
+    views: Optional[int] = None
     asset: Optional[AssetRef] = None
 
 

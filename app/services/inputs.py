@@ -91,7 +91,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
         asset = assets.get(op.asset_id) if op.asset_id else None
         owned_posts.append(OwnedPostRef(id=op.id, brand_id=op.brand_id, entity=op.entity, channel=op.channel,
                                         url=op.url, posted_at=op.posted_at, likes=op.likes, comments=op.comments,
-                                        asset=asset_ref(asset) if asset else None))
+                                        views=op.views, asset=asset_ref(asset) if asset else None))
 
     # Phase 2 커머스 리뷰: 스냅샷·키워드 모두 싣고(채택 여부 무관), composition이 accepted만 골라 쓴다.
     reviews: list[ReviewSnapshotRef] = []

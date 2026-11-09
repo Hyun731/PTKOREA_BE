@@ -16,9 +16,9 @@ def _asset(id_, status="accepted", tmp_path=None):
     return AssetRef(id=id_, source_id=None, path=path, width=800, height=450, review_status=status)
 
 
-def _post(id_, likes, tmp_path, asset_status="accepted", brand_id="B1", entity="브랜드A"):
+def _post(id_, likes, tmp_path, asset_status="accepted", brand_id="B1", entity="브랜드A", views=None):
     return OwnedPostRef(id=id_, brand_id=brand_id, entity=entity, channel="instagram", url=f"https://instagram.com/p/{id_}/",
-                        posted_at=date(2026, 9, 1), likes=likes, comments=likes // 10,
+                        posted_at=date(2026, 9, 1), likes=likes, comments=likes // 10, views=views,
                         asset=_asset(f"AS-{id_}", asset_status, tmp_path))
 
 
@@ -37,6 +37,20 @@ def test_top_posts_ranks_by_likes_and_requires_accepted_asset(tmp_path):
     qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid))
     blocking = [i for i in qc.issues if i.severity == "block" and i.slide_id == "2-4"]
     assert blocking == [], blocking
+
+
+def test_top_posts_table_shows_views_or_a_dash_when_the_platform_has_none(tmp_path):
+    """피드백 #2(자사 SNS 정량 데이터): 조회수가 있으면 표에 나오고, 없으면(사진 게시물) 대시."""
+    project, _, _ = load_fixture()
+    posts = [_post("p1", 500, tmp_path, views=12000), _post("p2", 900, tmp_path, views=None)]
+    cfg = project.model_copy(update={"enabled_slides": ["2-4"]})
+    result = build_deck(BuildInputs(project=cfg, facts=[], owned_posts=posts, generated_on=date(2026, 10, 12)))
+    slide = next(s for s in result.deck.slides if s.slide_id == "2-4")
+    table = next(b for b in slide.blocks if isinstance(b, TableBlock))
+    assert [c.key for c in table.columns] == ["rank", "date", "views", "likes", "comments"]
+    by_rank = {row.cells[0].paragraphs[0].plain(): row for row in table.rows}
+    assert "—" in by_rank["1"].cells[2].paragraphs[0].plain()  # p2(900 likes, views=None) ranks first
+    assert "12,000" in by_rank["2"].cells[2].paragraphs[0].plain()  # p1(500 likes, views=12000) ranks second
 
 
 def test_top_posts_absent_without_accepted_images(tmp_path):

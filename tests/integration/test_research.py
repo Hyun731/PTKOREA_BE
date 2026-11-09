@@ -208,7 +208,8 @@ class Fakes:
         posts = [
             {"post_id": "p1", "posted_at": "2026-08-05", "likes": 500, "comments": 10, "views": None,
              "url": "https://instagram.com/p/p1/", "image_url": "https://img.example.com/p1.jpg"},
-            {"post_id": "p2", "posted_at": "2026-09-10", "likes": 900, "comments": 20, "views": None,
+            # p2는 동영상 게시물이라 재생수가 있다(사진 게시물은 플랫폼이 공개하지 않아 None).
+            {"post_id": "p2", "posted_at": "2026-09-10", "likes": 900, "comments": 20, "views": 45000,
              "url": "https://instagram.com/p/p2/", "image_url": "https://img.example.com/p2.jpg"},
             {"post_id": "p3", "posted_at": "2026-09-20", "likes": 100, "comments": 5, "views": None,
              "url": "https://instagram.com/p/p3/", "image_url": None},
@@ -1169,6 +1170,8 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     posts = ok(client.get(f"/v1/projects/{pid}/owned-posts"))
     assert len(posts) == 2  # p3 has no image_url, so only p1/p2 got downloaded
     assert [p["likes"] for p in posts] == [900, 500]  # ordered by likes desc, p2 > p1
+    # 피드백 #2(자사 SNS 정량 데이터): 조회수도 함께 저장된다(사진 게시물은 플랫폼이 공개 안 해 None).
+    assert [p["views"] for p in posts] == [45000, None]
     for p in posts:
         assert p["asset"]["review_status"] == "candidate"
         ok(client.patch(f"/v1/assets/{p['asset']['id']}", json={"review_status": "accepted"}))
