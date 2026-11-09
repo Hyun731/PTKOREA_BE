@@ -12,17 +12,24 @@ from typing import Callable
 from app.services.ledger import RunLedger
 from integrations.base import ProviderError
 
-CHANNELS: tuple[str, ...] = ("instagram", "youtube", "facebook", "x", "threads", "blog")
-CHANNEL_LABEL: dict[str, str] = {"instagram": "Instagram", "youtube": "YouTube", "facebook": "Facebook",
-                                 "x": "X", "threads": "Threads", "blog": "블로그"}
+# 피드백 #4(자사 SNS 채널 입력): 1순위(기본 노출) 네이버 블로그·유튜브·인스타그램, 2순위(더보기)
+# 페이스북·X·스레드·틱톡·기타(직접 입력).
+CHANNELS: tuple[str, ...] = ("instagram", "youtube", "blog", "facebook", "x", "threads", "tiktok", "other")
+CHANNEL_LABEL: dict[str, str] = {"instagram": "Instagram", "youtube": "YouTube", "blog": "블로그",
+                                 "facebook": "Facebook", "x": "X", "threads": "Threads", "tiktok": "TikTok",
+                                 "other": "기타"}
+CHANNEL_TIER: dict[str, str] = {"instagram": "primary", "youtube": "primary", "blog": "primary"}  # 나머진 secondary
 # ScrapeCreators only has Instagram/YouTube collectors (run_owned_item); the rest can be found as a
 # candidate account but their posts are never collected automatically.
 AUTO_COLLECTABLE: tuple[str, ...] = ("instagram", "youtube")
 # A candidate's url must actually belong to that platform, or a bad AI guess becomes a bad suggestion.
+# "other"는 사람이 직접 라벨을 붙이는 채널이라 고정 도메인이 없다 — AI 후보 대상에서도 뺀다.
 CHANNEL_DOMAIN: dict[str, tuple[str, ...]] = {
-    "instagram": ("instagram.com",), "youtube": ("youtube.com", "youtu.be"), "facebook": ("facebook.com", "fb.com"),
-    "x": ("x.com", "twitter.com"), "threads": ("threads.net",), "blog": ("blog.naver.com", "tistory.com"),
+    "instagram": ("instagram.com",), "youtube": ("youtube.com", "youtu.be"), "blog": ("blog.naver.com", "tistory.com"),
+    "facebook": ("facebook.com", "fb.com"), "x": ("x.com", "twitter.com"), "threads": ("threads.net",),
+    "tiktok": ("tiktok.com",),
 }
+DISCOVERABLE_CHANNELS: tuple[str, ...] = tuple(c for c in CHANNELS if c != "other")
 
 SYSTEM = """당신은 한국 브랜드의 공식 SNS 계정을 찾는 리서처입니다. <search_results>에서 <brand>의 공식 계정만 고릅니다.
 - 그 브랜드가 직접 운영하는 공식 계정만 고릅니다. 팬 계정, 판매처, 기사, 다른 브랜드는 제외합니다.
@@ -32,7 +39,7 @@ SYSTEM = """당신은 한국 브랜드의 공식 SNS 계정을 찾는 리서처�
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["profiles"], "properties": {"profiles": {
     "type": "array", "items": {"type": "object", "additionalProperties": False,
                                "required": ["channel", "url", "confident"],
-                               "properties": {"channel": {"type": "string", "enum": list(CHANNELS)},
+                               "properties": {"channel": {"type": "string", "enum": list(DISCOVERABLE_CHANNELS)},
                                               "url": {"type": "string"}, "confident": {"type": "boolean"}}}}}}
 
 # Indirection so tests can stub the model call and the search call.
@@ -70,7 +77,7 @@ def _valid(channel: str, url: str) -> bool:
 
 def discover(name: str, category_hint: str, ledger: RunLedger) -> list[dict]:
     """Candidate OfficialProfile dicts for one entity, or [] if nothing is found or confirmed."""
-    query = f"{name} 공식 Instagram YouTube Facebook X 트위터 Threads 블로그 계정"
+    query = f"{name} 공식 Instagram YouTube Facebook X 트위터 Threads TikTok 블로그 계정"
     try:
         res = ledger.call("perplexity", "official_accounts_search", {"name": name}, 0.005,
                           lambda: _search()([query], max_results=8), cache_days=7)

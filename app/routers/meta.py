@@ -38,6 +38,7 @@ def meta():
                         "has_keyword_profile": i in INDUSTRY_PROFILES}
                        for i in INDUSTRIES],
         "official_channels": [{"id": c, "label": official_accounts.CHANNEL_LABEL[c],
-                               "auto_collect": c in official_accounts.AUTO_COLLECTABLE}
+                               "auto_collect": c in official_accounts.AUTO_COLLECTABLE,
+                               "tier": official_accounts.CHANNEL_TIER.get(c, "secondary")}
                               for c in official_accounts.CHANNELS],
     }
