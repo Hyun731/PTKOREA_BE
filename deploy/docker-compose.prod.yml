@@ -4,6 +4,7 @@
 #   POSTGRES_PASSWORD required
 #   BACKEND_TOKEN, API keys …  same as backend/.env
 # Public entrypoint, pick one profile:
+#   (default) none → MADP gateway via expose_web, https://<name>.madp.cloud
 #   tunnel  → ngrok fixed domain (NGROK_AUTHTOKEN, NGROK_DOMAIN). Works without a public IP.
 #   https   → Caddy with automatic TLS (DOMAIN). Needs a floating IP + DNS + ports 80/443 open.
 name: ptk
@@ -29,7 +30,9 @@ services:
       JOB_BACKEND: thread
       MAX_IMAGES_PER_PROJECT: "300"
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
-    ports: ["127.0.0.1:8000:8000"]   # local only; the public side goes through tunnel/https
+    # MADP gateway (expose_web → https://<name>.madp.cloud) proxies to <private IP>:8000.
+    # The project security group admits only the gateway, so this is not open to the internet.
+    ports: ["8000:8000"]
     volumes: [appdata:/app/var]
     depends_on:
       db: {condition: service_healthy}
