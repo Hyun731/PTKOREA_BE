@@ -1,0 +1,23 @@
+# Tests on every push and PR. deploy.yml reuses this (workflow_call) before shipping main.
+name: ci
+on:
+  push:
+    branches-ignore: [main]   # main is tested by deploy.yml
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      PTK_SKIP_DOTENV: "1"
+      SKIP_RENDER: "1"   # LibreOffice render test runs only where the renderer image exists
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - run: pip install -r requirements.lock && pip install --no-deps -e .
+      - run: python -m pytest -q

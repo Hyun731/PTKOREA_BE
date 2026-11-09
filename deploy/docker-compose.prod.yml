@@ -1,0 +1,59 @@
+# Production stack on the MADP server: API + Postgres (+ optional public entrypoint).
+# Driven by deploy/deploy.sh; values come from $PTK_DIR/.env (never committed).
+#   API_IMAGE         set by deploy.sh (ghcr.io/hyun731/ptkorea-be:<sha>)
+#   POSTGRES_PASSWORD required
+#   BACKEND_TOKEN, API keys …  same as backend/.env
+# Public entrypoint, pick one profile:
+#   tunnel  → ngrok fixed domain (NGROK_AUTHTOKEN, NGROK_DOMAIN). Works without a public IP.
+#   https   → Caddy with automatic TLS (DOMAIN). Needs a floating IP + DNS + ports 80/443 open.
+name: ptk
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ptk
+      POSTGRES_DB: ptk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptk -d ptk"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    image: ${API_IMAGE:?set by deploy.sh}
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql+psycopg://ptk:${POSTGRES_PASSWORD}@db:5432/ptk
+      JOB_BACKEND: thread
+      MAX_IMAGES_PER_PROJECT: "300"
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports: ["127.0.0.1:8000:8000"]   # local only; the public side goes through tunnel/https
+    volumes: [appdata:/app/var]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: unless-stopped
+
+  tunnel:
+    profiles: [tunnel]
+    image: ngrok/ngrok:3
+    command: ["http", "--url=${NGROK_DOMAIN:-}", "api:8000"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    depends_on: [api]
+    restart: unless-stopped
+
+  caddy:
+    profiles: [https]
+    image: caddy:2-alpine
+    command: ["caddy", "reverse-proxy", "--from", "${DOMAIN:-}", "--to", "api:8000"]
+    ports: ["80:80", "443:443"]
+    volumes: [caddydata:/data]
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  appdata:
+  caddydata:
