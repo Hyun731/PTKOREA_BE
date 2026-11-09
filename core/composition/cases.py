@@ -487,7 +487,7 @@ def market_page(materials: list[CaseMaterial], pf: PartFactory, badge: list[Bloc
     return pages[0] if pages else None
 
 
-MARKET_ASPECT_ORDER = {"size_growth": 0, "channel": 1, "player": 2}
+MARKET_ASPECT_ORDER = {"size_growth": 0, "channel": 1, "player": 2, "policy": 3}
 
 
 def market_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block]) -> list[SlideSpec]:

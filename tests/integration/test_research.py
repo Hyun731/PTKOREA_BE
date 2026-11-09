@@ -160,7 +160,8 @@ class Fakes:
             return CallResult(data={
                 "relevant": True, "relevance_note": "", "activity_date": "2026-03-01",
                 "summary": "성수동 팝업에서 신제품 체험 공간을 열어 방문객을 모은 활동입니다.",
-                "market_aspect": "channel",  # Phase 3-2: only applied when the material's section_id is "market"
+                # Phase 3-2/피드백 #1: section_id가 "market"일 때만 적용 — 3-4(규제와 정책) 질문이면 policy로.
+                "market_aspect": "policy" if "정책" in user else "channel",
                 "primary_brand": primary_brand, "related_brands": [],
                 "facts": [{"label": "방문객", "metric": "count", "value": "12000", "quote": "행사 기간 방문객은 12000명으로 집계됐다.",
                           "substituted": True},  # Phase 3-2: only applied when section_id is "market_kpi"
@@ -411,6 +412,28 @@ def test_market_item_classifies_aspect_and_does_not_leak_to_other_sections(clien
     campaign_mats = [m for m in ok(client.get(f"/v1/projects/{pid2}/materials", params={"section_id": "campaign"}))
                      if m["source"]["source_type"] != "social"]
     assert campaign_mats and all(m["market_aspect"] is None for m in campaign_mats)  # market_aspect는 market 전용
+
+
+def test_regulation_and_policy_item_shares_the_market_slide_as_a_policy_aspect(client, fakes):
+    """피드백 #1 축 4(3-4 규제와 정책): 3-1과 같은 M1 장표로 합쳐지고, policy로 분류된다."""
+    pid, plan = setup_project(client)
+    policy_it = next(i for i in plan["items"] if i["scope_id"] == "3-4")
+    assert policy_it["section_id"] == "market" and policy_it["role"] == "market"
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [policy_it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market"}))
+           if m["source"]["source_type"] != "social"]
+    assert mats and all(m["market_aspect"] == "policy" for m in mats)
+    assert all(m["scope_id"] == "3-4" for m in mats)
+
+    # M1 isn't in the sample project's curated demo slide list — turn it on explicitly.
+    project = ok(client.get(f"/v1/projects/{pid}"))
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": project["version"],
+                                                "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["M1"]}}))
+    sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
+    m1 = next(s for s in sp["plan"] if s["slot_id"] == "M1")
+    assert m1["readiness"] == "needs_input"  # 아직 아무것도 채택하지 않음
+    assert m1["cause"] == "adopt"  # 모은 자료가 채택을 기다리는 중(3-1·3-4 둘 다 이 장표로 합쳐짐)
 
 
 def test_market_kpi_item_only_appears_for_metric_industries_and_marks_substituted(client, fakes):

@@ -124,6 +124,23 @@ def test_market_queries_append_industry_keyword_hints_when_available():
     assert not any("트래블룩" in q for q in queries2)  # 프로필도 확정 후보도 없으면 덧붙지 않는다
 
 
+def test_regulation_item_builds_policy_specific_queries_not_market_size_ones():
+    """피드백 #1 축 4(3-4 규제와 정책): 3-1과 같은 collector("market")지만 질의는 정책 전용."""
+    from datetime import date as d
+    from types import SimpleNamespace as NS
+
+    from app.services.research import build_queries
+    p = NS(config=project().model_dump(mode="json"))
+    policy_item = NS(brand_id="B1", entity="러기지", role="market", section_id="market", scope_id="3-4",
+                     period_start=d(2026, 1, 1), period_end=d(2026, 9, 30))
+    queries = build_queries(policy_item, p)
+    assert any("정책" in q for q in queries) and not any("시장 규모" in q for q in queries)
+
+    market_item = NS(**{**policy_item.__dict__, "scope_id": "3-1"})
+    market_queries = build_queries(market_item, p)
+    assert any("시장 규모" in q for q in market_queries) and not any("정책" in q for q in market_queries)
+
+
 def test_upload_line_only_when_an_upload_channel_is_chosen():
     p = project()
     assert not any("내부 자료" in x for x in scope.direction(scope.BY_ID["2-7"], by_id(p)["2-7"], p))

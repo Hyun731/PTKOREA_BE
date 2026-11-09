@@ -105,9 +105,12 @@ ITEMS: list[dict] = [
     {"id": "3-3", "part": "competitor", "group": "시장 환경", "title": "신규 진입자",
      "question": "{category} 최근 새로 들어온 플레이어와 차별점", "subject": "market", "collector": None,
      "channels": ["web"], "period": 12, "output": "플레이어마다 진입 시점·차별점 1줄·출처"},
+    # 피드백 #1 축 4(규제와 정책): 3-1과 같은 collector("market")를 써서 같은 M1 장표로 합친다
+    # (build_queries()가 scope_id로 정책 전용 질의를 따로 만든다).
     {"id": "3-4", "part": "competitor", "group": "시장 환경", "title": "규제와 정책",
-     "question": "{category}에 영향을 주는 정책·제도화 움직임", "subject": "market", "collector": None,
-     "channels": ["web"], "period": 12, "output": "이슈마다 기관·일자·영향 1줄"},
+     "question": "{category}에 영향을 주는 정책·제도화 움직임", "subject": "market", "collector": "market",
+     "templates": ["M1"], "channels": ["web", "report"], "default_channels": ["web"], "period": "inherit",
+     "output": "이슈마다 기관·일자·영향 1줄"},
     {"id": "3-5", "part": "competitor", "group": "경쟁사", "title": "경쟁사 포지셔닝 (3C 비교)",
      "question": "경쟁사 {entity}의 타깃 공략 방식·포지셔닝·미디어 믹스", "subject": "competitor", "collector": None,
      "channels": ["web", "tvcf", "youtube"], "default_channels": ["web"], "period": "inherit",

@@ -20,9 +20,11 @@ TARGET_SEGMENTS: tuple[str, ...] = (
 )
 
 # Phase 3-2 산업 카테고리 분석(M1): section_id="market" 원문이 주로 다루는 내용 — AI 추출이 분류.
-MARKET_ASPECTS: tuple[str, ...] = ("size_growth", "channel", "player")
+# "policy"는 피드백 #1(업종별 variation) 축 4(3-4 규제와 정책) — 같은 M1 장표에 합쳐서 보여준다.
+MARKET_ASPECTS: tuple[str, ...] = ("size_growth", "channel", "player", "policy")
 MARKET_ASPECT_LABEL: dict[str, str] = {
     "size_growth": "시장 규모·성장", "channel": "유통 채널 구조", "player": "주요 플레이어 지도",
+    "policy": "정책·규제 동향",
 }
 
 
@@ -107,7 +109,7 @@ class CaseMaterial(BaseModel):
     voc_awareness: Optional[Literal["ad", "referral", "influencer", "store", "search", "other"]] = None
     voc_sponsored: bool = False
     # Phase 3-2 산업 카테고리 분석 — section_id="market" 카드에만 채워짐.
-    market_aspect: Optional[Literal["size_growth", "channel", "player"]] = None
+    market_aspect: Optional[Literal["size_growth", "channel", "player", "policy"]] = None
     # Phase 3-3 사례 귀속 정리 — section_id="campaign" 카드에만 채워짐. 함께 등장하는 다른 자사
     # 브랜드(주 대상은 아님)의 id 목록.
     related_brand_ids: list[str] = Field(default_factory=list)

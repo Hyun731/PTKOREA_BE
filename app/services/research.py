@@ -151,6 +151,11 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     year = item.period_start.year if item.period_start.year == item.period_end.year else f"{item.period_start.year} {item.period_end.year}"
     # Words the planner asked for (via the direction chat) go first, so the per-item query cap keeps them.
     asked = (scope.setting_for(core, item.scope_id) or {}).get("keywords") or []
+    if item.section_id == "market" and item.scope_id == "3-4":
+        # 피드백 #1 축 4(규제와 정책) — 3-1과 같은 M1 장표로 합쳐지지만 질의는 정책·제도 전용.
+        return [f"{cat} {k} {year}" for k in asked] + [
+            f"{cat} 정책 규제 {year}", f"{cat} 제도 개정 {year}", f"{cat} 정부 지원 정책 {year}",
+            f"{cat} ESG 친환경 규제 {year}"]
     if item.section_id == "market":
         age = brand.target.label.split("·")[0].strip() if brand.target else ""
         # Phase 3-2: 시장 규모·성장, 유통 채널 구조, 주요 플레이어를 각각 겨냥 — 한 질의가 셋을 다 못 챙긴다.
@@ -229,7 +234,7 @@ EXTRACT_SYSTEM = """당신은 브랜드 마케팅 진단 보고서를 돕는 리
   그 목록 중 하나의 활동을 주로 다루면(조사 대상이 아니라) primary_brand에 그 브랜드 이름을 그대로 적습니다 — 조사
   대상 그대로가 맞으면 null. 두 자사 브랜드가 함께 등장하는 활동이면 주로 다루는 쪽을 primary_brand로, 나머지를
   related_brands에 적습니다(목록에 없으면 둘 다 null/빈 배열).
-- market_aspect: 조사 대상이 '산업 카테고리 분석'(시장 규모·유통 구조·주요 플레이어)일 때만, 이 원문이 주로 다루는 내용 하나를 고릅니다 — "size_growth"(시장 규모·성장률·전망), "channel"(유통 채널 구조·판매 경로 비중), "player"(주요 플레이어·경쟁 구도·점유율). 그 외 조사에서는 null.
+- market_aspect: 조사 대상이 '산업 카테고리 분석'이나 '규제와 정책'일 때만, 이 원문이 주로 다루는 내용 하나를 고릅니다 — "size_growth"(시장 규모·성장률·전망), "channel"(유통 채널 구조·판매 경로 비중), "player"(주요 플레이어·경쟁 구도·점유율), "policy"(정책·제도·규제 변화, ESG·친환경 의무화, 정부 지원 등). 그 외 조사에서는 null.
 원문에 없는 내용, 다른 브랜드의 수치, 추정치는 넣지 않습니다. 관련 내용이 없으면 relevant=false와 빈 배열을 돌려줍니다."""
 
 
