@@ -867,7 +867,11 @@ def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: 
 
 # 카페·블로그 vs 커뮤니티는 Phase 1-4 수집 현황 표의 두 채널과 그대로 맞춘다.
 CAFE_BLOG_SITES = ("blog.naver.com", "cafe.naver.com", "tistory.com", "cafe.daum.net")
-COMMUNITY_SITES = ("dcinside.com", "fmkorea.com", "theqoo.net", "ruliweb.com", "clien.net", "todayhumor.co.kr")
+# 피드백 #5(수집 채널 확장): 아카라이브·뽐뿌 추가 — 뽐뿌는 정직한 요청에 정상 응답, 아카라이브는
+# 루트 도메인이 봇 차단(403)이라 개별 글도 "접근 불가"로 자주 빠질 수 있다(우회 시도 없음, 기존
+# access_status 기반 graceful degradation이 그대로 적용된다).
+COMMUNITY_SITES = ("dcinside.com", "fmkorea.com", "theqoo.net", "ruliweb.com", "clien.net", "todayhumor.co.kr",
+                   "arca.live", "ppomppu.co.kr")
 VOC_SITE_CHANNEL = {**{s: "cafe_blog" for s in CAFE_BLOG_SITES}, **{s: "community" for s in COMMUNITY_SITES}}
 MAX_VOC_PER_RUN = 20  # per item — keeps one run's AI-classification cost bounded
 # fetch_page has no login-wall detection of its own (a walled page still answers 200): a best-effort

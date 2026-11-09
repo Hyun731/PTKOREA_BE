@@ -75,7 +75,7 @@ CHANNELS = {
     # enters or uploads what they find there.
     "dart": {"label": "DART 공시·감사보고서", "support": "manual_only", "provider": None},
     "tvcf": {"label": "TVCF 광고 아카이브", "support": "manual_only", "provider": None},
-    "community": {"label": "커뮤니티 (디시인사이드·에펨코리아·더쿠·루리웹·클리앙·오늘의유머)",
+    "community": {"label": "커뮤니티 (디시인사이드·에펨코리아·더쿠·루리웹·클리앙·오늘의유머·아카라이브·뽐뿌)",
                   "support": "auto", "provider": "perplexity"},
     # Phase 2: 무신사·29CM·올리브영·스마트스토어·쿠팡 모두 공개 페이지 자동 수집을 시도한다.
     # 무신사만 정직한 봇 식별 요청을 허용하고, 나머지는 봇 차단(Cloudflare·Akamai 등)으로
