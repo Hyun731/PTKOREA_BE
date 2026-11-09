@@ -66,6 +66,14 @@ class ClaimRef(BaseModel):
     quote: Optional[str] = None  # verbatim source sentence the claim rests on (AI candidates)
 
 
+class CommentSentiment(BaseModel):
+    """피드백 #2 — 댓글 표본(최대 1페이지, 전수 아님)의 AI 감성 분류 집계."""
+    positive: int = 0
+    negative: int = 0
+    neutral: int = 0
+    sample_size: int = 0
+
+
 class OwnedPostRef(BaseModel):
     """2-4 브랜드별 상위 게시물 — a channel-inventory post, not a campaign case Material."""
     id: str
@@ -78,6 +86,7 @@ class OwnedPostRef(BaseModel):
     comments: Optional[int] = None
     # 피드백 #2(자사 SNS 정량 데이터) — 사진 게시물은 플랫폼이 조회수를 공개하지 않아 None.
     views: Optional[int] = None
+    comment_sentiment: Optional[CommentSentiment] = None
     asset: Optional[AssetRef] = None
 
 

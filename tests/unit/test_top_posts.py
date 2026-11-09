@@ -16,10 +16,10 @@ def _asset(id_, status="accepted", tmp_path=None):
     return AssetRef(id=id_, source_id=None, path=path, width=800, height=450, review_status=status)
 
 
-def _post(id_, likes, tmp_path, asset_status="accepted", brand_id="B1", entity="브랜드A", views=None):
+def _post(id_, likes, tmp_path, asset_status="accepted", brand_id="B1", entity="브랜드A", views=None, comment_sentiment=None):
     return OwnedPostRef(id=id_, brand_id=brand_id, entity=entity, channel="instagram", url=f"https://instagram.com/p/{id_}/",
                         posted_at=date(2026, 9, 1), likes=likes, comments=likes // 10, views=views,
-                        asset=_asset(f"AS-{id_}", asset_status, tmp_path))
+                        comment_sentiment=comment_sentiment, asset=_asset(f"AS-{id_}", asset_status, tmp_path))
 
 
 def test_top_posts_ranks_by_likes_and_requires_accepted_asset(tmp_path):
@@ -51,6 +51,28 @@ def test_top_posts_table_shows_views_or_a_dash_when_the_platform_has_none(tmp_pa
     by_rank = {row.cells[0].paragraphs[0].plain(): row for row in table.rows}
     assert "—" in by_rank["1"].cells[2].paragraphs[0].plain()  # p2(900 likes, views=None) ranks first
     assert "12,000" in by_rank["2"].cells[2].paragraphs[0].plain()  # p1(500 likes, views=12000) ranks second
+
+
+def test_top_posts_shows_the_hero_posts_comment_sentiment_ratio(tmp_path):
+    """피드백 #2(댓글 감성 분석): 1위 게시물의 댓글 표본 비율을 보여준다."""
+    project, _, _ = load_fixture()
+    sentiment = {"positive": 6, "negative": 2, "neutral": 2, "sample_size": 10}
+    posts = [_post("p1", 900, tmp_path, comment_sentiment=sentiment), _post("p2", 500, tmp_path)]
+    cfg = project.model_copy(update={"enabled_slides": ["2-4"]})
+    result = build_deck(BuildInputs(project=cfg, facts=[], owned_posts=posts, generated_on=date(2026, 10, 12)))
+    slide = next(s for s in result.deck.slides if s.slide_id == "2-4")
+    sentiment_block = next(b for b in slide.blocks if b.block_id == "panel0_sentiment")
+    text = sentiment_block.paragraphs[0].plain()
+    assert "긍정 60%" in text and "부정 20%" in text and "중립 20%" in text and "10건" in text
+
+
+def test_top_posts_has_no_sentiment_line_without_a_sample(tmp_path):
+    project, _, _ = load_fixture()
+    posts = [_post("p1", 900, tmp_path, comment_sentiment=None)]
+    cfg = project.model_copy(update={"enabled_slides": ["2-4"]})
+    result = build_deck(BuildInputs(project=cfg, facts=[], owned_posts=posts, generated_on=date(2026, 10, 12)))
+    slide = next(s for s in result.deck.slides if s.slide_id == "2-4")
+    assert not any(b.block_id == "panel0_sentiment" for b in slide.blocks)
 
 
 def test_top_posts_absent_without_accepted_images(tmp_path):

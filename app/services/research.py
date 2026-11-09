@@ -66,7 +66,8 @@ def _providers():
         from integrations.perplexity.client import search
         from integrations.apify.client import hashtag_posts
         from integrations.scrapecreators.client import (
-            instagram_post, instagram_profile, instagram_user_posts, youtube_channel, youtube_channel_videos, youtube_video,
+            instagram_post, instagram_post_comments, instagram_profile, instagram_user_posts, youtube_channel,
+            youtube_channel_videos, youtube_video,
         )
         from integrations.naver.client import search_trend
         from integrations.google_trends.client import search_trend as google_trends_search
@@ -74,7 +75,7 @@ def _providers():
                          instagram_post=instagram_post, instagram_profile=instagram_profile, youtube_video=youtube_video,
                          youtube_channel=youtube_channel, instagram_hashtag=hashtag_posts, naver_search_trend=search_trend,
                          instagram_user_posts=instagram_user_posts, youtube_channel_videos=youtube_channel_videos,
-                         google_trends_search=google_trends_search)
+                         google_trends_search=google_trends_search, instagram_post_comments=instagram_post_comments)
     return PROVIDERS
 
 
@@ -1020,6 +1021,40 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
 MAX_OWNED_PAGES = 40  # per channel per item — paging starts at today, so it must reach back past period_start
 
 
+# 피드백 #2(자사 SNS 정량 데이터 — 댓글 감성 분석). 표본(최대 1페이지)만 본다 — 전수 조사 아님.
+COMMENT_SENTIMENT_SYSTEM = """당신은 SNS 댓글의 감성을 분류하는 보조입니다. <comments>는 번호가 매겨진
+댓글 목록입니다. 각 댓글을 긍정/부정/중립(positive/negative/neutral) 중 하나로 분류합니다. 광고·스팸·
+의미 없는 이모지만 있는 댓글도 중립으로 둡니다."""
+COMMENT_SENTIMENT_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["comments"],
+    "properties": {"comments": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["index", "sentiment"],
+        "properties": {"index": {"type": "integer"},
+                       "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]}}}}},
+}
+
+
+def classify_comment_sentiment(comments: list[dict], ledger: RunLedger) -> Optional[dict]:
+    """{"positive","negative","neutral","sample_size"}, 실패하거나 댓글이 없으면 None(추측하지 않는다)."""
+    if not comments:
+        return None
+    listing = "\n".join(f"{i}. {c['text'][:200]}" for i, c in enumerate(comments))
+    user = f"<comments>\n{listing}\n</comments>"
+    try:
+        res = ledger.call("anthropic", "comment_sentiment", {"n": len(comments)}, 0.01,
+                          lambda: _providers()["structured"](COMMENT_SENTIMENT_SYSTEM, user, COMMENT_SENTIMENT_SCHEMA,
+                                                             max_tokens=1000), cache_days=None)
+    except ProviderError:
+        return None
+    counts = {"positive": 0, "negative": 0, "neutral": 0}
+    for row in res.data.get("comments") or []:
+        idx, sentiment = row.get("index"), row.get("sentiment")
+        if sentiment in counts and isinstance(idx, int) and 0 <= idx < len(comments):
+            counts[sentiment] += 1
+    sample = sum(counts.values())
+    return {**counts, "sample_size": sample} if sample else None
+
+
 def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
     """2-1: 공식 계정 전체 게시물에서 팔로워·기간 내 게시 빈도·반응을 집계. 자사는 Brand.official_profiles,
     경쟁사는 Brand.competitor_profiles에 등록된(확인된) handle만 쓴다 — 어떤 계정이 '그 주체'인지
@@ -1121,10 +1156,23 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
                 out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
                 continue
             asset = _save_owned_asset(db, project.id, img_data, f"{entity} Instagram 게시물")
+            # 커밋해 쓰기 잠금을 풀어준다 — 바로 이어지는 댓글 수집(ledger.call, 별도 커넥션)이
+            # 아직 커밋 안 된 Asset(또는 그 전의 owned_* Fact)과 "database is locked"로 부딪힌다.
+            db.commit()
+            sentiment = None
+            if po.get("url"):
+                try:
+                    comments_res = ledger.call("scrapecreators", "instagram_post_comments", {"url": po["url"]}, 0.002,
+                                               lambda: p["instagram_post_comments"](po["url"]), cache_days=1)
+                    sentiment = classify_comment_sentiment(comments_res.data["comments"], ledger)
+                except ProviderError:
+                    pass  # 댓글을 못 가져와도(비공개 등) 게시물 자체는 그대로 저장
             db.add(OwnedPost(id=new_id("OP"), project_id=project.id, brand_id=item.brand_id, entity=entity,
                              channel="instagram", post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
                              likes=po["likes"], comments=po["comments"], views=po.get("views"),
-                             asset_id=asset.id if asset else None, research_item_id=item.id))
+                             comment_sentiment=sentiment, asset_id=asset.id if asset else None,
+                             research_item_id=item.id))
+            db.commit()  # 다음 게시물 차례의 댓글 수집(별도 커넥션)과 부딪히지 않도록 바로 커밋
             out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
         ig_by_month = {mo: 0 for mo in period_months}
         for po in posts:

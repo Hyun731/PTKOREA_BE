@@ -379,6 +379,9 @@ class OwnedPost(Base):
     # 피드백 #2: ScrapeCreators 응답엔 이미 있었는데(Instagram 동영상 재생수) 저장하지 않고 버려지고
     # 있었다 — 사진 게시물은 None(플랫폼이 조회수를 공개하지 않음).
     views: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 피드백 #2: 댓글 표본(최대 1페이지, 전수 아님)의 AI 감성 분류 집계 — {"positive","negative",
+    # "neutral","sample_size"}. 댓글을 못 가져왔거나(비공개 등) 아직 안 돌렸으면 None.
+    comment_sentiment: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     asset_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     research_item_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

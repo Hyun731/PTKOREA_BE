@@ -196,8 +196,18 @@ def top_posts_page(project: Project, owned_posts: list[OwnedPostRef]) -> Optiona
                 TableCell(paragraphs=comments_cell, align="r"),
             ]))
         table_y = top + 44 + img_h + 10
-        blocks.append(TableBlock(block_id=f"panel{i}_table", region=Region(x=x, y=table_y, w=w, h=28 + 26 * len(rows)),
+        table_h = 28 + 26 * len(rows)
+        blocks.append(TableBlock(block_id=f"panel{i}_table", region=Region(x=x, y=table_y, w=w, h=table_h),
                                  columns=columns, rows=rows, row_height=26, header_height=28, size=9, header_size=9))
+        # 피드백 #2(댓글 감성 분석): 1위 게시물의 댓글 표본 비율만 간단히 — 전수 조사가 아님을 분모로 밝힌다.
+        s = hero.comment_sentiment
+        if s and s.sample_size:
+            pct = lambda n: round(n / s.sample_size * 100)
+            parts = [M("댓글 감성", "label"), T(" 긍정 "), M(f"{pct(s.positive)}%", "ratio"), T(" · 부정 "),
+                    M(f"{pct(s.negative)}%", "ratio"), T(" · 중립 "), M(f"{pct(s.neutral)}%", "ratio"),
+                    T(" ("), M(f"{s.sample_size}건", "count"), T(" 표본)")]
+            blocks.append(text_block(f"panel{i}_sentiment", "body", Region(x=x, y=table_y + table_h + 6, w=w, h=18),
+                                     [P(*parts)], spec="card_body", size=9, color="muted"))
 
     lead = lead_block([P(T("자사 공식 계정 게시물 중 좋아요가 가장 많았던 상위 게시물"))])
     blocks = [

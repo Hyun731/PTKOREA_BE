@@ -93,6 +93,18 @@ class Fakes:
             self._hit("industry_keywords")
             return CallResult(data={"keywords": [{"text": "트래블룩", "confident": True}]},
                               usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"comments"}:  # 댓글 감성 분류 (피드백 #2) — 간단한 키워드 규칙으로 흉내
+            self._hit("comment_sentiment")
+            rows = []
+            for m in re.finditer(r"^(\d+)\. (.+)$", user, re.M):
+                idx, text = int(m.group(1)), m.group(2)
+                if "예뻐요" in text or "재구매" in text:
+                    rows.append({"index": idx, "sentiment": "positive"})
+                elif "별로" in text or "실망" in text:
+                    rows.append({"index": idx, "sentiment": "negative"})
+                else:
+                    rows.append({"index": idx, "sentiment": "neutral"})
+            return CallResult(data={"comments": rows}, usage={"model": "fake"}, cost_usd=0.001)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
             data: dict = {}
@@ -216,6 +228,15 @@ class Fakes:
         ]
         return CallResult(data={"posts": posts, "next_max_id": None, "more_available": False}, cost_usd=0.002)
 
+    def instagram_post_comments(self, url, cursor=None, **kw):
+        self._hit("instagram_post_comments")
+        comments = [
+            {"id": "c1", "text": "진짜 예뻐요 재구매각", "posted_at": "2026-08-10", "likes": 2},
+            {"id": "c2", "text": "별로예요 실망", "posted_at": "2026-08-11", "likes": 0},
+            {"id": "c3", "text": "ㅎㅇ", "posted_at": "2026-08-12", "likes": 0},
+        ]
+        return CallResult(data={"comments": comments, "cursor": None}, cost_usd=0.002)
+
     def youtube_channel_videos(self, channel_id=None, handle=None, continuation_token=None, **kw):
         self._hit("youtube_channel_videos")
         videos = [{"id": "v1", "url": "https://youtube.com/watch?v=v1", "title": "영상1", "views": 1000,
@@ -256,7 +277,7 @@ def fakes(monkeypatch):
                               instagram_post=f.instagram_post, instagram_profile=f.instagram_profile, youtube_video=f.youtube_video,
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
                               instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos,
-                              google_trends_search=f.google_trends_search)
+                              google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -1172,6 +1193,12 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     assert [p["likes"] for p in posts] == [900, 500]  # ordered by likes desc, p2 > p1
     # 피드백 #2(자사 SNS 정량 데이터): 조회수도 함께 저장된다(사진 게시물은 플랫폼이 공개 안 해 None).
     assert [p["views"] for p in posts] == [45000, None]
+    # 피드백 #2(댓글 감성 분석): 댓글 표본을 가져와 긍정/부정/중립으로 분류해 둔다.
+    assert fakes.calls["instagram_post_comments"] == 2  # 다운로드된 상위 게시물마다 한 번씩
+    assert fakes.calls["comment_sentiment"] == 2
+    for p in posts:
+        s = p["comment_sentiment"]
+        assert s["sample_size"] == 3 and s["positive"] == 1 and s["negative"] == 1 and s["neutral"] == 1
     for p in posts:
         assert p["asset"]["review_status"] == "candidate"
         ok(client.patch(f"/v1/assets/{p['asset']['id']}", json={"review_status": "accepted"}))

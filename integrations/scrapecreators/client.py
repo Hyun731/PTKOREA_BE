@@ -79,6 +79,25 @@ def instagram_post(url: str, transport: Optional[httpx.BaseTransport] = None) ->
     return CallResult(data=post, usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
 
 
+def instagram_post_comments(url: str, *, cursor: Optional[str] = None,
+                            transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """공개 게시물의 댓글 원문(피드백 #2: 댓글 감성 분석) — docs.scrapecreators.com의 문서화된
+    GET /v2/instagram/post/comments. 페이지당 한 번만 부른다(전수 수집 아님 — 표본)."""
+    params = {"url": url}
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/instagram/post/comments", params, transport, base=BASE_V2)
+    rows = []
+    for c in data.get("comments") or []:
+        text = (c.get("text") or "").strip()
+        if not text:
+            continue
+        rows.append({"id": c.get("id"), "text": text, "posted_at": (c.get("created_at") or "")[:10],
+                    "likes": _int(c.get("comment_like_count"))})
+    return CallResult(data={"comments": rows, "cursor": data.get("cursor")},
+                      usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
 def instagram_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
     """Follower count for a creator: the post endpoint leaves owner followers empty."""
     data = _get("/instagram/profile", {"handle": handle.lstrip("@")}, transport)
