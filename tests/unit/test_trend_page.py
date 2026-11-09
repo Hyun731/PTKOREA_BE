@@ -57,3 +57,24 @@ def test_skips_category_series_when_it_equals_the_brand_name():
     slide = trend_page(_ctx(facts, categories=["나이키"]), related=[])
     chart = next(b for b in slide.blocks if b.block_id == "chart")
     assert [s.entity for s in chart.series] == ["나이키"]  # 카테고리가 브랜드명과 같음 — 두 번째 계열 없음
+
+
+def test_shows_a_line_per_product_category_not_just_one():
+    """피드백 #1 축 2(품목별 검색량 분해): 브랜드가 보유한 제품군마다 각자 선으로 그린다."""
+    facts = [_fact("나이키", "2026-07", 40), _fact("운동화", "2026-07", 30), _fact("트레이닝복", "2026-07", 20)]
+    slide = trend_page(_ctx(facts, categories=["운동화", "트레이닝복"]), related=[])
+    chart = next(b for b in slide.blocks if b.block_id == "chart")
+    assert {s.entity for s in chart.series} == {"나이키", "운동화", "트레이닝복"}
+    lead = next(b for b in slide.blocks if b.block_id == "lead")
+    text = lead.paragraphs[0].plain()
+    assert "운동화" in text and "트레이닝복" in text
+
+
+def test_caps_product_categories_at_the_trends_comparison_limit():
+    from core.composition.quant import TRENDS_MAX_KEYWORDS
+
+    cats = [f"카테고리{i}" for i in range(6)]  # 5개 한도를 넘는 6개
+    facts = [_fact("나이키", "2026-07", 40)] + [_fact(c, "2026-07", 10) for c in cats]
+    slide = trend_page(_ctx(facts, categories=cats), related=[])
+    chart = next(b for b in slide.blocks if b.block_id == "chart")
+    assert len(chart.series) <= TRENDS_MAX_KEYWORDS

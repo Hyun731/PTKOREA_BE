@@ -26,7 +26,7 @@ from core.schemas.facts import Finding
 from core.schemas.materials import AssetRef
 from core.schemas.project import Project
 from core.schemas.slidespec import (
-    BarChartBlock, BarItem, Block, Crop, ImageBlock, LineChartBlock, LinePoint, LineSeries, Paragraph, Region,
+    BarChartBlock, BarItem, Block, Crop, ImageBlock, LineChartBlock, LinePoint, LineSeries, Paragraph, Part, Region,
     ShapeBlock, SlideSpec, TableBlock, TableCell, TableColumn, TableRow, TextBlock,
 )
 
@@ -359,15 +359,19 @@ def search_trend(ctx: QuantContext) -> Optional[SlideSpec]:
 
 # ---------------------------------------------------------------- TR1 (Phase 3-4 검색 추이, Google Trends)
 
+TRENDS_MAX_KEYWORDS = 5  # integrations/google_trends/client.py의 비교 한도를 그대로 따른다
+
+
 def trend_page(ctx: QuantContext, related: list[str]) -> Optional[SlideSpec]:
-    """카테고리·브랜드 키워드의 월별 검색 추이와 연관 검색어(Google Trends 공개 경로). 2-8a~d(네이버
-    데이터랩, 경쟁사 간 점유)와는 출처·용도가 달라 한 축으로 섞지 않는다 — 여긴 자사 키워드 하나의
-    시기별 추이만 본다."""
+    """브랜드·제품군 키워드의 월별 검색 추이와 연관 검색어(Google Trends 공개 경로). 2-8a~d(네이버
+    데이터랩, 경쟁사 간 점유)와는 출처·용도가 달라 한 축으로 섞지 않는다 — 여긴 자사 키워드의
+    시기별 추이만 본다. 피드백 #1 축 2(품목별 검색량 분해): 카테고리 하나가 아니라 보유 제품군
+    전부(최대 Trends 비교 한도까지)를 각자 선으로 그린다."""
     brand = ctx.project.brands[0] if ctx.project.brands else None
     if brand is None:
         return None
-    category = brand.categories[0] if brand.categories and brand.categories[0] != brand.name else None
-    keywords = [brand.name] + ([category] if category else [])
+    categories = [c for c in dict.fromkeys(brand.categories) if c != brand.name][:TRENDS_MAX_KEYWORDS - 1]
+    keywords = [brand.name] + categories
     by_kw: dict[str, dict[str, object]] = {}
     for f in ctx.metrics.registry.facts.values():
         if f.metric == "trends_index_monthly" and f.brand_id == brand.id and f.entity in keywords and f.usable:
@@ -385,12 +389,16 @@ def trend_page(ctx: QuantContext, related: list[str]) -> Optional[SlideSpec]:
         fact_ids += [p.fact_id for p in pts if p.fact_id]
     if not line_series or not months:
         return None
+    shown_categories = [kw for kw in categories if kw in by_kw]
     chart_h = 360
     chart = LineChartBlock(block_id="chart", region=Region(x=48, y=148, w=1184, h=chart_h),
                            categories=[fmt_month_label(m) for m in months], series=line_series)
+    cat_parts: list[Part] = []
+    for c in shown_categories:
+        cat_parts += [T(" · "), N(c)]
     blocks: list[Block] = [
         title_block("Search", sub_parts=[T("검색 추이 (Google Trends)")]),
-        lead_block([P(N(brand.name), T(" 키워드 검색 추이"), *([T(" · "), N(category)] if category else []))]),
+        lead_block([P(N(brand.name), T(" 키워드 검색 추이"), *cat_parts)]),
         chart,
     ]
     y = 148 + chart_h + 20

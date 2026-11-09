@@ -33,6 +33,7 @@ from app.storage import get_storage
 from core.ingestion.manual import make_manual_fact
 from core.schemas.materials import MARKET_ASPECTS, TARGET_SEGMENTS
 from integrations.base import CallResult, ProviderError
+from integrations.google_trends.client import MAX_KEYWORDS as TRENDS_MAX_KEYWORDS
 
 # PRD 13 default caps per run
 # Caps are per item so one busy item cannot starve the others in the same run (the self brand used to
@@ -1296,8 +1297,10 @@ def run_search_trend_item(db: Session, ledger: RunLedger, project: Project, item
     p = _providers()
     core = core_project(project)
     brand = core.brand(item.brand_id)
-    category = brand.categories[0] if brand.categories else None
-    keywords = [brand.name] + ([category] if category and category != brand.name else [])
+    # 피드백 #1 축 2(품목별 검색량 분해): 카테고리 하나가 아니라 설정된 제품군 전부(최대
+    # Google Trends 비교 한도까지) — 캐리어·백팩처럼 보유 제품군별로 각각의 추이를 본다.
+    categories = [c for c in dict.fromkeys(brand.categories) if c != brand.name][:TRENDS_MAX_KEYWORDS - 1]
+    keywords = [brand.name] + categories
     out: dict = {"created": 0, "facts": 0, "related_queries": [], "errors": []}
     try:
         res = ledger.call("google_trends", "search_trend", {"keywords": keywords, "geo": "KR"}, 0.0,

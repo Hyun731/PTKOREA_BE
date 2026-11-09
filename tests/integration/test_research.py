@@ -630,6 +630,23 @@ def test_search_trend_item_collects_monthly_index_and_related_queries(client, fa
     assert next(s for s in sp["plan"] if s["slot_id"] == "TR1")["readiness"] == "ready"
 
 
+def test_search_trend_item_tracks_every_product_category_not_just_one(client, fakes):
+    """피드백 #1 축 2(품목별 검색량 분해): 카테고리마다(캐리어·백팩 등) 각자 검색 지수를 남긴다."""
+    p = ok(client.post("/v1/projects", json={
+        "name": "품목별 검색량 테스트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"],
+                   "categories": ["캐리어", "백팩", "브랜드A"]}]}), 201)  # 브랜드명과 같은 카테고리는 빠져야 함
+    pid = p["id"]
+    plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
+    it = item(plan, "search_trend")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded"
+
+    facts = [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"] == "trends_index_monthly"]
+    assert {f["entity"] for f in facts} == {"브랜드A", "캐리어", "백팩"}  # 브랜드명과 같은 카테고리는 중복 제외
+
+
 def test_search_trend_item_fails_quietly_when_google_trends_blocks_it(client, fakes):
     """Phase 3-4: Trends가 막히면(흔함) 장표는 조용히 빠지고 원인은 '수집 필요'로 나온다."""
     clear_cache()  # avoid a cache hit from the earlier successful test (same keywords/geo request)
