@@ -116,8 +116,8 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
         _check_fact(sid, block_id, part.fact_id, part.formatter, part.display, registry, add)
     for b in slide.blocks:
         if isinstance(b, BarChartBlock):
-            for it in b.items:
-                _check_fact(sid, b.block_id, it.fact_id, "share", it.display, registry, add)
+            for it in b.bar_items():
+                _check_fact(sid, b.block_id, it.fact_id, it.formatter, it.display, registry, add)
         elif isinstance(b, LineChartBlock):
             for s in b.series:
                 for pt in s.points:

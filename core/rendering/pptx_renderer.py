@@ -165,32 +165,50 @@ def _chart_text(chart, size: float, rgb: str = "595959"):
     chart.font.color.rgb = RGBColor.from_string(rgb)
 
 
-def _bar_chart(slide, b: BarChartBlock):
+BAR_CHART_TYPES = {("h", False): XL_CHART_TYPE.BAR_CLUSTERED, ("h", True): XL_CHART_TYPE.BAR_STACKED,
+                   ("v", False): XL_CHART_TYPE.COLUMN_CLUSTERED, ("v", True): XL_CHART_TYPE.COLUMN_STACKED}
+STACK_LABEL_MIN = 0.08  # a stacked segment under 8% of the axis is too thin for its own label
+
+
+def _bar_frame(slide, b: BarChartBlock, data: CategoryChartData):
     reg = b.region
-    data = CategoryChartData()
-    data.categories = [it.label for it in b.items]
-    data.add_series("점유(%)", [it.value for it in b.items], number_format=b.number_format)
-    frame = slide.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, _emu(reg.x), _emu(reg.y), _emu(reg.w), _emu(reg.h), data)
+    kind = BAR_CHART_TYPES[(b.orientation, b.stacked)]
+    frame = slide.shapes.add_chart(kind, _emu(reg.x), _emu(reg.y), _emu(reg.w), _emu(reg.h), data)
     frame.name = b.block_id
     chart = frame.chart
     _chart_text(chart, tokens()["type"]["chart_label"]["size"], color("subtle"))
-    chart.has_legend = False
     chart.has_title = False
     plot = chart.plots[0]
     plot.gap_width = b.gap_width
     plot.vary_by_categories = False
     cat = chart.category_axis
-    cat.reverse_order = True  # first item on top
+    # Horizontal bars list the first category on top; columns read left to right as given.
+    cat.reverse_order = b.orientation == "h"
     cat.has_major_gridlines = False
-    cat.format.line.fill.background()
+    if b.orientation == "h":
+        cat.format.line.fill.background()
+    else:
+        cat.format.line.color.rgb = _rgb("table_border")
     cat.tick_labels.font.size = Pt(b.label_size)
     cat.tick_labels.font.color.rgb = _rgb("text")
     val = chart.value_axis
-    top = max((it.value for it in b.items), default=1.0)
-    val.maximum_scale = top * 1.12 if top > 0 else 1
     val.minimum_scale = 0
     val.has_major_gridlines = False
     val.visible = False
+    return chart, plot, val
+
+
+def _bar_chart(slide, b: BarChartBlock):
+    if b.multi:
+        _bar_chart_multi(slide, b)
+        return
+    data = CategoryChartData()
+    data.categories = [it.label for it in b.items]
+    data.add_series("점유(%)", [it.value for it in b.items], number_format=b.number_format)
+    chart, plot, val = _bar_frame(slide, b, data)
+    chart.has_legend = False
+    top = max((it.value for it in b.items), default=1.0)
+    val.maximum_scale = top * 1.12 if top > 0 else 1
     series = plot.series[0]
     # Series-level labels: a per-point override below would otherwise hide plot-level labels.
     labels = series.data_labels
@@ -214,6 +232,68 @@ def _bar_chart(slide, b: BarChartBlock):
             dl.font.bold = True
             dl.font.color.rgb = _rgb("text")
             _show_value(dl)
+
+
+def _bar_chart_multi(slide, b: BarChartBlock):
+    """Grouped or stacked bars, one color per series, legend on top. Values stay native chart
+    data (editable in PowerPoint); a missing value is a blank cell, never a zero bar."""
+    data = CategoryChartData()
+    data.categories = b.categories
+    for s in b.series:
+        data.add_series(s.name, [it.value if it is not None else None for it in s.items], number_format=b.number_format)
+    chart, plot, val = _bar_frame(slide, b, data)
+    chart.has_legend = len(b.series) > 1
+    if chart.has_legend:
+        chart.legend.position = XL_LEGEND_POSITION.TOP
+        chart.legend.include_in_layout = False
+        chart.legend.font.size = Pt(b.label_size)
+    if b.stacked:
+        plot.overlap = 100
+        sums = [sum(s.items[i].value for s in b.series if s.items[i] is not None) for i in range(len(b.categories))]
+        top = max(sums, default=1.0)
+        val.maximum_scale = top * 1.04 if top > 0 else 1
+    else:
+        plot.overlap = -10
+        top = max((it.value for it in b.bar_items()), default=1.0)
+        val.maximum_scale = top * 1.15 if top > 0 else 1
+    for s, series in zip(b.series, plot.series):
+        fill = s.color or ROLE_COLORS[s.role]
+        series.format.fill.solid()
+        series.format.fill.fore_color.rgb = _rgb(fill)
+        series.format.line.fill.background()
+        labels = series.data_labels
+        labels.show_value = True
+        labels.number_format = b.number_format
+        labels.number_format_is_linked = False
+        labels.font.size = Pt(b.label_size)
+        labels.font.bold = True
+        # Stacked: value centered in its segment (white on dark fills); grouped: just outside the bar.
+        if b.stacked:
+            labels.position = XL_LABEL_POSITION.CENTER
+            labels.font.color.rgb = _rgb("white" if _is_dark(fill) else "text")
+        else:
+            labels.position = XL_LABEL_POSITION.OUTSIDE_END
+            labels.font.color.rgb = _rgb("text")
+        if b.stacked and top > 0:
+            for i, it in enumerate(s.items):
+                if it is not None and it.value / top < STACK_LABEL_MIN:
+                    _hide_value(series.points[i].data_label)
+
+
+def _is_dark(role: str) -> bool:
+    rgb = color(role)
+    r, g, bl = (int(rgb[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.299 * r + 0.587 * g + 0.114 * bl < 140
+
+
+def _hide_value(data_label):
+    """A per-point label that shows nothing (the series label would otherwise draw it)."""
+    dLbl = data_label._get_or_add_dLbl()
+    for tag in ("c:showLegendKey", "c:showVal", "c:showCatName", "c:showSerName", "c:showPercent", "c:showBubbleSize"):
+        el = dLbl.find(qn(tag))
+        if el is None:
+            el = etree.SubElement(dLbl, qn(tag))
+        el.set("val", "0")
 
 
 def _show_value(data_label):

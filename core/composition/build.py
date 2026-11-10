@@ -726,8 +726,8 @@ def _bindings(slide: SlideSpec, metrics: MetricsResult, pf: PartFactory) -> list
                             if part.type == "fact" and part.fact_id:
                                 add(f"{b.block_id}[{r_i},{c_i}]", part.fact_id, part.formatter or "", part.display or "")
         elif isinstance(b, BarChartBlock):
-            for it in b.items:
-                add(b.block_id, it.fact_id, "share", it.display)
+            for it in b.bar_items():  # every series of a grouped/stacked chart, not just one
+                add(b.block_id, it.fact_id, it.formatter, it.display)
         elif isinstance(b, LineChartBlock):
             for s in b.series:
                 for pt in s.points:
