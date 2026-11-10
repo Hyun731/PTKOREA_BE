@@ -20,9 +20,12 @@ class ProviderError(Exception):
     """code: PROVIDER_AUTH | QUOTA_EXCEEDED | SOURCE_UNAVAILABLE | RATE_LIMITED | PROVIDER_ERROR |
     TIMEOUT | BUDGET_EXCEEDED | BLOCKED_URL | REFUSAL | INVALID_RESPONSE"""
 
-    def __init__(self, code: str, message: str, status: Optional[int] = None):
+    def __init__(self, code: str, message: str, status: Optional[int] = None, body: str = ""):
         super().__init__(message)
         self.code, self.message, self.status = code, message, status
+        # First part of the provider's error response, so a client can tell e.g. "key wrong" from
+        # "API not enabled for this key" (both arrive as 401). Never shown to users as is.
+        self.body = body
 
 
 @dataclass
@@ -65,6 +68,7 @@ def request_json(provider: str, method: str, url: str, *, headers: dict, params:
             except ValueError:
                 raise ProviderError("INVALID_RESPONSE", f"{provider} 응답을 해석할 수 없습니다")
         last = _classify(resp.status_code, provider)
+        last.body = resp.text[:500]
         if resp.status_code not in RETRY_STATUSES or attempt == max_retries:
             raise last
         retry_after = resp.headers.get("retry-after")
