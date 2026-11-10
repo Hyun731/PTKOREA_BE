@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 PartType = Literal["text", "fact", "meta", "date", "name", "link", "quote"]  # quote = verbatim source excerpt
 Weight = Literal["light", "regular", "semibold", "bold", "heavy"]  # font weight steps (style tokens)
@@ -84,17 +84,55 @@ class BarItem(BaseModel):
     display: str
     value: float  # chart data value (display precision)
     role: Literal["self", "key", "other"] = "other"
+    formatter: str = "share"  # how `display` was formatted (QC re-formats the fact with it)
+
+
+class BarSeries(BaseModel):
+    """One series of a multi-series bar chart. `items` line up with BarChartBlock.categories;
+    None = no value for that category (drawn as an empty slot, never as zero)."""
+    name: str
+    role: Literal["self", "key", "other", "other2"] = "other"
+    color: Optional[str] = None  # style token role or '#RRGGBB'; overrides the role color
+    items: list[Optional[BarItem]]
 
 
 class BarChartBlock(BaseModel):
+    """Bar chart. Single series: `items` (one bar per item, colored by its role). Several series:
+    `categories` + `series` (grouped, or stacked with `stacked`). `orientation` "h" draws bars
+    left→right (BAR_*), "v" draws columns bottom→up (COLUMN_*)."""
     kind: Literal["bar_chart"] = "bar_chart"
     block_id: str
     region: Region
-    items: list[BarItem]
+    items: list[BarItem] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    series: list[BarSeries] = Field(default_factory=list)
+    orientation: Literal["h", "v"] = "h"
+    stacked: bool = False
     number_format: str = '0.0"%"'
     unit: str = "percent"
     label_size: float = 10.0
     gap_width: int = 55
+
+    @model_validator(mode="after")
+    def _one_layout(self):
+        if self.items and self.series:
+            raise ValueError("bar_chart: items(단일 계열)와 series(여러 계열) 중 하나만 채운다")
+        for s in self.series:
+            if len(s.items) != len(self.categories):
+                raise ValueError(f"bar_chart: 계열 '{s.name}'의 값 {len(s.items)}개가 범주 {len(self.categories)}개와 다르다")
+        if self.stacked and not self.series:
+            raise ValueError("bar_chart: 누적(stacked)은 여러 계열(series)에서만 쓴다")
+        return self
+
+    @property
+    def multi(self) -> bool:
+        return bool(self.series)
+
+    def bar_items(self) -> list[BarItem]:
+        """Every drawn value, in draw order — what bindings and QC check."""
+        if not self.series:
+            return list(self.items)
+        return [it for s in self.series for it in s.items if it is not None]
 
 
 class LinePoint(BaseModel):
