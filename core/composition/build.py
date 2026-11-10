@@ -18,6 +18,7 @@ from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
 )
 from core.composition.tokens import region
+from core.metrics.derived import DerivedInputs, derive, measured_on
 from core.metrics.engine import MetricsResult, compute
 from core.rules.config import RulesConfig
 from core.rules.engine import run_rules
@@ -138,7 +139,12 @@ def _case_order(project, materials: list) -> list:
 def build_deck(inputs: BuildInputs) -> BuildResult:
     cfg = inputs.config or RulesConfig.load()
     project = inputs.project
-    metrics = compute(project, inputs.facts, inputs.posts, cfg)
+    # P1-2: 원문·댓글·리뷰에서 만든 파생 수치도 다른 Fact와 같은 레지스트리에 넣어 차트·헤드라인이 쓰게 한다.
+    derived_facts = derive(DerivedInputs(project=project, materials=inputs.materials, owned_posts=inputs.owned_posts,
+                                         reviews=inputs.reviews,
+                                         measured_at=measured_on(project, inputs.materials, inputs.reviews),
+                                         min_n=cfg.derived_min_n))
+    metrics = compute(project, [*inputs.facts, *derived_facts], inputs.posts, cfg)
     findings = run_rules(project, metrics, cfg)
     pf = PartFactory(metrics.registry)
     used_sources = {f.source for f in inputs.facts if f.usable}

@@ -111,6 +111,11 @@ def fmt_count_unit(value: Decimal) -> str:
     return fmt_int(quantize(Decimal(value), 0))
 
 
+def fmt_rating(value: Decimal) -> str:
+    """Review rating on a 5-point scale: 4.7점."""
+    return f"{_dp(value, 1)}점"
+
+
 def fmt_date_dot(d: date) -> str:
     return f"{d.year}.{d.month:02d}.{d.day:02d}"
 
@@ -149,6 +154,7 @@ FORMATTERS: dict[str, Callable] = {
     "count": fmt_count_unit,
     "times": fmt_times,
     "days": fmt_days,
+    "rating": fmt_rating,
 }
 
 
@@ -164,4 +170,4 @@ def format_value(formatter: str, value, partial: bool = False) -> Optional[str]:
 
 # Default formatter by derived unit, used when a manual fact is inserted into text.
 UNIT_FORMATTER = {"percent": "pct_given", "pp": "pp", "count": "int", "rank": "rank", "months": "months",
-                  "index": "index", "krw": "krw"}
+                  "index": "index", "krw": "krw", "rating": "rating"}
