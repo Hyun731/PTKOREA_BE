@@ -1485,7 +1485,7 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                     made = r.get("posts", 0)
                 elif item.section_id == "search":
                     if not settings.provider_configured("naver"):
-                        raise ProviderError("PROVIDER_AUTH", "네이버 데이터랩 키(NAVER_CLIENT_ID/SECRET)가 없습니다")
+                        raise ProviderError("PROVIDER_AUTH", "네이버 데이터랩 키(NAVER_API_HUB_CLIENT_ID/SECRET)가 없습니다")
                     r = run_search_item(s, ledger, project, item)
                     made = r.get("facts", 0)
                 elif item.section_id == "owned":

@@ -1,54 +1,89 @@
 """Naver DataLab: 검색어트렌드(Search Trend)와 쇼핑인사이트(Shopping Insight).
 
 Both return relative ratios normalized within one response (the response's largest value = 100) —
-never an absolute search or click count. Free quota API (하루 1,000회), no per-call cost.
-Keys are a Naver Developers application's Client ID/Secret; each DataLab API must be added to that
-application ("API 설정"), otherwise every call answers 401 errorCode 024 even with a correct key.
+never an absolute search or click count. No per-call cost.
 
-Docs: https://developers.naver.com/docs/serviceapi/datalab/search/search.md
-      https://developers.naver.com/docs/serviceapi/datalab/shopping/shopping.md
+두 가지 키 경로가 있다 — 둘 다 요청 본문·응답 모양은 같고 주소와 헤더만 다르다.
+- **NAVER API HUB** (네이버 클라우드, 2026-07-31 이후 새로 받는 키): NAVER_API_HUB_CLIENT_ID/SECRET,
+  헤더 X-NCP-APIGW-API-KEY-ID/-KEY, https://naverapihub.apigw.ntruss.com/{search-trend,shopping}/v1/…
+  앱(Application)에서 '검색어 트렌드'·'쇼핑인사이트'를 선택해야 한다(안 하면 401 errorCode 210).
+- **네이버 Developers** (예전 키): NAVER_CLIENT_ID/SECRET, 헤더 X-Naver-Client-Id/-Secret,
+  https://openapi.naver.com/v1/datalab/… 앱 'API 설정'에 데이터랩을 추가해야 한다(안 하면 024).
+API HUB 키가 있으면 그것을 먼저 쓴다. Developers 키는 블로그·카페 검색 API에도 쓰이므로 그대로 둔다.
+
+Docs: https://api.ncloud-docs.com/docs/naver-api-hub-search-trend
+      https://developers.naver.com/docs/serviceapi/datalab/search/search.md
 """
 from __future__ import annotations
 
 import os
 from datetime import date
-from typing import Literal, Optional
+from typing import Literal, NamedTuple, Optional
 
 import httpx
 
 from integrations.base import CallResult, ProviderError, request_json
 
-BASE = "https://openapi.naver.com/v1/datalab"
-ENDPOINT = f"{BASE}/search"  # kept for callers that log the endpoint
+HUB_BASE = "https://naverapihub.apigw.ntruss.com"
+DEV_BASE = "https://openapi.naver.com/v1/datalab"
+BASE = DEV_BASE  # kept for callers that log the endpoint
+ENDPOINT = f"{DEV_BASE}/search"
 MAX_GROUPS = 5
 MAX_KEYWORDS_PER_GROUP = 20
 MAX_CATEGORIES = 3  # shopping/categories: up to 3 category groups per request
 MAX_SHOP_KEYWORDS = 5  # shopping/category/keywords: up to 5 keyword groups per request
-SCOPE_MISSING = "024"  # Naver: "Scope Status Invalid" — the API is not added to the application
+SCOPE_MISSING = "Scope Status Invalid"  # Developers 024: the API is not added to the application
+NID_AUTH = "NID AUTH Result Invalid"  # Developers 024: this application cannot use DataLab this way
+HUB_NOT_SELECTED = '"210"'  # API HUB gateway: Permission Denied — the API is not selected on the application
 
 Breakdown = Literal["age", "gender", "device"]
 
 
-def _keys() -> tuple[str, str]:
-    client_id = os.environ.get("NAVER_CLIENT_ID")
-    client_secret = os.environ.get("NAVER_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        raise ProviderError("PROVIDER_AUTH", "NAVER_CLIENT_ID/NAVER_CLIENT_SECRET이 설정되지 않았습니다")
-    return client_id, client_secret
+class Route(NamedTuple):
+    via: Literal["api_hub", "developers"]
+    url: str
+    headers: dict
+
+
+def _route(path: str) -> Route:
+    """path: "/search" or "/shopping/<rest>" — mapped onto whichever key set is configured."""
+    hub_id, hub_secret = os.environ.get("NAVER_API_HUB_CLIENT_ID"), os.environ.get("NAVER_API_HUB_CLIENT_SECRET")
+    if hub_id and hub_secret:
+        hub_path = "/search-trend/v1/search" if path == "/search" else "/shopping/v1" + path.removeprefix("/shopping")
+        return Route("api_hub", HUB_BASE + hub_path, {"X-NCP-APIGW-API-KEY-ID": hub_id, "X-NCP-APIGW-API-KEY": hub_secret,
+                                                     "Content-Type": "application/json"})
+    dev_id, dev_secret = os.environ.get("NAVER_CLIENT_ID"), os.environ.get("NAVER_CLIENT_SECRET")
+    if dev_id and dev_secret:
+        return Route("developers", DEV_BASE + path, {"X-Naver-Client-Id": dev_id, "X-Naver-Client-Secret": dev_secret,
+                                                    "Content-Type": "application/json"})
+    raise ProviderError("PROVIDER_AUTH", "네이버 데이터랩 키가 없습니다 — NAVER_API_HUB_CLIENT_ID/SECRET"
+                                         "(또는 예전 NAVER_CLIENT_ID/SECRET)을 넣어야 합니다")
+
+
+def _keys() -> Route:
+    """Fail before any request when no key set is configured."""
+    return _route("/search")
 
 
 def _post(path: str, body: dict, what: str, transport: Optional[httpx.BaseTransport]) -> dict:
-    client_id, client_secret = _keys()
+    route = _route(path)
     try:
-        return request_json("Naver", "POST", f"{BASE}{path}",
-                            headers={"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret,
-                                     "Content-Type": "application/json"},
-                            json_body=body, transport=transport)
+        return request_json("Naver", "POST", route.url, headers=route.headers, json_body=body, transport=transport)
     except ProviderError as exc:
-        if exc.code == "PROVIDER_AUTH" and SCOPE_MISSING in exc.body:
-            raise ProviderError("PROVIDER_AUTH", f"네이버 Developers 앱에 '데이터랩({what})' API가 추가되어 있지 않습니다 "
-                                                 "— 앱 설정의 API 설정에서 추가해야 합니다", exc.status, exc.body)
-        raise
+        if exc.code != "PROVIDER_AUTH":
+            raise
+        if route.via == "api_hub" and HUB_NOT_SELECTED in exc.body:
+            msg = f"NAVER API HUB 앱에 '{what}' API가 선택되어 있지 않습니다 — 네이버 클라우드 콘솔의 Application에서 선택해야 합니다"
+        elif route.via == "api_hub":
+            msg = "NAVER API HUB 키 인증에 실패했습니다 — Client ID/Secret을 확인하세요"
+        elif SCOPE_MISSING in exc.body:
+            msg = f"네이버 Developers 앱에 '데이터랩({what})' API가 추가되어 있지 않습니다 — 앱 설정의 API 설정에서 추가해야 합니다"
+        elif NID_AUTH in exc.body:
+            msg = ("네이버 Developers 키로는 데이터랩을 부를 수 없습니다 — NAVER API HUB(네이버 클라우드) 키를 "
+                   "NAVER_API_HUB_CLIENT_ID/SECRET에 넣어야 합니다")
+        else:
+            raise
+        raise ProviderError("PROVIDER_AUTH", msg, exc.status, exc.body)
 
 
 def _range(start: date, end: date, time_unit: str) -> dict:
@@ -139,11 +174,16 @@ def shopping_category_breakdown(category_id: str, by: Breakdown, start: date, en
 
 
 def datalab_access(*, transport: Optional[httpx.BaseTransport] = None) -> dict:
-    """Which DataLab APIs this application may call: {"search": bool, "shopping": bool, "reason": str}.
+    """Which DataLab APIs these keys may call: {"search": bool, "shopping": bool, "reason": str, "via": route}.
     Two tiny real requests (free quota); a wrong/missing key and a missing API both read False."""
     today = date.today()
     start = date(today.year - 1, today.month, 1)
-    out = {"search": False, "shopping": False, "reason": ""}
+    out = {"search": False, "shopping": False, "reason": "", "via": None}
+    try:
+        out["via"] = _keys().via
+    except ProviderError as exc:
+        out["reason"] = exc.message
+        return out
     for key, call in (("search", lambda: search_trend([("확인", ["여행"])], start, today, transport=transport)),
                       ("shopping", lambda: shopping_category_trend([("확인", ["50000000"])], start, today,
                                                                    transport=transport))):
