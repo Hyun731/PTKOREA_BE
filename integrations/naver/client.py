@@ -1,8 +1,12 @@
-"""Naver DataLab 검색어트렌드 (Search Trend) API.
+"""Naver DataLab: 검색어트렌드(Search Trend)와 쇼핑인사이트(Shopping Insight).
 
-Returns relative search-volume ratios per keyword group, normalized within one response
-(the response's largest value = 100) — never an absolute search count. Free quota API,
-no per-call cost. Docs: https://developers.naver.com/docs/serviceapi/datalab/search/search.md
+Both return relative ratios normalized within one response (the response's largest value = 100) —
+never an absolute search or click count. Free quota API (하루 1,000회), no per-call cost.
+Keys are a Naver Developers application's Client ID/Secret; each DataLab API must be added to that
+application ("API 설정"), otherwise every call answers 401 errorCode 024 even with a correct key.
+
+Docs: https://developers.naver.com/docs/serviceapi/datalab/search/search.md
+      https://developers.naver.com/docs/serviceapi/datalab/shopping/shopping.md
 """
 from __future__ import annotations
 
@@ -14,42 +18,91 @@ import httpx
 
 from integrations.base import CallResult, ProviderError, request_json
 
-ENDPOINT = "https://openapi.naver.com/v1/datalab/search"
+BASE = "https://openapi.naver.com/v1/datalab"
+ENDPOINT = f"{BASE}/search"  # kept for callers that log the endpoint
 MAX_GROUPS = 5
 MAX_KEYWORDS_PER_GROUP = 20
+SCOPE_MISSING = "024"  # Naver: "Scope Status Invalid" — the API is not added to the application
 
-
-def search_trend(groups: list[tuple[str, list[str]]], start: date, end: date, *, time_unit: str = "month",
-                 device: Optional[str] = None, ages: Optional[list[str]] = None, gender: Optional[str] = None,
-                 transport: Optional[httpx.BaseTransport] = None) -> CallResult:
-    """groups: up to 5 (name, keywords) pairs; each group's keywords are summed into one series
-    before the ratio is computed, so synonyms/aliases belong in the same group."""
+def _keys() -> tuple[str, str]:
     client_id = os.environ.get("NAVER_CLIENT_ID")
     client_secret = os.environ.get("NAVER_CLIENT_SECRET")
     if not client_id or not client_secret:
         raise ProviderError("PROVIDER_AUTH", "NAVER_CLIENT_ID/NAVER_CLIENT_SECRET이 설정되지 않았습니다")
-    if not 1 <= len(groups) <= MAX_GROUPS:
-        raise ValueError(f"groups must have 1-{MAX_GROUPS} items")
+    return client_id, client_secret
+
+
+def _post(path: str, body: dict, what: str, transport: Optional[httpx.BaseTransport]) -> dict:
+    client_id, client_secret = _keys()
+    try:
+        return request_json("Naver", "POST", f"{BASE}{path}",
+                            headers={"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret,
+                                     "Content-Type": "application/json"},
+                            json_body=body, transport=transport)
+    except ProviderError as exc:
+        if exc.code == "PROVIDER_AUTH" and SCOPE_MISSING in exc.body:
+            raise ProviderError("PROVIDER_AUTH", f"네이버 Developers 앱에 '데이터랩({what})' API가 추가되어 있지 않습니다 "
+                                                 "— 앱 설정의 API 설정에서 추가해야 합니다", exc.status, exc.body)
+        raise
+
+
+def _range(start: date, end: date, time_unit: str) -> dict:
     if start > end:
         raise ValueError("start가 end보다 늦습니다")
-    body: dict = {
-        "startDate": start.isoformat(), "endDate": end.isoformat(), "timeUnit": time_unit,
-        "keywordGroups": [{"groupName": name, "keywords": list(dict.fromkeys(kws))[:MAX_KEYWORDS_PER_GROUP]}
-                          for name, kws in groups],
-    }
+    if time_unit not in ("date", "week", "month"):
+        raise ValueError("time_unit은 date·week·month 중 하나")
+    return {"startDate": start.isoformat(), "endDate": end.isoformat(), "timeUnit": time_unit}
+
+
+def _filters(body: dict, device: Optional[str], ages: Optional[list[str]], gender: Optional[str]) -> dict:
     if device:
         body["device"] = device
     if ages:
         body["ages"] = ages
     if gender:
         body["gender"] = gender
-    data = request_json("Naver", "POST", ENDPOINT,
-                        headers={"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret,
-                                 "Content-Type": "application/json"},
-                        json_body=body, transport=transport)
-    results = []
-    for r in data.get("results") or []:
-        points = [{"period": pt["period"], "ratio": float(pt["ratio"])} for pt in r.get("data") or []]
-        results.append({"group": r.get("title"), "points": points})
-    return CallResult(data={"results": results}, usage={"requests": 1, "groups": len(groups)},
-                      cost_usd=0.0, cost_is_estimate=False)
+    return body
+
+
+def _series(results: list[dict]) -> list[dict]:
+    out = []
+    for r in results or []:
+        points = [{"period": pt["period"], "ratio": float(pt["ratio"]), **({"group": pt["group"]} if "group" in pt else {})}
+                  for pt in r.get("data") or []]
+        out.append({"group": r.get("title"), "points": points})
+    return out
+
+
+def _result(results: list[dict], **usage) -> CallResult:
+    return CallResult(data={"results": _series(results)}, usage={"requests": 1, **usage}, cost_usd=0.0,
+                      cost_is_estimate=False)
+
+
+def search_trend(groups: list[tuple[str, list[str]]], start: date, end: date, *, time_unit: str = "month",
+                 device: Optional[str] = None, ages: Optional[list[str]] = None, gender: Optional[str] = None,
+                 transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """검색어트렌드. groups: up to 5 (name, keywords) pairs; each group's keywords are summed into one
+    series before the ratio is computed, so synonyms/aliases belong in the same group."""
+    _keys()
+    if not 1 <= len(groups) <= MAX_GROUPS:
+        raise ValueError(f"groups must have 1-{MAX_GROUPS} items")
+    body = _filters({**_range(start, end, time_unit),
+                     "keywordGroups": [{"groupName": name, "keywords": list(dict.fromkeys(kws))[:MAX_KEYWORDS_PER_GROUP]}
+                                       for name, kws in groups]}, device, ages, gender)
+    data = _post("/search", body, "검색어트렌드", transport)
+    return _result(data.get("results"), groups=len(groups))
+
+
+def datalab_access(*, transport: Optional[httpx.BaseTransport] = None) -> dict:
+    """Which DataLab APIs this application may call: {"search": bool, "shopping": bool, "reason": str}.
+    Tiny real requests (free quota); a wrong/missing key and a missing API both read False."""
+    today = date.today()
+    start = date(today.year - 1, today.month, 1)
+    out = {"search": False, "shopping": False, "reason": ""}
+    for key, call in (("search", lambda: search_trend([("확인", ["여행"])], start, today, transport=transport)),):
+        try:
+            call()
+            out[key] = True
+        except ProviderError as exc:
+            out["reason"] = out["reason"] or exc.message
+    return out
