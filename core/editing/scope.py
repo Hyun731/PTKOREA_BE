@@ -116,7 +116,12 @@ def element_info(b) -> dict:
                      "first_rows": [" | ".join("".join(p.rendered() for para in c.paragraphs for p in para.parts) for c in row.cells)
                                     for row in b.rows[:4]]})
     elif isinstance(b, BarChartBlock):
-        base.update({"bars": [f"{it.label} {it.display}" for it in b.items]})
+        if b.multi:
+            base.update({"bars": [f"{s.name} · {cat} {it.display}" for s in b.series
+                                  for cat, it in zip(b.categories, s.items) if it is not None],
+                         "layout": ("누적 " if b.stacked else "묶음 ") + ("세로 막대" if b.orientation == "v" else "가로 막대")})
+        else:
+            base.update({"bars": [f"{it.label} {it.display}" for it in b.items]})
     elif isinstance(b, LineChartBlock):
         base.update({"series": [s.entity for s in b.series], "categories": b.categories})
     elif isinstance(b, ImageBlock):
