@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 
@@ -22,7 +22,12 @@ BASE = "https://openapi.naver.com/v1/datalab"
 ENDPOINT = f"{BASE}/search"  # kept for callers that log the endpoint
 MAX_GROUPS = 5
 MAX_KEYWORDS_PER_GROUP = 20
+MAX_CATEGORIES = 3  # shopping/categories: up to 3 category groups per request
+MAX_SHOP_KEYWORDS = 5  # shopping/category/keywords: up to 5 keyword groups per request
 SCOPE_MISSING = "024"  # Naver: "Scope Status Invalid" — the API is not added to the application
+
+Breakdown = Literal["age", "gender", "device"]
+
 
 def _keys() -> tuple[str, str]:
     client_id = os.environ.get("NAVER_CLIENT_ID")
@@ -93,13 +98,55 @@ def search_trend(groups: list[tuple[str, list[str]]], start: date, end: date, *,
     return _result(data.get("results"), groups=len(groups))
 
 
+def shopping_category_trend(categories: list[tuple[str, list[str]]], start: date, end: date, *,
+                            time_unit: str = "month", device: Optional[str] = None,
+                            ages: Optional[list[str]] = None, gender: Optional[str] = None,
+                            transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """쇼핑인사이트 분야별 클릭 추이. categories: up to 3 (name, [category_id, ...]) pairs — ids are
+    네이버쇼핑 분야 코드(예: 패션잡화 50000005). Ratio = click share, relative within the response."""
+    _keys()
+    if not 1 <= len(categories) <= MAX_CATEGORIES:
+        raise ValueError(f"categories must have 1-{MAX_CATEGORIES} items")
+    body = _filters({**_range(start, end, time_unit),
+                     "category": [{"name": name, "param": list(ids)} for name, ids in categories]}, device, ages, gender)
+    data = _post("/shopping/categories", body, "쇼핑인사이트", transport)
+    return _result(data.get("results"), categories=len(categories))
+
+
+def shopping_keyword_trend(category_id: str, keywords: list[tuple[str, list[str]]], start: date, end: date, *,
+                           time_unit: str = "month", device: Optional[str] = None,
+                           ages: Optional[list[str]] = None, gender: Optional[str] = None,
+                           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """쇼핑인사이트 분야 내 키워드별 클릭 추이(예: 여행용가방 분야의 '캐리어'·'백팩'). Up to 5 groups."""
+    _keys()
+    if not 1 <= len(keywords) <= MAX_SHOP_KEYWORDS:
+        raise ValueError(f"keywords must have 1-{MAX_SHOP_KEYWORDS} items")
+    body = _filters({**_range(start, end, time_unit), "category": category_id,
+                     "keyword": [{"name": name, "param": list(kws)} for name, kws in keywords]}, device, ages, gender)
+    data = _post("/shopping/category/keywords", body, "쇼핑인사이트", transport)
+    return _result(data.get("results"), keywords=len(keywords))
+
+
+def shopping_category_breakdown(category_id: str, by: Breakdown, start: date, end: date, *, time_unit: str = "month",
+                                transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """쇼핑인사이트 분야의 연령·성별·기기별 클릭 비중. Each point carries `group` (예: "20", "f", "mo")."""
+    _keys()
+    if by not in ("age", "gender", "device"):
+        raise ValueError("by는 age·gender·device 중 하나")
+    body = {**_range(start, end, time_unit), "category": category_id}
+    data = _post(f"/shopping/category/{by}", body, "쇼핑인사이트", transport)
+    return _result(data.get("results"), breakdown=by)
+
+
 def datalab_access(*, transport: Optional[httpx.BaseTransport] = None) -> dict:
     """Which DataLab APIs this application may call: {"search": bool, "shopping": bool, "reason": str}.
-    Tiny real requests (free quota); a wrong/missing key and a missing API both read False."""
+    Two tiny real requests (free quota); a wrong/missing key and a missing API both read False."""
     today = date.today()
     start = date(today.year - 1, today.month, 1)
     out = {"search": False, "shopping": False, "reason": ""}
-    for key, call in (("search", lambda: search_trend([("확인", ["여행"])], start, today, transport=transport)),):
+    for key, call in (("search", lambda: search_trend([("확인", ["여행"])], start, today, transport=transport)),
+                      ("shopping", lambda: shopping_category_trend([("확인", ["50000000"])], start, today,
+                                                                   transport=transport))):
         try:
             call()
             out[key] = True
