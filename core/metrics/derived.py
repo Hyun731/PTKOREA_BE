@@ -48,8 +48,16 @@ class DerivedInputs:
     materials: list[CaseMaterial]
     owned_posts: list[OwnedPostRef]
     reviews: list[ReviewSnapshotRef]
-    measured_at: date
+    measured_at: date  # latest collection date among the inputs (see measured_on) — not the build day
     min_n: int = DEFAULT_MIN_N
+
+
+def measured_on(project: Project, materials: list[CaseMaterial], reviews: list[ReviewSnapshotRef]) -> date:
+    """When the derived numbers were observed: the latest fetch/measure date of the inputs, else the period end.
+    Using the build day instead would change every derived fact id daily and orphan saved lead edits."""
+    days = [m.source.fetched_at.date() for m in materials if m.source.fetched_at]
+    days += [r.measured_at for r in reviews]
+    return max(days, default=project.period.end)
 
 
 def site_of(m: CaseMaterial) -> str:
