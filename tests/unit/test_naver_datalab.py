@@ -12,10 +12,25 @@ START, END = date(2025, 10, 1), date(2026, 9, 30)
 SCOPE_ERR = {"errorMessage": "Scope Status Invalid : Authentication failed. (인증에 실패했습니다.)", "errorCode": "024"}
 
 
+HUB_NOT_SELECTED = {"error": {"errorCode": "210", "message": "Permission Denied",
+                               "details": "A subscription to the API is required."}}
+NID_AUTH_ERR = {"errorMessage": "NID AUTH Result Invalid (1000) : Authentication failed. (인증에 실패했습니다.)",
+                "errorCode": "024"}
+
+
 @pytest.fixture(autouse=True)
 def keys(monkeypatch):
+    """기본: 예전 Developers 키만 있는 상태. API HUB 테스트는 hub 픽스처로 키를 더한다."""
     monkeypatch.setenv("NAVER_CLIENT_ID", "id")
     monkeypatch.setenv("NAVER_CLIENT_SECRET", "secret")
+    monkeypatch.delenv("NAVER_API_HUB_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NAVER_API_HUB_CLIENT_SECRET", raising=False)
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    monkeypatch.setenv("NAVER_API_HUB_CLIENT_ID", "hub-id")
+    monkeypatch.setenv("NAVER_API_HUB_CLIENT_SECRET", "hub-secret")
 
 
 def _transport(routes: dict, seen: list):
@@ -63,7 +78,7 @@ def test_other_auth_errors_keep_the_generic_message():
 
 def test_missing_keys_fail_before_any_request(monkeypatch):
     monkeypatch.delenv("NAVER_CLIENT_ID")
-    with pytest.raises(ProviderError, match="NAVER_CLIENT_ID"):
+    with pytest.raises(ProviderError, match="NAVER_API_HUB_CLIENT_ID"):
         naver.shopping_category_trend([("a", ["1"])], START, END, transport=_transport({}, []))
 
 
@@ -114,3 +129,60 @@ def test_datalab_access_reports_each_api():
     out = naver.datalab_access(transport=t)
     assert out["search"] is True and out["shopping"] is False
     assert "쇼핑인사이트" in out["reason"]
+
+
+def test_api_hub_keys_take_priority_with_their_own_host_paths_and_headers(hub):
+    seen = []
+    t = _transport({"/search-trend/v1/search": _ok("a", []), "/shopping/v1/categories": _ok("b", []),
+                    "/shopping/v1/category/keywords": _ok("c", []), "/shopping/v1/category/gender": _ok("d", [])}, seen)
+    naver.search_trend([("a", ["a"])], START, END, transport=t)
+    naver.shopping_category_trend([("b", ["1"])], START, END, transport=t)
+    naver.shopping_keyword_trend("1", [("c", ["c"])], START, END, transport=t)
+    naver.shopping_category_breakdown("1", "gender", START, END, transport=t)
+    assert [p for p, _, _ in seen] == ["/search-trend/v1/search", "/shopping/v1/categories",
+                                       "/shopping/v1/category/keywords", "/shopping/v1/category/gender"]
+    headers = seen[0][2]
+    assert headers["x-ncp-apigw-api-key-id"] == "hub-id" and headers["x-ncp-apigw-api-key"] == "hub-secret"
+    assert "x-naver-client-id" not in headers
+    assert seen[0][1]["keywordGroups"] == [{"groupName": "a", "keywords": ["a"]}]  # 본문 모양은 같다
+
+
+def test_api_hub_api_not_selected(hub):
+    t = _transport({"/shopping/v1/categories": (401, HUB_NOT_SELECTED)}, [])
+    with pytest.raises(ProviderError) as exc:
+        naver.shopping_category_trend([("a", ["1"])], START, END, transport=t)
+    assert "NAVER API HUB" in exc.value.message and "'쇼핑인사이트'" in exc.value.message
+
+
+def test_api_hub_wrong_key(hub):
+    t = _transport({"/search-trend/v1/search": (401, {"error": {"errorCode": "200", "message": "Authentication Failed"}})}, [])
+    with pytest.raises(ProviderError, match="Client ID/Secret"):
+        naver.search_trend([("a", ["a"])], START, END, transport=t)
+
+
+def test_developers_key_that_cannot_reach_datalab_points_to_api_hub():
+    t = _transport({"/datalab/search": (401, NID_AUTH_ERR)}, [])
+    with pytest.raises(ProviderError) as exc:
+        naver.search_trend([("a", ["a"])], START, END, transport=t)
+    assert "NAVER_API_HUB_CLIENT_ID" in exc.value.message
+
+
+def test_datalab_access_reports_route(hub):
+    t = _transport({"/search-trend/v1/search": _ok("확인", []), "/shopping/v1/categories": _ok("확인", [])}, [])
+    assert naver.datalab_access(transport=t) == {"search": True, "shopping": True, "reason": "", "via": "api_hub"}
+
+
+def test_datalab_access_without_any_key(monkeypatch):
+    monkeypatch.delenv("NAVER_CLIENT_ID")
+    out = naver.datalab_access(transport=_transport({}, []))
+    assert out["via"] is None and not out["search"] and "키가 없습니다" in out["reason"]
+
+
+def test_config_accepts_either_key_pair(monkeypatch):
+    from app.config import settings
+    assert settings.provider_configured("naver")  # Developers 키
+    monkeypatch.delenv("NAVER_CLIENT_ID")
+    assert not settings.provider_configured("naver")
+    monkeypatch.setenv("NAVER_API_HUB_CLIENT_ID", "x")
+    monkeypatch.setenv("NAVER_API_HUB_CLIENT_SECRET", "y")
+    assert settings.provider_configured("naver")
