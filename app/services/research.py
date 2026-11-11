@@ -68,8 +68,10 @@ def _providers():
         from integrations.perplexity.client import search
         from integrations.apify.client import hashtag_posts
         from integrations.scrapecreators.client import (
-            instagram_post, instagram_post_comments, instagram_profile, instagram_user_posts, threads_search,
-            twitter_search_posts, youtube_channel, youtube_channel_videos, youtube_video,
+            facebook_profile, facebook_profile_posts, instagram_post, instagram_post_comments, instagram_profile,
+            instagram_user_posts, threads_profile, threads_search, threads_user_posts, tiktok_profile, tiktok_profile_videos,
+            twitter_profile, twitter_search_posts, twitter_user_tweets, youtube_channel, youtube_channel_shorts,
+            youtube_channel_videos, youtube_video,
         )
         from integrations.naver.client import search_trend, shopping_keyword_breakdown, shopping_keyword_trend
         from integrations.naver.search import search as naver_search
@@ -81,7 +83,12 @@ def _providers():
                          google_trends_search=google_trends_search, instagram_post_comments=instagram_post_comments,
                          twitter_search_posts=twitter_search_posts, threads_search=threads_search,
                          shopping_keyword_trend=shopping_keyword_trend,
-                         shopping_keyword_breakdown=shopping_keyword_breakdown, naver_search=naver_search)
+                         shopping_keyword_breakdown=shopping_keyword_breakdown, naver_search=naver_search,
+                         tiktok_profile=tiktok_profile, tiktok_profile_videos=tiktok_profile_videos,
+                         facebook_profile=facebook_profile, facebook_profile_posts=facebook_profile_posts,
+                         twitter_profile=twitter_profile, twitter_user_tweets=twitter_user_tweets,
+                         threads_profile=threads_profile, threads_user_posts=threads_user_posts,
+                         youtube_channel_shorts=youtube_channel_shorts)
     return PROVIDERS
 
 
@@ -1166,200 +1173,378 @@ def classify_comment_sentiment(comments: list[dict], ledger: RunLedger) -> Optio
     return {**counts, "sample_size": sample} if sample else None
 
 
-def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
-    """2-1: 공식 계정 전체 게시물에서 팔로워·기간 내 게시 빈도·반응을 집계. 자사는 Brand.official_profiles,
-    경쟁사는 Brand.competitor_profiles에 등록된(확인된) handle만 쓴다 — 어떤 계정이 '그 주체'인지
-    추측하지 않는다. 콘텐츠 타겟·톤앤매너·자체/공동 게시 비중처럼 판단이 필요한 열은 여기서 만들지
-    않는다(core/composition/owned.py 참고). 경쟁사 결과는 item.entity로 구분해 자사 brand_id 아래
-    기록한다 — 2-1·2-2·2-4·2-5는 자사만 보여주고, OW-CMP(P3-1)가 자사와 그 경쟁사를 나란히 비교한다."""
-    from statistics import median
+def _month_list(start: date, end: date) -> list[str]:
+    out_, y, m = [], start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        out_.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out_
 
-    from core.ingestion.owned import monthly_post_count_fact, owned_fact
 
-    def month_list(start: date, end: date) -> list[str]:
-        out_, y, m = [], start.year, start.month
-        while (y, m) <= (end.year, end.month):
-            out_.append(f"{y:04d}-{m:02d}")
-            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-        return out_
+def _handle_of(url: str) -> str:
+    return url.rstrip("/").split("?")[0].rstrip("/").split("/")[-1].lstrip("@")
 
-    p = _providers()
-    core = core_project(project)
-    brand = core.brand(item.brand_id)
-    entity = item.entity
-    out: dict = {"created": 0, "facts": 0, "channels": [], "errors": []}
-    profiles = {prof.channel: prof for prof in brand.profiles_for(entity) if prof.status == "confirmed"}
-    if not profiles:
-        out["errors"].append({"code": "NEEDS_INPUT", "message": f"{entity}의 공식 계정 URL이 확인(채택)되지 않았습니다"})
-        return out
 
-    today = date.today()
-    start_s, end_s = item.period_start.isoformat(), item.period_end.isoformat()
-    period_months = month_list(item.period_start, item.period_end)
-    months = max(1, len(period_months))
-    existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+class _Owned:
+    """One owned item's run state: who, which period, Fact de-duplication, and the result summary."""
 
-    def add(fact) -> bool:
-        if fact.id in existing:
+    def __init__(self, db: Session, ledger: RunLedger, project: Project, item: ResearchItem):
+        self.db, self.ledger, self.project, self.item = db, ledger, project, item
+        self.p = _providers()
+        self.brand = core_project(project).brand(item.brand_id)
+        self.entity = item.entity
+        self.today = date.today()
+        self.start_s, self.end_s = item.period_start.isoformat(), item.period_end.isoformat()
+        self.period_months = _month_list(item.period_start, item.period_end)
+        self.months = max(1, len(self.period_months))
+        self.existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+        self.out: dict = {"created": 0, "facts": 0, "channels": [], "errors": [], "credits": 0}
+
+    def call(self, endpoint: str, req: dict, fn):
+        # RunLedger는 별도 세션으로 기록한다 — 이 세션의 쓰기(Fact)를 먼저 커밋해 SQLite 잠금을 피한다
+        self.db.commit()
+        res = self.ledger.call("scrapecreators", endpoint, req, 0.002, fn, cache_days=1)
+        self.out["credits"] += int((res.usage or {}).get("credits") or 0) if not res.cached else 0
+        return res
+
+    def error(self, exc: ProviderError, what: str) -> None:
+        if exc.code == "BUDGET_EXCEEDED":
+            raise exc
+        code = "ACCESS_UNAVAILABLE" if exc.code == "SOURCE_UNAVAILABLE" else exc.code
+        msg = f"{what}: 접근 불가 — {exc.message}" if code == "ACCESS_UNAVAILABLE" else f"{what}: {exc.message}"
+        self.out["errors"].append({"code": code, "message": msg})
+
+    def add(self, fact) -> bool:
+        if fact.id in self.existing:
             return False
-        db.add(FactRow(project_id=project.id, fact_id=fact.id, origin="auto", research_item_id=item.id,
-                       data=json.loads(fact.model_dump_json()), verification_status="candidate",
-                       review_note="ScrapeCreators 공식 계정 전체 게시물 자동 수집"))
-        existing.add(fact.id)
+        self.db.add(FactRow(project_id=self.project.id, fact_id=fact.id, origin="auto", research_item_id=self.item.id,
+                            data=json.loads(fact.model_dump_json()), verification_status="candidate",
+                            review_note="공식 계정 전체 게시물 자동 수집"))
+        self.existing.add(fact.id)
+        self.out["facts"] += 1
         return True
 
-    def handle_of(url: str) -> str:
-        return url.rstrip("/").split("/")[-1].lstrip("@")
+    def fact(self, metric: str, value, channel: str, label: str, extra: Optional[dict] = None) -> None:
+        from core.ingestion.owned import owned_fact
+        self.add(owned_fact(brand_id=self.item.brand_id, entity=self.entity, metric=metric, value=Decimal(str(value)),
+                            channel=channel, period_start=self.item.period_start, period_end=self.item.period_end,
+                            measured_at=self.today, label=label, extra_dims=extra or None))
 
-    ig = profiles.get("instagram")
-    if ig:
-        handle = handle_of(ig.url)
-        followers = None
-        try:
-            res = ledger.call("scrapecreators", "instagram_profile", {"handle": handle}, 0.002,
-                              lambda: p["instagram_profile"](handle), cache_days=1)
-            followers = res.data.get("followers")
-        except ProviderError as exc:
-            out["errors"].append({"code": exc.code, "message": f"IG 프로필: {exc.message}"})
-        posts, cursor, pages = [], None, 0
-        while pages < MAX_OWNED_PAGES:
-            try:
-                res = ledger.call("scrapecreators", "instagram_user_posts", {"handle": handle, "cursor": cursor}, 0.002,
-                                  lambda c=cursor: p["instagram_user_posts"](handle, next_max_id=c), cache_days=1)
-            except ProviderError as exc:
-                out["errors"].append({"code": exc.code, "message": f"IG 게시물: {exc.message}"})
-                break
-            pages += 1
-            batch = res.data["posts"]
-            posts += [po for po in batch if po["posted_at"] and start_s <= po["posted_at"] <= end_s]
-            oldest = min((po["posted_at"] for po in batch if po["posted_at"]), default=None)
-            cursor = res.data.get("next_max_id")
-            if not batch or not res.data.get("more_available") or not oldest or oldest < start_s or not cursor:
-                break
-        else:
-            out["errors"].append({"code": "PARTIAL", "message": f"IG 게시물: {MAX_OWNED_PAGES}페이지 상한으로 {start_s}까지 닿지 못함"})
-        if followers is not None and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_followers",
-                                                     value=Decimal(followers), channel="instagram",
-                                                     period_start=item.period_start, period_end=item.period_end,
-                                                     measured_at=today, label="Instagram 팔로워")):
-            out["facts"] += 1
-        if add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_posts_monthly",
-                          value=Decimal(str(round(len(posts) / months, 2))), channel="instagram",
-                          period_start=item.period_start, period_end=item.period_end, measured_at=today,
-                          label="Instagram 월평균 게시물")):
-            out["facts"] += 1
-        likes = [po["likes"] for po in posts if po["likes"] is not None]
-        if likes and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_likes_median",
-                                    value=Decimal(str(median(likes))), channel="instagram",
-                                    period_start=item.period_start, period_end=item.period_end, measured_at=today,
-                                    label="Instagram 중앙값 좋아요")):
-            out["facts"] += 1
-        # 2-4 브랜드별 상위 게시물: 기간 내 좋아요 상위 3개만 이미지까지 받는다(전수 다운로드 안 함).
-        existing_posts = set(db.scalars(select(OwnedPost.post_id).where(
-            OwnedPost.project_id == project.id, OwnedPost.channel == "instagram", OwnedPost.brand_id == item.brand_id,
-            OwnedPost.entity == entity)))
-        top3 = sorted((po for po in posts if po["likes"] is not None and po.get("image_url")
-                      and po["post_id"] not in existing_posts), key=lambda po: po["likes"], reverse=True)[:3]
-        for po in top3:
-            try:
-                img_data = p["fetch_image"](po["image_url"])
-            except ProviderError as exc:
-                out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
-                continue
-            asset = _save_owned_asset(db, project.id, img_data, f"{entity} Instagram 게시물")
-            # 커밋해 쓰기 잠금을 풀어준다 — 바로 이어지는 댓글 수집(ledger.call, 별도 커넥션)이
-            # 아직 커밋 안 된 Asset(또는 그 전의 owned_* Fact)과 "database is locked"로 부딪힌다.
-            db.commit()
-            sentiment = None
-            if po.get("url"):
-                try:
-                    comments_res = ledger.call("scrapecreators", "instagram_post_comments", {"url": po["url"]}, 0.002,
-                                               lambda: p["instagram_post_comments"](po["url"]), cache_days=1)
-                    sentiment = classify_comment_sentiment(comments_res.data["comments"], ledger)
-                except ProviderError:
-                    pass  # 댓글을 못 가져와도(비공개 등) 게시물 자체는 그대로 저장
-            db.add(OwnedPost(id=new_id("OP"), project_id=project.id, brand_id=item.brand_id, entity=entity,
-                             channel="instagram", post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
-                             likes=po["likes"], comments=po["comments"], views=po.get("views"),
-                             comment_sentiment=sentiment, asset_id=asset.id if asset else None,
-                             research_item_id=item.id))
-            db.commit()  # 다음 게시물 차례의 댓글 수집(별도 커넥션)과 부딪히지 않도록 바로 커밋
-            out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
-        ig_by_month = {mo: 0 for mo in period_months}
+    def in_period(self, posts: list[dict], key: str = "posted_at") -> list[dict]:
+        return [po for po in posts if po.get(key) and self.start_s <= po[key] <= self.end_s]
+
+    def monthly(self, channel: str, posts: list[dict], key: str = "posted_at", extra: Optional[dict] = None) -> None:
+        from core.ingestion.owned import monthly_post_count_fact
+        by_month = {mo: 0 for mo in self.period_months}
         for po in posts:
-            if po["posted_at"]:
-                ig_by_month[po["posted_at"][:7]] = ig_by_month.get(po["posted_at"][:7], 0) + 1
-        for mo, count in ig_by_month.items():
-            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=entity, channel="instagram", month=mo,
-                                           count=count, measured_at=today)):
-                out["facts"] += 1
-        out["channels"].append({"channel": "instagram", "handle": handle, "posts_in_period": len(posts)})
-        db.commit()  # flush before the YouTube section's own ledger.call()s — RunLedger writes through
-        # a separate session, and SQLite only tolerates one writer: an open transaction here deadlocks it.
+            if po.get(key):
+                by_month[po[key][:7]] = by_month.get(po[key][:7], 0) + 1
+        for mo, count in by_month.items():
+            self.add(monthly_post_count_fact(brand_id=self.item.brand_id, entity=self.entity, channel=channel, month=mo,
+                                             count=count, measured_at=self.today, extra_dims=extra or None))
 
-    yt = profiles.get("youtube")
-    if yt:
-        # /youtube/channel accepts a raw url; /youtube/channel-videos only takes channelId or
-        # handle, so a /channel/UC… link and an /@handle link need to be told apart here.
-        yt_path = yt.url.rstrip("/").split("youtube.com/")[-1]
-        yt_ref = {"channel_id": yt_path.split("/")[1]} if yt_path.startswith("channel/") \
-            else {"handle": yt_path.split("/")[-1].lstrip("@")}
-        subs = None
-        try:
-            res = ledger.call("scrapecreators", "youtube_channel", {"url": yt.url}, 0.002,
-                              lambda: p["youtube_channel"](url=yt.url), cache_days=1)
-            subs = res.data.get("subscribers")
-        except ProviderError as exc:
-            out["errors"].append({"code": exc.code, "message": f"YouTube 채널: {exc.message}"})
-        videos, cursor, pages = [], None, 0
+    def reactions(self, channel: str, label: str, posts: list[dict], extra: Optional[dict] = None,
+                  basis: str = "") -> None:
+        """게시물당 반응: 좋아요(반응)·댓글·공유 중앙값, 조회 평균 — 값이 있는 게시물만으로."""
+        from statistics import median
+        for metric, key, word in (("owned_likes_median", "likes", "중앙값 좋아요"),
+                                  ("owned_comments_median", "comments", "중앙값 댓글"),
+                                  ("owned_shares_median", "shares", "중앙값 공유")):
+            vals = [po[key] for po in posts if po.get(key) is not None]
+            if vals:
+                self.fact(metric, median(vals), channel, f"{label} {basis}{word}", extra)
+        views = [po["views"] for po in posts if po.get("views") is not None]
+        if views:
+            self.fact("owned_views_avg", round(sum(views) / len(views), 1), channel, f"{label} {basis}평균 조회", extra)
+
+    def feed(self, endpoint: str, req: dict, fn, *, posts_key: str = "posts", cursor_key: str = "cursor",
+             date_key: str = "posted_at", what: str) -> tuple[list[dict], bool]:
+        """최신순 게시물을 기간 시작보다 오래된 글이 나올 때까지 넘긴다 → (기간 안 게시물, 기간 시작까지 닿았는지).
+        고정 게시물(pinned)은 날짜순을 깨므로 '닿았는지' 판단에서 뺀다."""
+        posts: list[dict] = []
+        cursor, pages, reached = None, 0, False
         while pages < MAX_OWNED_PAGES:
             try:
-                res = ledger.call("scrapecreators", "youtube_channel_videos", {**yt_ref, "cursor": cursor}, 0.002,
-                                  lambda c=cursor: p["youtube_channel_videos"](continuation_token=c, **yt_ref),
-                                  cache_days=1)
+                res = self.call(endpoint, {**req, "cursor": cursor}, lambda c=cursor: fn(c))
             except ProviderError as exc:
-                out["errors"].append({"code": exc.code, "message": f"YouTube 영상: {exc.message}"})
-                break
+                self.error(exc, what)
+                return self.in_period(posts, date_key), reached
             pages += 1
-            batch = res.data["videos"]
-            videos += [v for v in batch if v["published_at"] and start_s <= v["published_at"] <= end_s]
-            oldest = min((v["published_at"] for v in batch if v["published_at"]), default=None)
-            cursor = res.data.get("continuation_token")
-            if not batch or not oldest or oldest < start_s or not cursor:
+            batch = res.data.get(posts_key) or []
+            posts += batch
+            dated = [po[date_key] for po in batch if po.get(date_key) and not po.get("pinned")]
+            cursor = res.data.get(cursor_key)
+            if batch and not dated:
+                break  # 날짜가 없어 기간을 판단할 수 없다 — 더 넘기지 않는다
+            if dated and min(dated) < self.start_s:
+                reached = True
+                break
+            if not batch or not cursor or res.data.get("has_more") is False or res.data.get("more_available") is False:
+                reached = True  # 계정의 글을 끝까지 다 봤다
                 break
         else:
-            out["errors"].append({"code": "PARTIAL", "message": f"YouTube 영상: {MAX_OWNED_PAGES}페이지 상한으로 {start_s}까지 닿지 못함"})
-        if subs is not None and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_followers",
-                                                value=Decimal(subs), channel="youtube", period_start=item.period_start,
-                                                period_end=item.period_end, measured_at=today, label="YouTube 구독자")):
-            out["facts"] += 1
-        groups = {"video": [v for v in videos if not v["is_short"]], "shorts": [v for v in videos if v["is_short"]]}
-        for fmt, group in groups.items():
-            fmt_label = "동영상" if fmt == "video" else "쇼츠"
-            if add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_videos_monthly",
-                              value=Decimal(str(round(len(group) / months, 2))), channel="youtube",
-                              period_start=item.period_start, period_end=item.period_end, measured_at=today,
-                              label=f"YouTube 월평균 {fmt_label}", extra_dims={"format": fmt})):
-                out["facts"] += 1
-            views = [v["views"] for v in group if v["views"] is not None]
-            if views and add(owned_fact(brand_id=item.brand_id, entity=entity, metric="owned_views_avg",
-                                        value=Decimal(str(round(sum(views) / len(views), 1))), channel="youtube",
-                                        period_start=item.period_start, period_end=item.period_end, measured_at=today,
-                                        label=f"YouTube {fmt_label} 평균 조회", extra_dims={"format": fmt})):
-                out["facts"] += 1
-        yt_by_month = {mo: 0 for mo in period_months}
-        for v in videos:
-            if v["published_at"]:
-                yt_by_month[v["published_at"][:7]] = yt_by_month.get(v["published_at"][:7], 0) + 1
-        for mo, count in yt_by_month.items():
-            if add(monthly_post_count_fact(brand_id=item.brand_id, entity=entity, channel="youtube", month=mo,
-                                           count=count, measured_at=today)):
-                out["facts"] += 1
-        out["channels"].append({"channel": "youtube", **yt_ref, "videos_in_period": len(videos)})
+            self.out["errors"].append({"code": "PARTIAL", "message": f"{what}: {MAX_OWNED_PAGES}쪽 상한으로 {self.start_s}까지 닿지 못함"})
+        uniq = list({po.get("post_id") or po.get("id") or po.get("url"): po for po in posts}.values())
+        return self.in_period(uniq, date_key), reached
 
-    out["created"] = out["facts"]
+
+def _owned_instagram(o: _Owned, prof, extra: dict) -> None:
+    db, item, p, entity = o.db, o.item, o.p, o.entity
+    handle = _handle_of(prof.url)
+    followers = None
+    try:
+        res = o.call("instagram_profile", {"handle": handle}, lambda: p["instagram_profile"](handle))
+        followers = res.data.get("followers")
+    except ProviderError as exc:
+        o.error(exc, "IG 프로필")
+    posts, _ = o.feed("instagram_user_posts", {"handle": handle},
+                      lambda c: p["instagram_user_posts"](handle, next_max_id=c), cursor_key="next_max_id", what="IG 게시물")
+    if followers is not None:
+        o.fact("owned_followers", followers, "instagram", "Instagram 팔로워", extra)
+    o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "instagram", "Instagram 월평균 게시물", extra)
+    from statistics import median
+    likes = [po["likes"] for po in posts if po["likes"] is not None]
+    if likes:
+        o.fact("owned_likes_median", median(likes), "instagram", "Instagram 중앙값 좋아요", extra)
+    comments = [po["comments"] for po in posts if po.get("comments") is not None]
+    if comments:
+        o.fact("owned_comments_median", median(comments), "instagram", "Instagram 중앙값 댓글", extra)
+    # 2-4 브랜드별 상위 게시물: 기간 내 좋아요 상위 3개만 이미지까지 받는다(전수 다운로드 안 함).
+    existing_posts = set(db.scalars(select(OwnedPost.post_id).where(
+        OwnedPost.project_id == o.project.id, OwnedPost.channel == "instagram", OwnedPost.brand_id == item.brand_id,
+        OwnedPost.entity == entity)))
+    top3 = sorted((po for po in posts if po["likes"] is not None and po.get("image_url")
+                  and po["post_id"] not in existing_posts), key=lambda po: po["likes"], reverse=True)[:3]
+    for po in top3:
+        try:
+            img_data = p["fetch_image"](po["image_url"])
+        except ProviderError as exc:
+            o.out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
+            continue
+        asset = _save_owned_asset(db, o.project.id, img_data, f"{entity} Instagram 게시물")
+        # 커밋해 쓰기 잠금을 풀어준다 — 바로 이어지는 댓글 수집(ledger.call, 별도 커넥션)이
+        # 아직 커밋 안 된 Asset(또는 그 전의 owned_* Fact)과 "database is locked"로 부딪힌다.
+        db.commit()
+        sentiment = None
+        if po.get("url"):
+            try:
+                comments_res = o.call("instagram_post_comments", {"url": po["url"]},
+                                      lambda: p["instagram_post_comments"](po["url"]))
+                sentiment = classify_comment_sentiment(comments_res.data["comments"], o.ledger)
+            except ProviderError:
+                pass  # 댓글을 못 가져와도(비공개 등) 게시물 자체는 그대로 저장
+        db.add(OwnedPost(id=new_id("OP"), project_id=o.project.id, brand_id=item.brand_id, entity=entity,
+                         channel="instagram", post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
+                         likes=po["likes"], comments=po["comments"], views=po.get("views"),
+                         comment_sentiment=sentiment, asset_id=asset.id if asset else None,
+                         research_item_id=item.id))
+        db.commit()  # 다음 게시물 차례의 댓글 수집(별도 커넥션)과 부딪히지 않도록 바로 커밋
+        o.out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
+    o.monthly("instagram", posts, extra=extra)
+    o.out["channels"].append({"channel": "instagram", "handle": handle, "posts_in_period": len(posts)})
+
+
+def _owned_youtube(o: _Owned, prof, extra: dict) -> None:
+    """동영상은 채널 영상 목록(channel-videos), 쇼츠는 쇼츠 탭(/channel/shorts)에서 — 영상 목록에는 쇼츠가 일부만
+    섞여 나와 쇼츠가 10편 남짓으로 적게 잡혔다."""
+    p = o.p
+    # /youtube/channel accepts a raw url; /youtube/channel-videos only takes channelId or
+    # handle, so a /channel/UC… link and an /@handle link need to be told apart here.
+    yt_path = prof.url.rstrip("/").split("youtube.com/")[-1]
+    yt_ref = {"channel_id": yt_path.split("/")[1]} if yt_path.startswith("channel/") \
+        else {"handle": yt_path.split("/")[-1].lstrip("@")}
+    subs = None
+    try:
+        res = o.call("youtube_channel", {"url": prof.url}, lambda: p["youtube_channel"](url=prof.url))
+        subs = res.data.get("subscribers")
+    except ProviderError as exc:
+        o.error(exc, "YouTube 채널")
+    videos, _ = o.feed("youtube_channel_videos", dict(yt_ref),
+                       lambda c: p["youtube_channel_videos"](continuation_token=c, **yt_ref), posts_key="videos",
+                       cursor_key="continuation_token", date_key="published_at", what="YouTube 영상")
+    shorts, _ = o.feed("youtube_channel_shorts", dict(yt_ref),
+                       lambda c: p["youtube_channel_shorts"](continuation_token=c, **yt_ref), posts_key="shorts",
+                       cursor_key="continuation_token", date_key="published_at", what="YouTube 쇼츠")
+    if subs is not None:
+        o.fact("owned_followers", subs, "youtube", "YouTube 구독자", extra)
+    groups = {"video": [v for v in videos if not v.get("is_short")], "shorts": shorts}
+    for fmt, group in groups.items():
+        fmt_label = "동영상" if fmt == "video" else "쇼츠"
+        o.fact("owned_videos_monthly", round(len(group) / o.months, 2), "youtube", f"YouTube 월평균 {fmt_label}",
+               {**extra, "format": fmt})
+        views = [v["views"] for v in group if v["views"] is not None]
+        if views:
+            o.fact("owned_views_avg", round(sum(views) / len(views), 1), "youtube", f"YouTube {fmt_label} 평균 조회",
+                   {**extra, "format": fmt})
+    o.monthly("youtube", groups["video"] + shorts, key="published_at", extra=extra)
+    o.out["channels"].append({"channel": "youtube", **yt_ref, "videos_in_period": len(groups["video"]),
+                              "shorts_in_period": len(shorts)})
+
+
+def _owned_tiktok(o: _Owned, prof, extra: dict) -> None:
+    p, handle = o.p, _handle_of(prof.url)
+    try:
+        res = o.call("tiktok_profile", {"handle": handle}, lambda: p["tiktok_profile"](handle))
+    except ProviderError as exc:
+        o.error(exc, "TikTok 프로필")
+        return  # 비공개·없는 계정이면 게시물도 볼 수 없다
+    posts, reached = o.feed("tiktok_profile_videos", {"handle": handle},
+                            lambda c: p["tiktok_profile_videos"](handle, max_cursor=c), what="TikTok 영상")
+    if res.data.get("followers") is not None:
+        o.fact("owned_followers", res.data["followers"], "tiktok", "TikTok 팔로워", extra)
+    o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "tiktok", "TikTok 월평균 게시물", extra)
+    o.reactions("tiktok", "TikTok", posts, extra)
+    o.monthly("tiktok", posts, extra=extra)
+    o.out["channels"].append({"channel": "tiktok", "handle": handle, "posts_in_period": len(posts)})
+
+
+def _owned_facebook(o: _Owned, prof, extra: dict) -> None:
+    p, url = o.p, prof.url
+    try:
+        res = o.call("facebook_profile", {"url": url}, lambda: p["facebook_profile"](url))
+    except ProviderError as exc:
+        o.error(exc, "Facebook 페이지")
+        return
+    posts, _ = o.feed("facebook_profile_posts", {"url": url}, lambda c: p["facebook_profile_posts"](url, cursor=c),
+                      what="Facebook 게시물")
+    if res.data.get("followers") is not None:
+        o.fact("owned_followers", res.data["followers"], "facebook", "Facebook 팔로워", extra)
+    o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "facebook", "Facebook 월평균 게시물", extra)
+    o.reactions("facebook", "Facebook", posts, extra)  # 좋아요 = 반응(좋아요·최고예요 등) 합계
+    o.monthly("facebook", posts, extra=extra)
+    o.out["channels"].append({"channel": "facebook", "url": url, "posts_in_period": len(posts)})
+
+
+def _owned_x(o: _Owned, prof, extra: dict) -> None:
+    """X는 최신 글이 아니라 인기 글 묶음만 공개 API로 받을 수 있다 — 게시 빈도는 만들지 않고, 반응 중앙값도
+    '인기 게시물 기준'(dims basis=popular)으로 남긴다."""
+    p, handle = o.p, _handle_of(prof.url)
+    try:
+        res = o.call("twitter_profile", {"handle": handle}, lambda: p["twitter_profile"](handle))
+    except ProviderError as exc:
+        o.error(exc, "X 프로필")
+        return
+    if res.data.get("followers") is not None:
+        o.fact("owned_followers", res.data["followers"], "x", "X 팔로워", extra)
+    try:
+        tw = o.call("twitter_user_tweets", {"handle": handle}, lambda: p["twitter_user_tweets"](handle))
+    except ProviderError as exc:
+        o.error(exc, "X 게시물")
+        return
+    posts = o.in_period(tw.data["posts"])
+    o.reactions("x", "X", posts, {**extra, "basis": "popular"}, basis="인기 게시물 ")
+    o.out["channels"].append({"channel": "x", "handle": handle, "popular_posts_in_period": len(posts)})
+
+
+def _owned_threads(o: _Owned, prof, extra: dict) -> None:
+    """스레드 게시물 API는 최근 글 한 묶음(쪽 넘김 없음)만 준다 — 그 묶음이 기간 시작까지 닿았을 때만 월 게시 수를 만든다."""
+    p, handle = o.p, _handle_of(prof.url)
+    try:
+        res = o.call("threads_profile", {"handle": handle}, lambda: p["threads_profile"](handle))
+    except ProviderError as exc:
+        o.error(exc, "Threads 프로필")
+        return
+    if res.data.get("followers") is not None:
+        o.fact("owned_followers", res.data["followers"], "threads", "Threads 팔로워", extra)
+    try:
+        th = o.call("threads_user_posts", {"handle": handle}, lambda: p["threads_user_posts"](handle))
+    except ProviderError as exc:
+        o.error(exc, "Threads 게시물")
+        return
+    all_posts = th.data["posts"]
+    posts = o.in_period(all_posts)
+    oldest = min((po["posted_at"] for po in all_posts if po.get("posted_at")), default=None)
+    if oldest and oldest < o.start_s or len(all_posts) == 0:
+        o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "threads", "Threads 월평균 게시물", extra)
+        o.monthly("threads", posts, extra=extra)
+    else:
+        o.out.setdefault("notes", []).append(f"Threads: 최근 {len(all_posts)}개만 공개돼 {o.start_s}까지 닿지 못함 — 월 게시 수는 만들지 않음")
+    o.reactions("threads", "Threads", posts, extra)
+    o.out["channels"].append({"channel": "threads", "handle": handle, "posts_in_period": len(posts)})
+
+
+NAVER_BLOG_ID = re.compile(r"blog\.naver\.com/([A-Za-z0-9_-]+)")
+
+
+def _owned_naver_blog(o: _Owned, prof, extra: dict) -> None:
+    """공식 네이버 블로그의 기간 내 게시 수: 네이버 검색 API(블로그)에서 작성자 주소(bloggerlink)가 그 블로그인
+    글만 센다. 날짜순 1,000건 한도로 기간 처음까지 닿지 못하면 '일부만 셈'(partial=1). 이웃 수·방문자는
+    공개되지 않는다."""
+    m = NAVER_BLOG_ID.search(prof.url)
+    if not m:
+        o.out["errors"].append({"code": "NEEDS_INPUT", "message": f"네이버 블로그 주소가 아닙니다: {prof.url}"})
+        return
+    if not settings.provider_configured("naver"):
+        o.out["errors"].append({"code": "PROVIDER_AUTH", "message": "네이버 블로그: 네이버 검색 키가 없습니다"})
+        return
+    blog_id = m.group(1).lower()
+    p = o.p
+    seen: dict[str, dict] = {}
+    reached = False
+    for sort, pages in (("date", MENTION_MAX_PAGES), ("sim", 3)):
+        for page in range(pages):
+            o.db.commit()
+            try:
+                res = o.ledger.call("naver", "search", {"kind": "blog", "q": o.entity, "display": 100, "start": 1 + page * 100,
+                                                        "sort": sort}, 0.0,
+                                    lambda st=1 + page * 100, so=sort: p["naver_search"]("blog", o.entity, display=100,
+                                                                                         start=st, sort=so), cache_days=1)
+            except ProviderError as exc:
+                o.error(exc, "네이버 블로그")
+                return
+            items = res.data.get("items") or []
+            for it in items:
+                author = NAVER_BLOG_ID.search(it.get("author_url") or "")
+                if author and author.group(1).lower() == blog_id and it.get("url"):
+                    seen[it["url"]] = it
+            days = [d for it in items if (d := it.get("date"))]
+            if sort == "date" and (len(items) < 100 or (days and max(days) < o.start_s)):
+                reached = True
+            if len(items) < 100 or (sort == "date" and reached):
+                break
+    posts = o.in_period([{**it, "posted_at": it.get("date")} for it in seen.values()])
+    ext = {**extra, **({} if reached else {"partial": "1"})}
+    o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "naver_blog",
+           "네이버 블로그 월평균 게시물" + ("" if reached else " (일부만 셈)"), ext)
+    if reached:
+        o.monthly("naver_blog", posts, extra=extra)
+    o.out.setdefault("notes", []).append("네이버 블로그: 이웃 수·방문자 수는 공개되지 않습니다")
+    o.out["channels"].append({"channel": "naver_blog", "blog": blog_id, "posts_in_period": len(posts), "complete": reached})
+
+
+OWNED_CHANNELS: dict[str, Callable] = {
+    "instagram": _owned_instagram, "youtube": _owned_youtube, "tiktok": _owned_tiktok, "facebook": _owned_facebook,
+    "x": _owned_x, "threads": _owned_threads, "blog": _owned_naver_blog,
+}
+
+
+def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
+    """2-1: 공식 계정 전체 게시물에서 팔로워·기간 내 게시 빈도·반응을 채널마다 집계한다(인스타그램·유튜브(쇼츠 포함)·
+    틱톡·페이스북·X·스레드·네이버 블로그). 자사는 Brand.official_profiles, 경쟁사는 Brand.competitor_profiles에
+    등록된(확인된) 주소만 쓴다 — 어떤 계정이 '그 주체'인지 추측하지 않는다. 한 채널에 주소가 여럿이면 모두
+    모으고 Fact에 account dim을 붙여 구분한다. 비공개·삭제 계정은 '접근 불가', 다른 채널은 계속 모은다.
+    경쟁사 결과는 item.entity로 구분해 기록한다(비교 장표 OW-CMP는 P3-1)."""
+    o = _Owned(db, ledger, project, item)
+    profiles = [prof for prof in o.brand.profiles_for(item.entity) if prof.status == "confirmed" and prof.url]
+    if not profiles:
+        o.out["errors"].append({"code": "NEEDS_INPUT", "message": f"{item.entity}의 공식 계정 URL이 확인(채택)되지 않았습니다"})
+        return o.out
+    by_channel: dict[str, list] = {}
+    for prof in profiles:
+        by_channel.setdefault(prof.channel, []).append(prof)
+    for channel, profs in by_channel.items():
+        collect = OWNED_CHANNELS.get(channel)
+        if collect is None:
+            o.out.setdefault("notes", []).append(f"{channel}: 자동 수집하지 않는 채널")
+            continue
+        for prof in profs:
+            extra = {"account": _handle_of(prof.url)} if len(profs) > 1 else {}
+            collect(o, prof, extra)
+            # 다음 채널의 ledger.call(별도 커넥션)과 SQLite 쓰기 잠금이 부딪히지 않게 채널마다 커밋
+            db.commit()
+    o.out["created"] = o.out["facts"]
     db.commit()
-    return out
+    return o.out
 
 
 # ------------------------------------------------------------------ search (2-8a~d, 네이버 데이터랩)
@@ -1574,6 +1759,123 @@ def run_mentions(db: Session, ledger: RunLedger, project: Project, item: Researc
     return out
 
 
+# ------------------------------------------------------------------ blog types (P2-5, 블로그 문서 유형)
+
+BLOG_TYPE_TOP = 30  # 검색어마다 정확도순 상위 글 수
+BLOG_TYPE_BATCH = 10  # AI 한 번에 분류하는 글 수
+BLOG_TYPE_HEAD, BLOG_TYPE_TAIL = 1500, 700  # 대가 표시·제휴 링크는 글 끝에 많아 앞뒤를 함께 보낸다
+BLOG_TYPE_SYSTEM = """당신은 네이버 블로그 글이 어떤 종류의 글인지 가려내는 리서처입니다. <docs>의 글마다 type 하나를 고릅니다.
+- real_use: 글쓴이가 직접 사거나 써 본 경험을 쓴 후기. 대가 표시가 없어야 합니다.
+- sponsored: 체험단·협찬·원고료·제품 무상 제공처럼 대가를 받고 쓴 글(본문에 표시가 있음).
+- shopping_affiliate: 쿠팡 파트너스 같은 제휴 링크·수수료 표시가 있거나, 직접 써 본 경험 없이 가격·할인코드·
+  최저가·상품 비교를 모아 구매로 이끄는 글.
+- promo_template: 매장·대리점·판매자·브랜드가 쓴 홍보 글, 입고·행사·할인 안내, 같은 문구를 되풀이하는 템플릿 글.
+- other: 위 어디에도 해당하지 않는 글(뉴스 옮김, 일상 글에서 잠깐 언급, 관련 없는 글 등).
+<markers>는 본문에서 찾은 표시 문구 종류입니다(sponsored = 대가 표시, affiliate = 제휴 링크·수수료). 표시가 있으면
+대개 sponsored·shopping_affiliate지만, 문구가 없다고 바로 real_use는 아닙니다. 본문이 짧거나 제목·요약뿐이면
+보이는 만큼으로 판단합니다."""
+BLOG_TYPE_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["docs"],
+    "properties": {"docs": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["index", "type"],
+        "properties": {"index": {"type": "integer"},
+                       "type": {"type": "string", "enum": ["real_use", "sponsored", "shopping_affiliate",
+                                                          "promo_template", "other"]}}}}},
+}
+
+
+def _blog_excerpt(text: str) -> str:
+    text = text or ""
+    if len(text) <= BLOG_TYPE_HEAD + BLOG_TYPE_TAIL:
+        return text
+    return f"{text[:BLOG_TYPE_HEAD]}\n…(중략)…\n{text[-BLOG_TYPE_TAIL:]}"
+
+
+def run_blog_types(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
+    """블로그 문서 유형: 자사 브랜드명과 대표 조합어(브랜드 + 첫 제품군)마다 네이버 블로그 정확도순 상위
+    BLOG_TYPE_TOP건의 본문을 받아 AI가 실사용·협찬·쇼핑 제휴·홍보 템플릿·기타로 나누고, 유형별 비중을
+    확인 전 Fact(blog_type_share)로 남긴다. 본문을 못 받은 글은 제목·요약으로 분류한다."""
+    from core.ingestion.blog_types import BLOG_TYPES, disclosure_markers, share_facts
+    from core.rules.config import RulesConfig
+
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    name = brand.names_for(brand.name)[0]
+    cats = [c for c in dict.fromkeys(brand.categories) if c and c != brand.name]
+    keywords = [name] + ([f"{name} {cats[0]}"] if cats else [])
+    today = date.today()
+    min_n = RulesConfig.load().derived_min_n
+    out: dict = {"facts": 0, "keywords": {}, "errors": []}
+    facts = []
+    for kw in keywords:
+        try:
+            res = ledger.call("naver", "search", {"kind": "blog", "q": kw, "display": BLOG_TYPE_TOP, "start": 1, "sort": "sim"},
+                              0.0, lambda q=kw: p["naver_search"]("blog", q, display=BLOG_TYPE_TOP, start=1, sort="sim"),
+                              cache_days=1)
+        except ProviderError as exc:
+            out["errors"].append({"code": exc.code, "message": f"블로그 유형 '{kw}': {exc.message}"})
+            if exc.code == "PROVIDER_AUTH":
+                break
+            continue
+        docs = [d for d in res.data["items"] if d.get("url")][:BLOG_TYPE_TOP]
+
+        def fetch(d):
+            try:
+                page = p["fetch_page"](d["url"])
+                return None if _is_login_wall(page) else page.text
+            except ProviderError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="blog_type_fetch") as pool:
+            texts = list(pool.map(fetch, docs))
+        typed: list[dict] = []
+        for b in range(0, len(docs), BLOG_TYPE_BATCH):
+            batch = list(zip(docs[b:b + BLOG_TYPE_BATCH], texts[b:b + BLOG_TYPE_BATCH]))
+            parts = []
+            for i, (d, text) in enumerate(batch):
+                body = _blog_excerpt(text) if text else d.get("snippet", "")
+                marks = disclosure_markers(f"{d.get('title', '')}\n{body}")
+                parts.append(f'<doc index="{i}">\n제목: {d.get("title", "")}\n블로그: {d.get("author") or ""}\n'
+                             f'<markers>{", ".join(marks) or "없음"}</markers>\n본문: {body}\n</doc>')
+            user = f"<keyword>{kw}</keyword>\n<docs>\n" + "\n".join(parts) + "\n</docs>"
+            try:
+                ans = ledger.call("anthropic", "blog_type_classify",
+                                  {"keyword": kw, "urls": [d["url"] for d, _ in batch],
+                                   "hash": hashlib.sha256(user.encode("utf-8")).hexdigest()}, 0.01,
+                                  lambda u=user: p["structured"](BLOG_TYPE_SYSTEM, u, BLOG_TYPE_SCHEMA, max_tokens=800))
+            except ProviderError as exc:
+                if exc.code == "BUDGET_EXCEEDED":
+                    raise
+                out["errors"].append({"code": exc.code, "message": f"블로그 유형 AI 분류 실패('{kw}'): {exc.message}"})
+                continue
+            by_index = {r.get("index"): r.get("type") for r in ans.data.get("docs") or []}
+            for i, (d, _) in enumerate(batch):
+                t = by_index.get(i)
+                if t in BLOG_TYPES:
+                    typed.append({"url": d["url"], "title": d.get("title"), "type": t})
+        made = share_facts(brand_id=item.brand_id, entity=brand.name, keyword=kw, docs=typed, measured_at=today,
+                           min_n=min_n)
+        facts += made
+        counts = {t: sum(1 for d in typed if d["type"] == t) for t in BLOG_TYPES}
+        out["keywords"][kw] = {"n": len(typed), "fetched": sum(1 for t in texts if t), "types": counts,
+                               "samples": typed}
+        if typed and not made:
+            out.setdefault("notes", []).append(f"'{kw}': 분류한 글이 {len(typed)}건이라 비중을 만들지 않았습니다(기준 {min_n}건)")
+
+    existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+    for f in facts:
+        if f.id in existing:
+            continue
+        db.add(FactRow(project_id=project.id, fact_id=f.id, origin="auto", research_item_id=item.id,
+                       data=json.loads(f.model_dump_json()), verification_status="candidate",
+                       review_note="네이버 블로그 상위 글 유형 AI 분류 자동 수집"))
+        existing.add(f.id)
+        out["facts"] += 1
+    db.commit()
+    return out
+
+
 # ------------------------------------------------------------------ shopping insight (P2-2, 네이버 데이터랩)
 
 SHOP_MAX_KEYWORDS = 5  # 쇼핑인사이트 키워드 추이: 요청당 최대 5개 = 한 스케일
@@ -1765,6 +2067,14 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                         men = run_mentions(s, ledger, project, item)
                         r = {**r, "facts": r.get("facts", 0) + men["facts"], "mentions": men,
                              "errors": [*r.get("errors", []), *men["errors"]]}
+                    if "naver_blog_types" in chans:  # P2-5 블로그 문서 유형(AI 분류)
+                        if ai_enabled:
+                            bt = run_blog_types(s, ledger, project, item)
+                            r = {**r, "facts": r.get("facts", 0) + bt["facts"], "blog_types": bt,
+                                 "errors": [*r.get("errors", []), *bt["errors"]]}
+                        else:
+                            r = {**r, "errors": [*r.get("errors", []), {"code": "PROVIDER_AUTH",
+                                 "message": "블로그 문서 유형: AI 키(ANTHROPIC_API_KEY)가 없어 분류하지 못했습니다"}]}
                     made = r.get("facts", 0)
                 elif item.section_id == "owned":
                     if not settings.provider_configured("scrapecreators"):

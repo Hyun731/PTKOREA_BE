@@ -66,6 +66,9 @@ CHANNELS = {
     # P2-4 언급량: 네이버 검색 API의 블로그·카페글·뉴스·지식iN 검색 결과 문서 수(누적)와 최근 달별 문서 수 — 검색량 아님
     "naver_mentions": {"label": "네이버 블로그·카페·뉴스·지식iN 검색 결과 문서 수 (언급량)", "support": "auto",
                        "provider": "naver"},
+    # P2-5 블로그 문서 유형: 브랜드명·대표 조합어의 블로그 상위 30건을 AI가 실사용·협찬·쇼핑 제휴·홍보 템플릿으로
+    "naver_blog_types": {"label": "네이버 블로그 상위 글 유형 (실사용·협찬·쇼핑 제휴·홍보)", "support": "auto",
+                         "provider": "naver"},
     "search_csv": {"label": "검색 지수 CSV (보유 자료)", "support": "manual_only", "provider": None},
     # Phase 3-4: Google Trends 공개 경로 — 봇 차단으로 자주 막힌다(그러면 "수집 필요"로 조용히 빠짐).
     "google_trends": {"label": "Google Trends (카테고리·브랜드 키워드 월별 추이)", "support": "auto", "provider": "google_trends"},

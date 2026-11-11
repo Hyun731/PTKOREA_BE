@@ -54,6 +54,21 @@ def test_fetch_page_extracts_text_meta_and_ignores_scripts():
     assert p.image_urls == ["https://news.example.com/img.png"]
 
 
+def test_naver_blog_post_is_fetched_from_the_mobile_page_that_has_the_body():
+    from integrations.fetch.page import readable_url
+
+    assert readable_url("https://blog.naver.com/1susan/224459096952") == "https://m.blog.naver.com/1susan/224459096952"
+    assert readable_url("https://blog.naver.com/1susan") == "https://blog.naver.com/1susan"  # 블로그 첫 화면은 그대로
+    assert readable_url("https://news.example.com/a") == "https://news.example.com/a"
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        return httpx.Response(200, html="<html><body><p>본문</p></body></html>", headers={"content-type": "text/html"})
+    p = fetch_page("https://blog.naver.com/a_b/123", resolve=PUBLIC, transport=httpx.MockTransport(handler))
+    assert seen == ["https://m.blog.naver.com/a_b/123"] and p.url == "https://blog.naver.com/a_b/123" and "본문" in p.text
+
+
 def test_retry_only_on_429_and_5xx(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
     calls = {"n": 0}
