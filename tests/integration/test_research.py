@@ -1532,6 +1532,41 @@ def test_collection_mix_owned_channel_enough_once_every_confirmed_account_is_rec
                                         "action": "자료 확인에서 '다시 모으기'로 최근 자료를 받으세요"}
 
 
+def test_voc_item_finds_naver_blog_and_kin_posts_via_search_api(client, fakes):
+    """P2-3: 블로그·지식iN은 네이버 검색 API로, 카페글이 비활성이면 카페는 Perplexity로."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "voc", "브랜드A")
+    fakes.naver_items = {
+        "blog": [{"title": "브랜드A 3개월 사용 후기", "url": "https://blog.naver.com/a/1", "snippet": "튼튼해요",
+                  "date": "2026-05-01", "author": "여행 블로그", "author_url": "https://blog.naver.com/a"},
+                 {"title": "브랜드A 언박싱", "url": "https://blog.naver.com/b/2", "snippet": "예뻐요",
+                  "date": "2026-06-02", "author": "일상 블로그", "author_url": "https://blog.naver.com/b"},
+                 {"title": "브랜드A 오래된 후기", "url": "https://blog.naver.com/c/3", "snippet": "",
+                  "date": "2019-01-01", "author": "x", "author_url": None}],
+        "kin": [{"title": "브랜드A 바퀴 고장 났어요", "url": "https://kin.naver.com/qna/1", "snippet": "AS 되나요",
+                 "date": None, "author": None, "author_url": None}],
+    }
+    fakes.naver_denied = {"cafearticle"}
+    seen_sites = []
+
+    def search(queries, sites=None, **kw):
+        fakes._hit("search")
+        seen_sites.append(list(sites or []))
+        return CallResult(data={"id": "s", "results": []}, cost_usd=0.005)
+    research.PROVIDERS["search"] = search
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["naver_search"]["blog"] == 2 and res["naver_search"]["kin"] == 1
+    assert "활성화" in res["naver_search"]["cafearticle"]  # 비활성 사유가 남는다
+    assert "blog.naver.com" not in seen_sites[0] and "cafe.naver.com" in seen_sites[0]  # 카페는 Perplexity가
+    mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "voc"]
+    urls = {m["source"]["url"] for m in mats}
+    assert urls == {"https://blog.naver.com/a/1", "https://blog.naver.com/b/2", "https://kin.naver.com/qna/1"}
+    assert all(m["review_status"] == "candidate" for m in mats)  # 자동 채택하지 않는다
+    assert res["out_of_period"] >= 1  # 2019년 글은 기간 밖이라 빠진다
+
+
 def test_voc_item_collects_and_classifies_consumer_posts(client, fakes):
     pid, plan = setup_project(client)
     clear_cache()

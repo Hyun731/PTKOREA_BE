@@ -81,7 +81,8 @@ def search(kind: Kind, query: str, *, display: int = MAX_DISPLAY, start: int = 1
     for it in data.get("items") or []:
         items.append({
             "title": _clean(it.get("title")), "url": it.get("originallink") or it.get("link"),
-            "snippet": _clean(it.get("description")), "date": _date(it, kind),
+            # 응답은 원장 캐시(JSON)에 저장되므로 날짜는 ISO 문자열로 돌려준다
+            "snippet": _clean(it.get("description")), "date": (d.isoformat() if (d := _date(it, kind)) else None),
             "author": it.get("bloggername") or it.get("cafename"), "author_url": it.get("bloggerlink") or it.get("cafeurl"),
         })
     return CallResult(data={"total": int(data.get("total") or 0), "items": items, "via": via},

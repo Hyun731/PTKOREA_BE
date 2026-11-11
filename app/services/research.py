@@ -963,10 +963,11 @@ def _naver_voc_results(ledger: RunLedger, p: dict, names: list[str], item: Resea
                     for it in items:
                         if not it.get("url"):
                             continue
-                        if not period.published_in_search_window(it.get("date"), item.period_start, item.period_end):
+                        day = _safe_date(it.get("date"))
+                        if not period.published_in_search_window(day, item.period_start, item.period_end):
                             out["out_of_period"] = out.get("out_of_period", 0) + 1
                             continue
-                        rows.append({**it, "channel": channel, "kind": kind})
+                        rows.append({**it, "date": day, "channel": channel, "kind": kind})
                     if len(items) < 100:
                         break
         except ProviderError as exc:
