@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Material, Project, ResearchItem, ResearchPlan, ReviewSnapshot, Source
+from app.models import FactRow, Material, Project, ResearchItem, ResearchPlan, ReviewSnapshot, Source
 from core.schemas.project import Project as CoreProject
 from core.schemas.slidespec import SlotPlan
 
@@ -25,8 +25,28 @@ CAUSES = {
 # Slot template -> the research section that feeds it.
 SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
            "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
-           "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review"}
-UPLOAD = {"2-8a", "2-8b", "2-8c", "2-8d"}  # search volumes come from a CSV (no Naver API)
+           "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
+           "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search"}
+UPLOAD: set[str] = set()  # 검색 점유(2-8a~d)는 네이버 데이터랩으로 자동 수집한다(P2-1) — 업로드 전용 장표 없음
+
+
+def _search_setup(slot: SlotPlan, brands: list, related: list) -> Optional[str]:
+    """검색 장표가 설정 때문에 비어 있으면 무엇을 고칠지(없으면 None)."""
+    from app.config import settings
+    from core.ingestion.search_index import naver_target_filter
+
+    if not settings.provider_configured("naver"):
+        return "네이버 데이터랩 키(NAVER_API_HUB_CLIENT_ID/SECRET)가 서버에 설정되어 있지 않습니다 — 관리자에게 요청하세요"
+    auth = next((e.get("message") for i in related for e in (i.last_result or {}).get("errors", [])
+                 if e.get("code") == "PROVIDER_AUTH"), None)
+    if auth:
+        return auth
+    if slot.template_id == "2-8c" and not any(b.categories for b in brands):
+        return "설정에서 브랜드의 주력 카테고리를 넣으세요 — '브랜드+카테고리' 검색어를 만들 때 씁니다"
+    if slot.template_id == "2-8d" and not any(
+            b.target and naver_target_filter(b.target.age_min, b.target.age_max, b.target.gender) for b in brands):
+        return "설정에서 키 타겟의 연령이나 성별을 넣으세요 — 타겟 검색 점유를 따로 잽니다"
+    return None
 
 
 def _case_role(slot: SlotPlan) -> Optional[str]:
@@ -57,6 +77,10 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
     unavailable = list(db.scalars(select(Material).join(Source, Source.id == Material.source_id).where(
         Material.project_id == project.id, Material.section_id == "voc", Material.duplicate_of.is_(None),
         Source.access_status == "unavailable")))
+    # 검색 지수는 자료 카드가 아니라 Fact로 쌓이므로 따로 센다(데이터랩 자동 수집분은 확인 전 candidate).
+    waiting_search = {r.data.get("brand_id") for r in db.scalars(select(FactRow).where(
+        FactRow.project_id == project.id, FactRow.verification_status == "candidate", FactRow.origin == "auto"))
+        if (r.data or {}).get("metric") in ("search_group_sum", "search_index_monthly")}
     role_of: dict[str, str] = {}
     for b in core.brands:
         role_of.update({c: "competitor" for c in b.competitors})
@@ -73,12 +97,16 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             return role is None or role_of.get(entity or "", "self") == role
 
         related = [i for i in items if mine(i.brand_id, i.entity, i.section_id)]
+        search_fix = _search_setup(slot, brands, related) if section == "search" else None
         if slot.template_id in UPLOAD:
             cause = "upload"
+        elif search_fix:
+            cause = "setup"
         elif section is None:
             cause = None  # built from the other pages (1-1, recap): nothing of its own to fetch
         elif any(mine(m.brand_id, m.entity, m.section_id) for m in waiting) or \
-                any(mine(r.brand_id, r.entity, "commerce_review") for r in waiting_reviews):
+                any(mine(r.brand_id, r.entity, "commerce_review") for r in waiting_reviews) or \
+                (section == "search" and any(b.id in waiting_search for b in brands)):
             cause = "adopt"
         elif section == "owned" and not any(p.status == "confirmed" for b in brands for p in b.official_profiles):
             cause = "setup"  # a candidate account still needs a person's check before it can be collected
@@ -87,7 +115,11 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
         else:
             cause = "collect"  # influencer now searches by brand name on its own — no input required to try
         slot.cause = cause
-        if cause == "setup":
+        if search_fix:
+            slot.action = search_fix
+        elif cause == "adopt" and section == "search":
+            slot.action = "모은 검색 지수가 있습니다 — 자료 확인에서 검색 지수를 확인(채택)하세요"
+        elif cause == "setup":
             slot.action = "설정에서 공식 계정 URL을 넣거나, AI가 찾은 후보를 확인하세요"
         elif cause == "access":
             slot.action = "찾은 글이 모두 로그인 등으로 접근할 수 없었습니다 — 다른 커뮤니티로 다시 찾아보세요"
@@ -98,5 +130,5 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
         # Items to run again: only web-collected ones that did not just succeed with new cards.
         if cause in ("collect", "access"):
             slot.item_ids = [i.id for i in related
-                             if i.section_id in ("campaign", "market", "voc", "search_trend", "commerce_review")
+                             if i.section_id in ("campaign", "market", "voc", "search", "search_trend", "commerce_review")
                              and i.execution_status not in ("queued", "running")]

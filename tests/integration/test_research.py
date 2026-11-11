@@ -1842,7 +1842,9 @@ def test_missing_slides_say_why_and_what_to_do(client, fakes):
     gaps = {s["slot_id"]: s for s in ok(client.get(f"/v1/projects/{pid}/slide-plan"))["plan"] if s["readiness"] == "needs_input"}
     assert gaps["C1c"]["cause"] == "adopt"  # 경쟁X's cards are waiting for a person
     # 3-1(인플루언서)은 이제 입력이 없어도 브랜드 이름으로 찾아보므로 '설정 필요'가 아니라 '수집 필요'.
-    assert gaps["2-8a"]["cause"] == "upload" and gaps["3-1-B1"]["cause"] == "collect"
+    assert gaps["3-1-B1"]["cause"] == "collect"
+    # 검색 점유는 이제 데이터랩으로 자동 수집 — CSV 업로드가 아니라 '수집 필요', 다시 모을 항목은 검색 항목.
+    assert gaps["2-8a"]["cause"] == "collect" and gaps["2-8a"]["item_ids"] == [item(plan, "search")["id"]]
     self_item = item(plan, "campaign", "브랜드A")
     assert gaps["C1"]["cause"] == "collect" and gaps["C1"]["item_ids"] == [self_item["id"]]
     assert gaps["5-recap"]["cause"] is None
