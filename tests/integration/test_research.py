@@ -613,18 +613,25 @@ def test_search_items_auto_collect_via_naver(client, fakes):
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
     assert res["status"] == "succeeded" and res["facts"] > 0
-    assert fakes.calls["search_trend"] == 1  # one DataLab call covers 12M and 9M alike (same scale_id)
+    # 세트마다 데이터랩 요청 1회(12M·9M은 같은 응답에서 잘라 같은 scale_id): 브랜드명, 조합어 +가방,
+    # 키 타겟(연령·성별 필터) 브랜드명, 키 타겟 조합어 +가방
+    assert [x["label"] for x in res["sets"]] == ["브랜드명", "조합어 +가방", "키 타겟 · 브랜드명", "키 타겟 · 조합어 +가방"]
+    assert fakes.calls["search_trend"] == 4
 
     facts = ok(client.get(f"/v1/projects/{pid}/facts"))
     assert facts and all(f["verification_status"] == "candidate" and f["origin"] == "auto" for f in facts)
-    windows = {f["dims"]["window"] for f in facts if f["metric"] == "search_group_sum"}
-    assert windows == {"12M", "9M"}
+    sums = [f for f in facts if f["metric"] == "search_group_sum"]
+    assert {f["dims"]["window"] for f in sums} == {"12M", "9M"}
+    assert {(f["dims"]["seg"], f["dims"].get("cat")) for f in sums} == {("all", None), ("all", "가방"), ("T", None), ("T", "가방")}
+    monthly = [f for f in facts if f["metric"] == "search_index_monthly"]
+    assert monthly and {f["dims"]["seg"] for f in monthly} == {"all"} and not any("cat" in f["dims"] for f in monthly)
     for f in facts:
         ok(client.patch(f"/v1/facts/{f['id']}/review?project_id={pid}", json={"action": "confirm"}))
 
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
-    assert next(s for s in sp["plan"] if s["slot_id"] == "2-8a")["readiness"] == "ready"
-    assert next(s for s in sp["plan"] if s["slot_id"] == "2-8b")["readiness"] == "ready"
+    for slot in ("2-8a", "2-8b", "2-8d"):
+        assert next(s for s in sp["plan"] if s["slot_id"] == slot)["readiness"] == "ready", slot
+    assert next(s for s in sp["plan"] if s["template_id"] == "2-8c")["readiness"] == "ready"
 
 
 def test_search_items_need_naver_key(client, fakes, monkeypatch):

@@ -1311,48 +1311,48 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
     return out
 
 
-# ------------------------------------------------------------------ search (2-8a/2-8b, seg=all)
+# ------------------------------------------------------------------ search (2-8a~d, 네이버 데이터랩)
+
+SEARCH_MAX_CATEGORIES = 3  # 조합어(브랜드+카테고리) 세트를 만들 제품군 수 — 세트마다 데이터랩 요청 1회
+
 
 def run_search_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
-    """Brand-name search share/trend via Naver DataLab, one call spanning the 12M comparison
-    window (cfg.long_window). The narrower project "search" window (cfg.main_window, e.g. 9M) is
-    sliced from the same response so both windows share one scale_id — never a second, separately
-    normalized call. Combination keywords (2-8c) and target-segment filters (2-8d) are out of
-    scope here: there is no config surface yet for combo keywords or a Naver age/gender mapping
-    for Brand.target, so those stay CSV-only (search_csv channel)."""
+    """검색 점유 세트를 네이버 데이터랩으로 모은다. 세트마다 요청 1회, 12M 비교 창 하나로 받고 프로젝트
+    검색 창(예: 9M)은 같은 응답에서 잘라 쓴다 — 두 창이 한 scale_id를 공유해 따로 정규화되지 않는다.
+
+    세트 (모두 자사 + 경쟁사 경쟁 세트)
+    - 브랜드명 · 전체(seg=all): 2-8a 점유, 2-8b 월별 지수(월별 Fact는 이 세트만)
+    - 조합어 '브랜드+카테고리' · 전체: 2-8c (제품군마다, 최대 SEARCH_MAX_CATEGORIES개)
+    - 키 타겟(seg=T): Brand.target의 연령·성별 필터를 건 브랜드명·조합어 세트 — 2-8d
+      타겟이 아무것도 좁히지 않으면(연령·성별 미지정) 만들지 않는다.
+    한 세트가 실패해도 나머지는 계속 모은다(오류는 세트 이름과 함께 남긴다)."""
     from app.services.catalog import comparison_window
     from core.ingestion.csv_import import window_months
-    from core.ingestion.search_index import monthly_fact, window_sum_fact
+    from core.ingestion.search_index import combo_keywords, monthly_fact, naver_target_filter, window_sum_fact
 
     p = _providers()
     core = core_project(project)
     brand = core.brand(item.brand_id)
     entities = brand.entity_set
-    out: dict = {"created": 0, "facts": 0, "entities": entities, "errors": []}
+    out: dict = {"created": 0, "facts": 0, "entities": entities, "errors": [], "sets": []}
 
     kw_by_entity = {g.entity: g.keywords for g in brand.keyword_groups}
-    groups: list[tuple[str, list[str]]] = []
-    for e in entities:
-        kws = kw_by_entity.get(e) or ([e, *brand.aliases] if e == brand.name else [e])
-        groups.append((e, kws))
+    name_groups = [(e, kw_by_entity.get(e) or brand.names_for(e)) for e in entities]
+    cats = [c for c in dict.fromkeys(brand.categories) if c and c != brand.name][:SEARCH_MAX_CATEGORIES]
+    target = brand.target
+    tf = naver_target_filter(target.age_min, target.age_max, target.gender) if target else None
+
+    # (label, seg, cat, groups, filters, monthly)
+    sets: list[tuple[str, str, Optional[str], list, Optional[dict], bool]] = [("브랜드명", "all", None, name_groups, None, True)]
+    for c in cats:
+        sets.append((f"조합어 +{c}", "all", c, [(e, combo_keywords(brand.names_for(e), c)) for e in entities], None, False))
+    if tf:
+        sets.append(("키 타겟 · 브랜드명", "T", None, name_groups, tf, False))
+        for c in cats:
+            sets.append((f"키 타겟 · 조합어 +{c}", "T", c,
+                         [(e, combo_keywords(brand.names_for(e), c)) for e in entities], tf, False))
 
     long_start, long_end = comparison_window(core)
-    try:
-        res = ledger.call("naver", "datalab_search", {"groups": groups, "start": str(long_start), "end": str(long_end)},
-                          0.0, lambda: p["naver_search_trend"](groups, long_start, long_end, time_unit="month"), cache_days=1)
-    except ProviderError as exc:
-        out["errors"].append({"code": exc.code, "message": exc.message})
-        return out
-
-    by_entity_month: dict[str, dict[str, float]] = {
-        row["group"]: {pt["period"][:7]: pt["ratio"] for pt in row["points"]} for row in res.data["results"]
-    }
-    months = sorted({m for v in by_entity_month.values() for m in v})
-    if not months:
-        out["errors"].append({"code": "NO_DATA", "message": "데이터랩 결과가 비어 있습니다"})
-        return out
-
-    scale_id = f"naver:{item.brand_id}:all"
     today = date.today()
     existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
 
@@ -1367,30 +1367,57 @@ def run_search_item(db: Session, ledger: RunLedger, project: Project, item: Rese
 
     n_main = window_months(item.period_start, item.period_end)
     main_in_range = bool(n_main) and long_start <= item.period_start and item.period_end <= long_end
-    sub_months = [m for m in months if item.period_start.strftime("%Y-%m") <= m <= item.period_end.strftime("%Y-%m")] \
-        if main_in_range else []
+    all_months: set[str] = set()
 
-    for e in entities:
-        series = by_entity_month.get(e)
-        if not series:
-            out["errors"].append({"code": "NO_DATA", "message": f"{e}: 데이터랩 결과 없음 — 검색어 그룹을 확인하세요"})
+    for label, seg, cat, groups, filters, monthly in sets:
+        req = {"groups": groups, "start": str(long_start), "end": str(long_end), **({"filters": filters} if filters else {})}
+        try:
+            res = ledger.call("naver", "datalab_search", req, 0.0,
+                              lambda g=groups, f=filters: p["naver_search_trend"](g, long_start, long_end, time_unit="month",
+                                                                               **(f or {})), cache_days=1)
+        except ProviderError as exc:
+            out["errors"].append({"code": exc.code, "message": f"{label}: {exc.message}"})
+            if exc.code == "PROVIDER_AUTH":
+                break  # 같은 키로 나머지 세트도 막힌다
             continue
-        for m in months:
-            if m in series and add(monthly_fact(brand_id=item.brand_id, entity=e, month=m, ratio=series[m],
-                                                seg="all", scale_id=scale_id, measured_at=today)):
-                out["facts"] += 1
-        total12 = sum(series.get(m, 0.0) for m in months)
-        if add(window_sum_fact(brand_id=item.brand_id, entity=e, window_label="12M", total=Decimal(str(round(total12, 4))),
-                               seg="all", scale_id=scale_id, period_start=long_start, period_end=long_end, measured_at=today)):
-            out["facts"] += 1
-        if sub_months:
-            total_main = sum(series.get(m, 0.0) for m in sub_months)
-            if add(window_sum_fact(brand_id=item.brand_id, entity=e, window_label=f"{n_main}M",
-                                   total=Decimal(str(round(total_main, 4))), seg="all", scale_id=scale_id,
-                                   period_start=item.period_start, period_end=item.period_end, measured_at=today)):
-                out["facts"] += 1
+        by_entity_month: dict[str, dict[str, float]] = {
+            row["group"]: {pt["period"][:7]: pt["ratio"] for pt in row["points"]} for row in res.data["results"]
+        }
+        months = sorted({m for v in by_entity_month.values() for m in v})
+        if not months:
+            out["errors"].append({"code": "NO_DATA", "message": f"{label}: 데이터랩 결과가 비어 있습니다"})
+            continue
+        all_months.update(months)
+        scale_id = f"naver:{item.brand_id}:{seg}" + (f":cat:{cat}" if cat else "")
+        sub_months = [m for m in months if item.period_start.strftime("%Y-%m") <= m <= item.period_end.strftime("%Y-%m")] \
+            if main_in_range else []
+        made = 0
+        for e in entities:
+            series = by_entity_month.get(e)
+            if not series:
+                out["errors"].append({"code": "NO_DATA", "message": f"{label} · {e}: 데이터랩 결과 없음 — 검색어를 확인하세요"})
+                continue
+            if monthly:
+                for m in months:
+                    if m in series and add(monthly_fact(brand_id=item.brand_id, entity=e, month=m, ratio=series[m],
+                                                        seg=seg, scale_id=scale_id, measured_at=today)):
+                        made += 1
+            total12 = sum(series.get(m, 0.0) for m in months)
+            if add(window_sum_fact(brand_id=item.brand_id, entity=e, window_label="12M", total=Decimal(str(round(total12, 4))),
+                                   seg=seg, scale_id=scale_id, period_start=long_start, period_end=long_end,
+                                   measured_at=today, cat=cat)):
+                made += 1
+            if sub_months:
+                total_main = sum(series.get(m, 0.0) for m in sub_months)
+                if add(window_sum_fact(brand_id=item.brand_id, entity=e, window_label=f"{n_main}M",
+                                       total=Decimal(str(round(total_main, 4))), seg=seg, scale_id=scale_id,
+                                       period_start=item.period_start, period_end=item.period_end, measured_at=today,
+                                       cat=cat)):
+                    made += 1
+        out["facts"] += made
+        out["sets"].append({"label": label, "seg": seg, "cat": cat, "facts": made})
     out["created"] = out["facts"]
-    out["months"] = months
+    out["months"] = sorted(all_months)
     db.commit()
     return out
 
