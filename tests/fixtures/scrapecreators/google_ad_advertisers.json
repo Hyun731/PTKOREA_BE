@@ -1,0 +1,26 @@
+{
+ "success": true,
+ "credits_remaining": 21872,
+ "credits_charged": 1,
+ "advertisers": [
+  {
+   "name": "쌤소나이트코리아(주)",
+   "advertiser_id": "AR17689708705710342145",
+   "region": "KR",
+   "number_of_ads_estimate": 200
+  },
+  {
+   "name": "쌤소나이트코리아(주)",
+   "advertiser_id": "AR17293994651262386177",
+   "region": "KR",
+   "number_of_ads_estimate": 200
+  },
+  {
+   "name": "쌤소나이트코리아(주)",
+   "advertiser_id": "AR12586396129010122753",
+   "region": "KR",
+   "number_of_ads_estimate": 78
+  }
+ ],
+ "websites": []
+}
