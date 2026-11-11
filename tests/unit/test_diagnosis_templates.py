@@ -181,3 +181,17 @@ def test_no_diagnosis_no_pages_and_builder_skips_ai_headlines():
     assert not [s for s in r.deck.slides if s.template_id in dt.OWN_HEADLINE]
     assert not [p for p in r.deck.plan if p.template_id.startswith("D")]
     assert dt.OWN_INSIGHTS < dt.OWN_HEADLINE and dt.TEMPLATES["D2"] not in dt.OWN_INSIGHTS
+
+
+def test_stored_ai_writing_never_replaces_the_diagnosis_headline():
+    from core.composition.build import body_fingerprint
+    inputs = _inputs(diagnosis={"B1": _diagnosis()})
+    pages = {s.slide_id: s for s in build_deck(inputs).deck.slides}
+    head = {"claim": [{"parts": [{"type": "text", "text": "다른 AI 헤드라인"}]}], "evidence": []}
+    cards = {"insights": [{"title": {"parts": [{"type": "text", "text": "AI 카드"}]},
+                           "body_segments": {"parts": [{"type": "text", "text": "AI 카드 설명"}]}}]}
+    inputs.ai_writing = {"lead": {k: {"fp": body_fingerprint(pages[k]), **head} for k in ("D1", "D2-c1")},
+                         "insights": {k: {"fp": body_fingerprint(pages[k]), **cards} for k in ("D1", "D2-c1")}}
+    pages = {s.slide_id: s for s in build_deck(inputs).deck.slides}
+    assert "다른 AI 헤드라인" not in _texts(pages["D1"]) + _texts(pages["D2-c1"])
+    assert "AI 카드" not in _texts(pages["D1"]) and "AI 카드" in _texts(pages["D2-c1"])  # D2 takes page insights
