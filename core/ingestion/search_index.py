@@ -10,6 +10,7 @@ import calendar
 import json
 from datetime import date
 from decimal import Decimal
+from typing import Optional
 
 from core.decimalx import canonical_decimal, parse_decimal
 from core.ingestion.csv_import import content_hash, fact_id_from_hash
@@ -34,6 +35,13 @@ def _payload(brand_id: str, entity: str, metric: str, value: Decimal, dims: dict
             "source": SOURCE_LABEL, "url": None, "method": None, "confidence": "verified", "source_record_key": None}
 
 
+def _with_cat(dims: dict, cat: Optional[str]) -> dict:
+    """Combination-keyword sets ('브랜드+카테고리', 2-8c) carry their category; brand-name sets don't —
+    so existing brand-name facts keep exactly the same dims and content hash. Only window sums take a
+    category: the monthly series (2-8b) is the brand-name set alone, one series per (brand, seg)."""
+    return {**dims, "cat": cat} if cat else dims
+
+
 def monthly_fact(*, brand_id: str, entity: str, month: str, ratio: float, seg: str, scale_id: str,
                  measured_at: date) -> Fact:
     start, end = _month_bounds(month)
@@ -47,8 +55,8 @@ def monthly_fact(*, brand_id: str, entity: str, month: str, ratio: float, seg: s
 
 
 def window_sum_fact(*, brand_id: str, entity: str, window_label: str, total: Decimal, seg: str, scale_id: str,
-                    period_start: date, period_end: date, measured_at: date) -> Fact:
-    dims = {"window": window_label, "seg": seg, "scale_id": scale_id}
+                    period_start: date, period_end: date, measured_at: date, cat: Optional[str] = None) -> Fact:
+    dims = _with_cat({"window": window_label, "seg": seg, "scale_id": scale_id}, cat)
     payload = _payload(brand_id, entity, "search_group_sum", total, dims, period_start, period_end, measured_at)
     h = content_hash(payload)
     return Fact(id=fact_id_from_hash(h), content_hash=h, brand_id=brand_id, entity=entity, metric="search_group_sum",
