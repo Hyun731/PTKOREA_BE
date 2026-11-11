@@ -76,6 +76,7 @@ def test_without_competitor_accounts_the_page_asks_for_them_in_settings(client):
     brands[0]["official_profiles"] = [{"channel": "instagram", "url": "https://www.instagram.com/brand1/",
                                        "status": "confirmed"}]
     ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"], "changes": {"brands": brands}}))
+    add_owned_facts(pid, {"브랜드A": OWNED["브랜드A"]})  # 자사 수치만 확인 대기 — 비교에 모자란 건 경쟁사 쪽
     gaps = {s["template_id"]: s for s in ok(client.get(f"/v1/projects/{pid}/slide-plan"))["plan"]
             if s["readiness"] == "needs_input"}
     assert gaps["OW-CMP"]["cause"] == "setup" and "경쟁사 공식 계정" in gaps["OW-CMP"]["action"]

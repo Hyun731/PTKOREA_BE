@@ -54,6 +54,14 @@ def _search_setup(slot: SlotPlan, brands: list, related: list) -> Optional[str]:
     return None
 
 
+def _facts_waiting(waiting: set, template: str, brands: list) -> bool:
+    """Candidate numbers that would fill this page — for OW-CMP only a competitor's (the self brand's own
+    numbers already fill 2-1; what the comparison lacks is the other side)."""
+    if template == "OW-CMP":
+        return any((b.id, c) in waiting for b in brands for c in b.competitors)
+    return any(bid == b.id for bid, _ in waiting for b in brands)
+
+
 def _case_role(slot: SlotPlan) -> Optional[str]:
     if slot.template_id not in ("C1", "C2"):
         return None
@@ -86,7 +94,7 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
     waiting_search = {r.data.get("brand_id") for r in db.scalars(select(FactRow).where(
         FactRow.project_id == project.id, FactRow.verification_status == "candidate", FactRow.origin == "auto"))
         if (r.data or {}).get("metric") in ("search_group_sum", "search_index_monthly")}
-    waiting_facts: dict[str, set] = {}  # template -> brand ids with candidate numbers for it
+    waiting_facts: dict[str, set] = {}  # template -> (brand id, entity) with candidate numbers for it
     if any(s.template_id in FACT_METRICS for s in gaps):
         for r in db.scalars(select(FactRow).where(FactRow.project_id == project.id, FactRow.origin == "auto",
                                                   FactRow.verification_status == "candidate",
@@ -94,7 +102,7 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             metric = (r.data or {}).get("metric")
             for template, metrics in FACT_METRICS.items():
                 if metric in metrics:
-                    waiting_facts.setdefault(template, set()).add(r.data.get("brand_id"))
+                    waiting_facts.setdefault(template, set()).add((r.data.get("brand_id"), r.data.get("entity")))
     role_of: dict[str, str] = {}
     for b in core.brands:
         role_of.update({c: "competitor" for c in b.competitors})
@@ -121,7 +129,7 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
         elif any(mine(m.brand_id, m.entity, m.section_id) for m in waiting) or \
                 any(mine(r.brand_id, r.entity, "commerce_review") for r in waiting_reviews) or \
                 (section == "search" and any(b.id in waiting_search for b in brands)) or \
-                any(b.id in waiting_facts.get(slot.template_id, ()) for b in brands):
+                _facts_waiting(waiting_facts.get(slot.template_id, set()), slot.template_id, brands):
             cause = "adopt"
         elif section == "owned" and not any(p.status == "confirmed" for b in brands for p in b.official_profiles):
             cause = "setup"  # a candidate account still needs a person's check before it can be collected
