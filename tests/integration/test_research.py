@@ -107,6 +107,16 @@ class Fakes:
                 else:
                     rows.append({"index": idx, "sentiment": "neutral"})
             return CallResult(data={"comments": rows}, usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"docs"}:  # P2-5 블로그 문서 유형 — 표시 문구·간단한 키워드 규칙으로 흉내
+            self._hit("blog_type_classify")
+            rows = []
+            for m in re.finditer(r'<doc index="(\d+)">(.*?)</doc>', user, re.S):
+                idx, body = int(m.group(1)), m.group(2)
+                kind = ("sponsored" if "<markers>sponsored" in body else
+                        "shopping_affiliate" if "affiliate" in body.split("</markers>")[0] else
+                        "promo_template" if "입고 안내" in body else "real_use" if "써 보니" in body else "other")
+                rows.append({"index": idx, "type": kind})
+            return CallResult(data={"docs": rows}, usage={"model": "fake"}, cost_usd=0.002)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
             data: dict = {}
@@ -731,6 +741,57 @@ def test_search_item_counts_mentions_per_channel_without_calling_it_search_volum
     assert "partial" not in monthly[("blog", months[-1])]["dims"] and monthly[("blog", months[1])]["dims"]["partial"] == "1"
     assert ("blog", months[0]) not in monthly
     assert any("닿지 못함" in x for x in res["mentions"]["partial_months"])
+
+
+def test_search_item_classifies_top_blog_posts_by_type(client, fakes):
+    """P2-5: 브랜드명·대표 조합어마다 블로그 상위 30건을 유형별로 나누고 비중 Fact(n=30)와 근거 주소를 남긴다.
+    본문은 모바일 주소로 받아 끝의 대가 표시·제휴 링크까지 본다. 확인 전(candidate)."""
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    assert "naver_blog_types" in {c["id"] for c in it["channels"]}
+    bodies = (["몇 달 써 보니 바퀴가 튼튼해요"] * 15 + ["소정의 원고료를 받아 작성했습니다"] * 6
+              + ["쿠팡 파트너스 활동의 일환으로 수수료를 제공받습니다"] * 6 + ["신상 입고 안내 매장 방문 환영"] * 3)
+    fakes.naver_items = {"blog": [{"title": f"글 {i}", "url": f"https://blog.naver.com/u{i}/{100 + i}", "snippet": "요약",
+                                   "date": "2026-05-01", "author": "블로거", "author_url": None} for i in range(30)]}
+
+    def fetch_page(url, **kw):
+        fakes._hit("fetch_page")
+        i = int(url.rsplit("/", 1)[-1]) - 100
+        text = "본문 " * 900 + bodies[i]  # 표시 문구가 글 끝에 있다
+        return Page(url=url, final_url=url, title=f"글 {i}", text=text, content_hash=f"h{i}", published=None,
+                    publisher=None, image_urls=[])
+    research.PROVIDERS["fetch_page"] = fetch_page
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    bt = res["blog_types"]
+    assert set(bt["keywords"]) == {"브랜드A", "브랜드A 가방"} and fakes.calls["blog_type_classify"] == 6  # 30건 ÷ 10 × 2
+    assert bt["keywords"]["브랜드A"]["types"] == {"real_use": 15, "sponsored": 6, "shopping_affiliate": 6,
+                                                "promo_template": 3, "other": 0}
+
+    shares = [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"] == "blog_type_share"]
+    assert len(shares) == 10 and all(f["verification_status"] == "candidate" for f in shares)
+    by = {(f["dims"]["keyword"], f["dims"]["type"]): f for f in shares}
+    real = by[("브랜드A", "real_use")]
+    assert float(real["value"]) == 50.0 and real["dims"]["n"] == "30" and real["entity"] == "브랜드A"
+    assert float(by[("브랜드A", "other")]["value"]) == 0.0
+    assert sum(float(by[("브랜드A", t)]["value"]) for t in ("real_use", "sponsored", "shopping_affiliate",
+                                                           "promo_template", "other")) == 100.0
+
+
+def test_blog_types_are_not_made_from_a_thin_sample(client, fakes):
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    fakes.naver_items = {"blog": [{"title": f"글 {i}", "url": f"https://blog.naver.com/u{i}/{i}", "snippet": "써 보니 좋아요",
+                                   "date": None, "author": None, "author_url": None} for i in range(5)]}
+    research.PROVIDERS["fetch_page"] = lambda url, **kw: (_ for _ in ()).throw(ProviderError("SOURCE_UNAVAILABLE", "x"))
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["blog_types"]["keywords"]["브랜드A"]["n"] == 5 and res["blog_types"]["keywords"]["브랜드A"]["fetched"] == 0
+    assert any("5건" in n for n in res["blog_types"]["notes"])
+    assert not [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"] == "blog_type_share"]
 
 
 def _set_brand(client, pid, **changes):
