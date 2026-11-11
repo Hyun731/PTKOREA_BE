@@ -55,3 +55,13 @@ def test_monthly_fact_carries_partial_only_when_capped():
     full = mention_monthly_fact(brand_id="SO", entity="샘소나이트", channel="blog", keyword="샘소나이트", month="2026-09",
                                 count=812, partial=False, measured_at=TODAY)
     assert "partial" not in full.dims and full.id != f.id
+
+
+def test_qc_blocks_calling_document_counts_search_volume_but_not_the_index_disclaimer():
+    from core.quality.qc import OVERCLAIMS
+
+    assert {"블로그 검색량", "검색량이 많", "검색량 1위"} <= set(OVERCLAIMS)
+    # 검색 지수 장표의 각주("절대 검색량 아님")는 걸리지 않는다
+    for footnote in ("상대 지수 0~100 · 절대 검색량 아님", "검색어 그룹 상대 지수 합 기준(절대 검색량 아님)",
+                     "블로그 검색 결과 문서 수(누적)"):
+        assert not [p for p in OVERCLAIMS if p in footnote]

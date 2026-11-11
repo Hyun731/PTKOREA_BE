@@ -28,7 +28,10 @@ FORBIDDEN_WORDS = ["검토 필요", "재측정 필요", "공개 자료 없음", 
 INTERNAL_ID = re.compile(r"\b(?:F|DF|FN|SRC|EV|AS|CL)-[0-9A-Za-z]{4,}")
 # Assertions the data cannot support (ad heuristics / relative search indexes as facts).
 OVERCLAIMS = ["광고 집행 게시물", "유료 광고 게시물", "광고비 투입", "광고비를", "검색량이 증가", "검색량 증가", "판매 증가",
-              "매출 증가", "구매 전환 저하", "관심이 이동", "관심 이동", "시장 점유율"]
+              "매출 증가", "구매 전환 저하", "관심이 이동", "관심 이동", "시장 점유율",
+              # P2-4: 언급량(mention_total·mention_monthly)은 검색 결과 문서 수(누적)지 검색량이 아니다
+              "블로그 검색량", "카페 검색량", "뉴스 검색량", "언급 검색량", "검색량이 많", "검색량이 가장", "검색량 1위",
+              "검색량이 높", "검색량이 적", "검색량이 낮"]
 DIGIT = re.compile(r"\d")
 
 
