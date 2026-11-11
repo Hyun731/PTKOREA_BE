@@ -724,12 +724,13 @@ def test_search_item_counts_mentions_per_channel_without_calling_it_search_volum
 
     monthly = {(f["dims"]["channel"], f["dims"]["month"]): f for f in facts
                if f["metric"] == "mention_monthly" and f["entity"] == "브랜드A"}
-    assert set(monthly) == {(ch, m) for ch in ("blog", "news") for m in months}
     news = [float(monthly[("news", m)]["value"]) for m in months]
     assert news == [0, 2, 1] and not any("partial" in monthly[("news", m)]["dims"] for m in months)
-    # 블로그: 최근 100일만 닿았다 — 가장 최근 달은 다 셌고, 가장 오래된 달은 일부(partial)
-    assert "partial" not in monthly[("blog", months[-1])]["dims"] and monthly[("blog", months[0])]["dims"]["partial"] == "1"
-    assert res["mentions"]["partial_months"]
+    # 블로그: 최근 50일만 닿았다 — 가장 최근 달은 다 셌고, 그 앞 달은 일부(partial),
+    # 가장 오래된 달은 하나도 닿지 못해 Fact를 만들지 않는다(0으로 남기지 않음)
+    assert "partial" not in monthly[("blog", months[-1])]["dims"] and monthly[("blog", months[1])]["dims"]["partial"] == "1"
+    assert ("blog", months[0]) not in monthly
+    assert any("닿지 못함" in x for x in res["mentions"]["partial_months"])
 
 
 def _set_brand(client, pid, **changes):

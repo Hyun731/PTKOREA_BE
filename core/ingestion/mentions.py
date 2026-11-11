@@ -72,10 +72,12 @@ def recent_months(today: date, n: int) -> list[str]:
     return out[::-1]
 
 
-def count_by_month(dates: Iterable[Optional[date]], months: list[str], *, reached_start: bool) -> dict[str, tuple[int, bool]]:
-    """날짜순(최신 먼저)으로 넘겨 본 문서들의 작성일 → {달: (문서 수, partial)}.
-    reached_start: 첫 달 1일보다 오래된 글까지 닿았거나 결과가 끝났으면 True. False면(1,000건 한도) 본 글 중
-    가장 오래된 날짜보다 앞선 날이 있는 달은 다 세지 못했으므로 partial."""
+def count_by_month(dates: Iterable[Optional[date]], months: list[str], *,
+                   reached_start: bool) -> dict[str, Optional[tuple[int, bool]]]:
+    """날짜순(최신 먼저)으로 넘겨 본 문서들의 작성일 → {달: (문서 수, partial) 또는 None}.
+    reached_start: 첫 달 1일보다 오래된 글까지 닿았거나 결과가 끝났으면 True. False면(1,000건 한도)
+    - 본 글 중 가장 오래된 날짜가 그 달 안이면 그 달은 다 세지 못했으므로 partial
+    - 그 달 마지막 날보다도 뒤면 그 달은 하나도 보지 못했으므로 None(0으로 남기지 않는다)."""
     days = [d for d in dates if d is not None]
     counts = {mo: 0 for mo in months}
     for d in days:
@@ -83,11 +85,15 @@ def count_by_month(dates: Iterable[Optional[date]], months: list[str], *, reache
         if key in counts:
             counts[key] += 1
     oldest = min(days, default=None)
-    out = {}
+    out: dict[str, Optional[tuple[int, bool]]] = {}
     for mo in months:
-        start, _ = month_bounds(mo)
-        partial = not reached_start and (oldest is None or start < oldest)
-        out[mo] = (counts[mo], partial)
+        start, end = month_bounds(mo)
+        if reached_start:
+            out[mo] = (counts[mo], False)
+        elif oldest is None or oldest > end:
+            out[mo] = None
+        else:
+            out[mo] = (counts[mo], start < oldest)
     return out
 
 

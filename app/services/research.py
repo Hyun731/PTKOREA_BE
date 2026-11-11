@@ -1543,13 +1543,19 @@ def run_mentions(db: Session, ledger: RunLedger, project: Project, item: Researc
                 if res is None:
                     break
                 items = res.data.get("items") or []
-                days += [d for it in items if (d := _safe_date(it.get("date")))]
-                if len(items) < 100 or (days and min(days) < first_day):
+                page_days = [d for it in items if (d := _safe_date(it.get("date")))]
+                days += page_days
+                # 뉴스 날짜순은 완전히 시간순이 아닐 때가 있어(실제 응답) 한 쪽 전체가 첫 달보다 오래돼야 멈춘다
+                if len(items) < 100 or (page_days and max(page_days) < first_day):
                     reached = True
                     break
             if res is None and not days:
                 continue
-            for mo, (count, partial) in count_by_month(days, months, reached_start=reached).items():
+            for mo, counted in count_by_month(days, months, reached_start=reached).items():
+                if counted is None:  # 1,000건 한도로 그 달에는 하나도 닿지 못했다 — 0으로 남기지 않는다
+                    out["partial_months"].append(f"{e} {channel} {mo} (닿지 못함)")
+                    continue
+                count, partial = counted
                 if partial:
                     out["partial_months"].append(f"{e} {channel} {mo}")
                 facts.append(mention_monthly_fact(brand_id=item.brand_id, entity=e, channel=channel, keyword=name, month=mo,

@@ -40,9 +40,9 @@ def test_recent_months_are_the_last_complete_months():
 def test_count_by_month_marks_months_the_cap_did_not_reach_as_partial():
     months = ["2026-08", "2026-09", "2026-10"]
     dates = [date(2026, 10, 30), date(2026, 10, 2), date(2026, 9, 20), date(2026, 11, 1), None]
-    # 한도에 걸려 9월 20일까지만 봤다 → 9월은 일부, 8월은 하나도 못 셈(0이지만 일부)
+    # 한도에 걸려 9월 20일까지만 봤다 → 9월은 일부, 8월은 하나도 못 봤으니 0이 아니라 None
     out = count_by_month(dates, months, reached_start=False)
-    assert out == {"2026-08": (0, True), "2026-09": (1, True), "2026-10": (2, False)}
+    assert out == {"2026-08": None, "2026-09": (1, True), "2026-10": (2, False)}
     # 첫 달 이전까지 닿았으면 0도 실제 관측
     assert count_by_month(dates, months, reached_start=True)["2026-08"] == (0, False)
 
