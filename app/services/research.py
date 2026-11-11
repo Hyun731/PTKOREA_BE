@@ -70,14 +70,16 @@ def _providers():
             instagram_post, instagram_post_comments, instagram_profile, instagram_user_posts, threads_search,
             twitter_search_posts, youtube_channel, youtube_channel_videos, youtube_video,
         )
-        from integrations.naver.client import search_trend
+        from integrations.naver.client import search_trend, shopping_keyword_breakdown, shopping_keyword_trend
         from integrations.google_trends.client import search_trend as google_trends_search
         PROVIDERS.update(search=search, fetch_page=fetch_page, fetch_image=fetch_image, structured=structured,
                          instagram_post=instagram_post, instagram_profile=instagram_profile, youtube_video=youtube_video,
                          youtube_channel=youtube_channel, instagram_hashtag=hashtag_posts, naver_search_trend=search_trend,
                          instagram_user_posts=instagram_user_posts, youtube_channel_videos=youtube_channel_videos,
                          google_trends_search=google_trends_search, instagram_post_comments=instagram_post_comments,
-                         twitter_search_posts=twitter_search_posts, threads_search=threads_search)
+                         twitter_search_posts=twitter_search_posts, threads_search=threads_search,
+                         shopping_keyword_trend=shopping_keyword_trend,
+                         shopping_keyword_breakdown=shopping_keyword_breakdown)
     return PROVIDERS
 
 
@@ -1422,6 +1424,98 @@ def run_search_item(db: Session, ledger: RunLedger, project: Project, item: Rese
     return out
 
 
+# ------------------------------------------------------------------ shopping insight (P2-2, 네이버 데이터랩)
+
+SHOP_MAX_KEYWORDS = 5  # 쇼핑인사이트 키워드 추이: 요청당 최대 5개 = 한 스케일
+
+
+def run_shopping_insight(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
+    """품목별 쇼핑 수요(피드백 #1 축 2): 브랜드 제품군(Brand.categories)마다
+    1) 최상위 쇼핑 분야를 고르고 — 분야마다 제품군 검색어의 월별 데이터 유무를 대조(사람에게 묻지 않음, 30일 캐시)
+    2) 그 분야 안 제품군별 월별 클릭 지수(같은 분야 제품군은 한 요청 = 한 스케일)
+    3) 성수기 달(평균 대비 기준 배수 이상)과 제품군별 연령대·성별 클릭 비중
+    을 확인 전(candidate) Fact로 남긴다. 최근 12개월(비교 창) 기준."""
+    from app.services.catalog import comparison_window
+    from core.ingestion.shopping_index import click_index_facts, peak_facts, pick_top_category, share_facts
+    from core.rules.config import RulesConfig
+    from integrations.naver.client import SHOP_TOP_CATEGORIES
+
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    keywords = [c for c in dict.fromkeys(brand.categories) if c and c != brand.name][:SHOP_MAX_KEYWORDS]
+    out: dict = {"facts": 0, "categories": {}, "errors": []}
+    if not keywords:
+        out["errors"].append({"code": "NEEDS_INPUT", "message": "설정에 주력 카테고리(제품군)가 없어 쇼핑 수요를 볼 수 없습니다"})
+        return out
+    start, end = comparison_window(core)
+    today = date.today()
+
+    def call(endpoint: str, req: dict, fn, cache_days: int = 1):
+        return ledger.call("naver", endpoint, req, 0.0, fn, cache_days=cache_days)
+
+    # 1) 분야 고르기
+    points_by_code: dict[str, dict[str, int]] = {}
+    try:
+        for code in SHOP_TOP_CATEGORIES:
+            res = call("shopping_keywords_probe", {"category": code, "keywords": keywords, "start": str(start), "end": str(end)},
+                       lambda c=code: p["shopping_keyword_trend"](c, [(k, [k]) for k in keywords], start, end), cache_days=30)
+            points_by_code[code] = {r["group"]: len(r["points"]) for r in res.data["results"]}
+    except ProviderError as exc:
+        out["errors"].append({"code": exc.code, "message": f"쇼핑 분야 확인: {exc.message}"})
+        return out
+    picked = pick_top_category(points_by_code, keywords)
+    out["categories"] = {k: (SHOP_TOP_CATEGORIES.get(c) if c else None) for k, c in picked.items()}
+    for k, c in picked.items():
+        if c is None:
+            out["errors"].append({"code": "NO_DATA", "message": f"{k}: 네이버쇼핑 분야 어디에도 클릭 데이터가 없습니다"})
+
+    existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+
+    def add(fact) -> bool:
+        if fact.id in existing:
+            return False
+        db.add(FactRow(project_id=project.id, fact_id=fact.id, origin="auto", research_item_id=item.id,
+                       data=json.loads(fact.model_dump_json()), verification_status="candidate",
+                       review_note="네이버 데이터랩 쇼핑인사이트 자동 수집"))
+        existing.add(fact.id)
+        out["facts"] += 1
+        return True
+
+    lift = RulesConfig.load().shop_peak_lift
+    by_code: dict[str, list[str]] = {}
+    for k, c in picked.items():
+        if c:
+            by_code.setdefault(c, []).append(k)
+    for code, kws in by_code.items():
+        # 2) 같은 분야의 제품군은 한 요청(한 스케일)으로
+        try:
+            res = call("shopping_keyword_trend", {"category": code, "keywords": kws, "start": str(start), "end": str(end)},
+                       lambda c=code, ks=kws: p["shopping_keyword_trend"](c, [(k, [k]) for k in ks], start, end))
+        except ProviderError as exc:
+            out["errors"].append({"code": exc.code, "message": f"{SHOP_TOP_CATEGORIES[code]} 클릭 추이: {exc.message}"})
+            continue
+        index = click_index_facts(brand_id=item.brand_id, category_code=code, results=res.data["results"],
+                                  scale_id=f"naver-shop:{item.brand_id}:{code}", measured_at=today)
+        for f in index + peak_facts(index, lift=lift, measured_at=today):
+            add(f)
+        # 3) 제품군별 연령·성별
+        for k in kws:
+            for by in ("age", "gender"):
+                try:
+                    res = call("shopping_keyword_breakdown", {"category": code, "keyword": k, "by": by,
+                                                              "start": str(start), "end": str(end)},
+                               lambda c=code, kw=k, b=by: p["shopping_keyword_breakdown"](c, kw, b, start, end))
+                except ProviderError as exc:
+                    out["errors"].append({"code": exc.code, "message": f"{k} {by}: {exc.message}"})
+                    continue
+                for f in share_facts(brand_id=item.brand_id, keyword=k, category_code=code, by=by,
+                                     results=res.data["results"], start=start, end=end, measured_at=today):
+                    add(f)
+    db.commit()
+    return out
+
+
 # ------------------------------------------------------------------ search trend (Phase 3-4, Google Trends)
 
 def run_search_trend_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
@@ -1527,7 +1621,13 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                     made = r["created"]
                 elif item.section_id == "search_trend":
                     # Google Trends는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.
-                    r = run_search_trend_item(s, ledger, project, item)
+                    chans = set(item.channels or [])
+                    r = run_search_trend_item(s, ledger, project, item) if "google_trends" in chans or not chans else \
+                        {"facts": 0, "errors": []}
+                    if "shopping_insight" in chans and settings.provider_configured("naver"):
+                        shop = run_shopping_insight(s, ledger, project, item)
+                        r = {**r, "facts": r.get("facts", 0) + shop["facts"], "shopping": shop,
+                             "errors": [*r.get("errors", []), *shop["errors"]]}
                     made = r.get("facts", 0)
                 elif item.section_id == "commerce_review":
                     # 무신사는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.

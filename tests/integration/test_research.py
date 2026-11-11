@@ -267,6 +267,30 @@ class Fakes:
             for name, _ in groups
         ]}, usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
 
+    SHOP_CODE = "50000001"  # 가짜 데이터: 모든 제품군이 패션잡화에만 클릭이 있다
+
+    def shopping_keyword_trend(self, category, keywords, start, end, **kw):
+        self._hit("shopping_keyword_trend")
+        months = []
+        y, m = start.year, start.month
+        while (y, m) <= (end.year, end.month):
+            months.append(f"{y:04d}-{m:02d}-01")
+            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        on = category == self.SHOP_CODE
+        # 7·8월이 성수기(평균의 1.2배 이상)가 되도록
+        return CallResult(data={"results": [
+            {"group": name, "points": [{"period": p, "ratio": 100.0 if p[5:7] in ("07", "08") else 40.0 + j}
+                                       for j, p in enumerate(months)] if on else []}
+            for j, (name, _) in enumerate(keywords)
+        ]}, usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
+
+    def shopping_keyword_breakdown(self, category, keyword, by, start, end, **kw):
+        self._hit("shopping_keyword_breakdown")
+        groups = {"age": {"20": 30.0, "30": 50.0, "40": 20.0}, "gender": {"f": 60.0, "m": 40.0}}[by]
+        return CallResult(data={"results": [{"group": category, "points": [
+            {"period": "2026-01-01", "ratio": v, "group": g} for g, v in groups.items()]}]},
+            usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
+
     def google_trends_search(self, keywords, geo="KR", **kw):
         self._hit("google_trends_search")
         if self.fail_trends:
@@ -288,7 +312,9 @@ def fakes(monkeypatch):
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
                               instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos,
                               google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments,
-                              twitter_search_posts=f.twitter_search_posts, threads_search=f.threads_search)
+                              twitter_search_posts=f.twitter_search_posts, threads_search=f.threads_search,
+                              shopping_keyword_trend=f.shopping_keyword_trend,
+                              shopping_keyword_breakdown=f.shopping_keyword_breakdown)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -745,7 +771,9 @@ def test_search_trend_item_fails_quietly_when_google_trends_blocks_it(client, fa
     it = item(plan, "search_trend")
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
-    assert res["status"] == "failed" and res["errors"][0]["code"] == "RATE_LIMITED"
+    # Trends만 막혔다 — 쇼핑인사이트(P2-2)는 모였으니 실패가 아니라 일부 성공
+    assert res["status"] == "partial" and res["errors"][0]["code"] == "RATE_LIMITED"
+    assert res["shopping"]["facts"] > 0
 
     # TR1 isn't in the sample project's curated demo slide list (like M1/M2) — turn it on explicitly.
     project = ok(client.get(f"/v1/projects/{pid}"))
@@ -753,6 +781,30 @@ def test_search_trend_item_fails_quietly_when_google_trends_blocks_it(client, fa
                                                 "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["TR1"]}}))
     missing = {m["slot_id"]: m for m in ok(client.get(f"/v1/projects/{pid}/outline"))["missing"]}
     assert missing["TR1"]["cause"] == "collect"
+
+
+def test_search_trend_item_collects_shopping_demand_by_product_category(client, fakes):
+    """P2-2: 제품군마다 쇼핑 분야를 스스로 고르고, 월별 클릭 지수·성수기·연령/성별 비중을 확인 전 Fact로."""
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search_trend")
+    assert "shopping_insight" in [c["id"] for c in it["channels"]]
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded"
+    assert res["shopping"]["categories"] == {"가방": "패션잡화"}  # 가짜 데이터는 패션잡화에만 클릭이 있다
+    assert fakes.calls["shopping_keyword_trend"] == 10 + 1  # 분야 10개 대조 + 고른 분야 추이 1회
+    assert fakes.calls["shopping_keyword_breakdown"] == 2  # 제품군 1개 × 연령·성별
+
+    facts = [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"].startswith("shop_")]
+    assert all(f["verification_status"] == "candidate" and f["origin"] == "auto" for f in facts)
+    index = [f for f in facts if f["metric"] == "shop_click_index"]
+    assert len(index) == 12 and {f["entity"] for f in index} == {"가방"} and index[0]["dims"]["category"] == "50000001"
+    peaks = sorted(f["dims"]["month"][5:] for f in facts if f["metric"] == "shop_peak_lift")
+    assert peaks == ["07", "08"]
+    shares = {(f["dims"]["by"], f["dims"]["group"]): float(f["value"]) for f in facts if f["metric"] == "shop_click_share"}
+    assert shares == {("age", "20"): 30.0, ("age", "30"): 50.0, ("age", "40"): 20.0, ("gender", "f"): 60.0,
+                      ("gender", "m"): 40.0}
 
 
 def test_commerce_review_item_collects_rating_and_keywords_excluding_sponsored(client, fakes, monkeypatch):
