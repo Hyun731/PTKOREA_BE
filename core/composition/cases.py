@@ -13,7 +13,7 @@ from typing import Callable, Optional
 from urllib.parse import unquote, urlparse
 
 from core.composition.chrome import (
-    D, L, N, P, PartFactory, T, circled, footnote_block, lead_block, takeaway_block, text_block, title_block,
+    D, L, N, P, PartFactory, T, circled, footnote_block, insight_blocks, lead_block, text_block, title_block,
 )
 from core.composition.formatters import UNIT_FORMATTER
 from core.composition.measure import PX_PER_PT, height_at, line_count, text_width
@@ -360,9 +360,61 @@ def _section_head(block_id: str, x: float, y: float, w: float, label: str, note:
     return out
 
 
+HANGUL = re.compile(r"[가-힣]")
+LATIN = re.compile(r"[A-Za-z]")
+DETAIL_BODY_BOTTOM = 566  # the body ends above the insight row (P3-5 cards sit in region("insights"))
+
+
+def is_foreign(text: str) -> bool:
+    """A source sentence mostly in another language (an English press release, a global site): Latin
+    letters outnumber Hangul several times over."""
+    latin = len(LATIN.findall(text))
+    return latin >= 12 and len(HANGUL.findall(text)) * 4 < latin
+
+
+def _detail_quotes(claims: list[ClaimRef]) -> list[tuple[str, ClaimRef]]:
+    """Distinct verbatim excerpts with the accepted claim each one backs (the first claim wins)."""
+    seen: dict[str, ClaimRef] = {}
+    for c in claims:
+        if c.quote and c.quote not in seen:
+            seen[c.quote] = c
+    return list(seen.items())
+
+
+def _quote_paragraphs(quote: str, claim: ClaimRef, m: CaseMaterial, pf: PartFactory, width: float,
+                      pub: str) -> list[Paragraph]:
+    """A Korean source sentence verbatim; a foreign one as a one-line Korean summary (the accepted claim it
+    backs, which a planner already checked against it) with the original shortened into a link (P3-8)."""
+    if not is_foreign(quote):
+        return [P(Part(type="quote", text=_fit_lines(f"“{quote}”", width, 9.5, 2))), P(N(pub), color="muted")]
+    summary = _claim_parts(claim, pf)
+    plain = "".join(x.rendered() for x in summary)
+    if line_count([(plain, False)], width, 9.5) > 1 and not any(x.type in ("fact", "name") for x in summary):
+        summary = [T(_fit_lines(plain, width, 9.5, 1))]
+    original = _fit_one_line(f"원문 “{quote}”", width - text_width(f" · {pub}", 7) - 8, 7)
+    tail = L(original, m.source.url) if m.source.url else Part(type="quote", text=original)
+    return [P(*summary), P(tail, T(" · "), N(pub), color="muted")]
+
+
+def _detail_insights(m: CaseMaterial, interp: list[ClaimRef], shown_head: Optional[ClaimRef],
+                     pf: PartFactory) -> list[tuple[list[Part], list[Part]]]:
+    """Rule cards for the bottom insight row until the build's AI cards (P3-5) replace them: the accepted
+    implication, then the interpretations not already in the headline. The figures are not repeated here —
+    the summary box and the figure tile already show them."""
+    cards: list[tuple[list[Part], list[Part]]] = []
+    if m.ai_implication and not re.search(r"\d", m.ai_implication):
+        cards.append(([T("적용 시사점")], [T(m.ai_implication)]))
+    for c in interp:
+        if c is not shown_head:
+            cards.append(([T("읽히는 점")], _claim_parts(c, pf)))
+    return cards[:3]
+
+
 def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block], prefix: str = "C2") -> list[SlideSpec]:
-    """v6 'CASE' page per accepted case: big image left; summary box, key figure, 진행 방식 and verbatim
-    source excerpts right. Everything shown is an accepted claim, a confirmed fact or a verbatim quote."""
+    """v6 'CASE' page per accepted case: big image left; summary box, key figure, 진행 방식 and source
+    excerpts right; three numbered insights at the bottom (P3-5). Everything shown is an accepted claim, a
+    confirmed fact or a verbatim quote. Without a confirmed figure the summary box would only repeat 진행 방식,
+    so the summary and figure tiles are dropped and the image takes the room (P3-8)."""
     pages: list[SlideSpec] = []
     ok = [m for m in materials if not eligible_case(m)]
     for n, m in enumerate(ok, start=1):
@@ -385,33 +437,36 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
         l_size, l_line = (19, 25) if height_at([P(*lead_parts)], 1184, 19, 25) <= 50 else (15, 20)
         blocks.append(text_block("lead_claim", "lead", Region(x=48, y=71, w=1184, h=73), [P(*lead_parts)],
                                  spec="lead", color="navy", size=l_size, line=l_line, editable=True))
-        # left: the image with its source caption
-        img = Region(x=48, y=146, w=560, h=315)
+        has_figure = bool(metric_ids)
+        # left: the image with its source caption — wider when the right column has no summary/figure row
+        img_w = 560 if has_figure else 640
+        img = Region(x=48, y=146, w=img_w, h=round(img_w * 9 / 16))
         blocks.append(ImageBlock(block_id="case_image", region=img, asset_id=m.asset.id, crop=m.asset.crop))
         pub = _publisher(m)
         cap = [N(pub)] + ([T(" · "), D(m.source.published_at)] if m.source.published_at else []) + [T(" 원문 이미지")]
-        blocks.append(text_block("case_image_cap", "caption", Region(x=48, y=464, w=560, h=14), [P(*cap)],
+        cap_y = img.y + img.h + 3
+        blocks.append(text_block("case_image_cap", "caption", Region(x=48, y=cap_y, w=img_w, h=14), [P(*cap)],
                                  spec="caption", color="muted", size=6.5, line=9, weight="light"))
-        blocks.append(text_block("case_link", "caption", Region(x=48, y=482, w=560, h=16), [_link_line(m, 560)],
-                                 spec="card_body", align="l", size=8.5, line=12))
-        # right top: navy summary box + key figure tile
-        rx, rw = 640, 592
-        summary = [P(T("성과 요약", weight="semibold", color="white"))]
-        bullets = ([P(N(getattr(pf.registry.get(fid), "label", None) or "수치"), T(" "),
-                      pf.fact(fid, UNIT_FORMATTER.get(pf.registry.get(fid).unit, "int"), bold=True, color="white"),
-                      bullet="▲") for fid in metric_ids[:3]]
-                   or [P(*_claim_parts(c, pf), bullet="▲") for c in facts_claims[:3]])
-        # The box holds what fits; every claim still appears in full under 진행 방식 below.
-        while len(bullets) > 1 and height_at(summary + bullets, 372, 8.5, 13) > 84:
-            bullets = bullets[:-1]
-        s_size, s_line = (8.5, 13) if height_at(summary + bullets, 372, 8.5, 13) <= 84 else (7.5, 11)
-        blocks.append(ShapeBlock(block_id="summary_bg", region=Region(x=rx, y=146, w=400, h=96), fill="navy"))
-        blocks.append(text_block("summary", "body", Region(x=rx + 16, y=154, w=372, h=84), summary + bullets,
-                                 spec="card_body", color="summary_text", size=s_size, line=s_line))
-        tile = Region(x=rx + 410, y=146, w=rw - 410, h=96)
-        blocks.append(ShapeBlock(block_id="figure_bg", region=tile, fill="tint"))
-        inner = Region(x=tile.x + 12, y=tile.y + 10, w=tile.w - 24, h=tile.h - 20)
-        if metric_ids:
+        blocks.append(text_block("case_link", "caption", Region(x=48, y=cap_y + 18, w=img_w, h=16),
+                                 [_link_line(m, img_w)], spec="card_body", align="l", size=8.5, line=12))
+        rx = img.x + img.w + 32
+        rw = 1232 - rx
+        y = 146
+        if has_figure:
+            # right top: navy summary box (confirmed figures) + key figure tile
+            summary = [P(T("성과 요약", weight="semibold", color="white"))]
+            bullets = [P(N(getattr(pf.registry.get(fid), "label", None) or "수치"), T(" "),
+                         pf.fact(fid, UNIT_FORMATTER.get(pf.registry.get(fid).unit, "int"), bold=True, color="white"),
+                         bullet="▲") for fid in metric_ids[:3]]
+            while len(bullets) > 1 and height_at(summary + bullets, 372, 8.5, 13) > 84:
+                bullets = bullets[:-1]
+            s_size, s_line = (8.5, 13) if height_at(summary + bullets, 372, 8.5, 13) <= 84 else (7.5, 11)
+            blocks.append(ShapeBlock(block_id="summary_bg", region=Region(x=rx, y=146, w=400, h=96), fill="navy"))
+            blocks.append(text_block("summary", "body", Region(x=rx + 16, y=154, w=372, h=84), summary + bullets,
+                                     spec="card_body", color="summary_text", size=s_size, line=s_line))
+            tile = Region(x=rx + 410, y=146, w=rw - 410, h=96)
+            blocks.append(ShapeBlock(block_id="figure_bg", region=tile, fill="tint"))
+            inner = Region(x=tile.x + 12, y=tile.y + 10, w=tile.w - 24, h=tile.h - 20)
             fid = metric_ids[0]
             label = getattr(pf.registry.get(fid), "label", None) or "핵심 수치"
             blocks.append(text_block("figure_label", "body", Region(x=inner.x, y=inner.y, w=inner.w, h=34),
@@ -420,46 +475,41 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
             fig = [P(pf.fact(fid, UNIT_FORMATTER.get(pf.registry.get(fid).unit, "int"), color="navy"))]
             f_size = next((sz for sz in (20, 16, 13, 11) if height_at(fig, inner.w, sz, sz * 1.3) <= 34), 11)
             blocks.append(text_block("figure", "body", Region(x=inner.x, y=inner.y + 38, w=inner.w, h=34), fig,
-                                     spec="card_body", size=f_size, line=round(f_size * 1.3, 1), weight="heavy", valign="b"))
-        else:
-            blocks.append(text_block("figure_label", "body", Region(x=inner.x, y=inner.y, w=inner.w, h=18), [P(T("발행처"))],
-                                     spec="card_body", size=9, line=13, color="muted"))
-            blocks.append(text_block("figure", "body", Region(x=inner.x, y=inner.y + 22, w=inner.w, h=inner.h - 22),
-                                     [P(N(_fit_lines(pub, inner.w, 12, 2)))], spec="card_body", size=12, line=17,
-                                     weight="bold", color="navy"))
-        # right middle: 진행 방식 (accepted fact claims)
-        y = 258
+                                     spec="card_body", size=f_size, line=round(f_size * 1.3, 1), weight="heavy",
+                                     valign="b"))
+            y = 258
+        # right middle: 진행 방식 (accepted fact claims), only what fits above the insight row
         blocks += _section_head("how_head", rx, y, rw, "진행 방식")
         y += 31
         for i, c in enumerate(facts_claims[:4]):
             para = P(*_claim_parts(c, pf), bullet="·")
             h = max(18, _height([para], rw, "card_body"))
+            if i and y + h > DETAIL_BODY_BOTTOM:
+                break
             blocks.append(text_block(f"how{i}", "body", Region(x=rx, y=y, w=rw, h=h), [para], spec="card_body",
                                      editable=True))
             y += h + 6
-        # right bottom: verbatim excerpts (the AI candidates' source sentences)
-        quotes = list(dict.fromkeys(c.quote for c in facts_claims + interp if c.quote))[:3]
-        if quotes and y < 560:
+        # right bottom: source excerpts (the AI candidates' source sentences); foreign ones summarized in Korean
+        quotes = _detail_quotes(facts_claims + interp)[:3]
+        if quotes and y + 8 + 31 + 30 <= DETAIL_BODY_BOTTOM:
             y += 8
-            blocks += _section_head("quote_head", rx, y, rw, "원문 근거", note="원문 발췌")
+            foreign = any(is_foreign(q) for q, _ in quotes)
+            blocks += _section_head("quote_head", rx, y, rw, "원문 근거",
+                                    note="외국어 원문은 한국어 요약, 원문은 링크" if foreign else "원문 발췌")
             y += 31
-            for i, q in enumerate(quotes):
-                if y > 610:
-                    break
-                text = _fit_lines(f"“{q}”", rw - 17, 9.5, 2)
-                paras = [P(Part(type="quote", text=text)), P(N(pub), color="muted")]
+            for i, (q, claim) in enumerate(quotes):
+                paras = _quote_paragraphs(q, claim, m, pf, rw - 17, pub)
                 h = _height(paras, rw - 17, "card_body")  # QC measures every line at the block size
+                if y + h + 2 > DETAIL_BODY_BOTTOM:
+                    break
                 blocks.append(ShapeBlock(block_id=f"quote{i}_dot", region=Region(x=rx, y=y + 5, w=8, h=8), fill="green"))
                 blocks.append(text_block(f"quote{i}", "body", Region(x=rx + 17, y=y, w=rw - 17, h=h + 2), paras,
                                          spec="card_body", line=14))
-                blocks[-1].paragraphs[1].parts[0].size = 7
+                for part in blocks[-1].paragraphs[1].parts:
+                    part.size = 7
                 y += h + 8
-        # bottom: P4 시사점(있으면 우선) or the remaining interpretation as the summary line
-        if m.ai_implication:
-            blocks.append(takeaway_block(P(T(m.ai_implication))))
-        elif len(interp) > 1 or (interp and head is not interp[0]):
-            rest = interp[1] if head is interp[0] else interp[0]
-            blocks.append(takeaway_block(P(*_claim_parts(rest, pf))))
+        # bottom: three numbered insights (P3-5) instead of one summary line; the build's AI cards replace them
+        blocks += insight_blocks(_detail_insights(m, interp, None if m.ai_detail else head, pf))
         foot = [T("*출처  "), N(pub)]
         if m.source.published_at:
             foot += [T(" "), D(m.source.published_at)]

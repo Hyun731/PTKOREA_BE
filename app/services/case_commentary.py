@@ -27,13 +27,13 @@ from integrations.base import ProviderError
 
 # detail becomes the case card's lead (core/composition/cases.py case_detail_pages: a custom
 # Region(w=1184, h=50) at size 19/line 25, weight resolved from the generic "lead" type_spec =
-# bold, not the generic lead spec's own region); implication becomes the standard takeaway block
-# (region("takeaway"), type_spec("takeaway") size 11/line 16, weight semibold). Measuring against
+# bold, not the generic lead spec's own region); implication becomes the first numbered insight card's
+# body (P3-8: chrome.insight_blocks column, type_spec("insight_body") size 9.5/line 13.5). Measuring against
 # the exact block + resolved weight each one renders with — the same way core/quality/qc.py's
 # TEXT_OVERFLOW check does via paragraph_runs()/line_count() — is required: a plain character
-# count under-predicts width because both blocks render bold/semibold, which is wider per char.
+# count under-predicts width because the lead renders bold, which is wider per char.
 _LEAD = {"w": 1184.0, "h": 50.0, "size": 19.0, "line": 25.0, "weight": "bold"}
-_TAKEAWAY = {"w": 1184.0, "h": 38.0, "size": 11.0, "line": 16.0, "weight": "semibold"}
+_TAKEAWAY = {"w": 367.0, "h": 56.0, "size": 9.5, "line": 13.5, "weight": "regular"}  # insight card body
 DETAIL_MAX, IMPLICATION_MAX = 70, 55  # chars; a coarse backstop, the real check is _overflows()
 
 
