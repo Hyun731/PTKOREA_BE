@@ -466,6 +466,27 @@ def clean(data: dict, pi: PlannerInput) -> tuple[Diagnosis, list[str]]:
                      proposals=proposals), issues
 
 
+def refresh_headline(head: Headline, pi: PlannerInput) -> Headline:
+    """A person's edited sentence: every number must still be one of this brand's facts (KeyError if not);
+    displays are re-formatted from the current value."""
+    known = {f["fact_id"]: f["formatter"] for f in pi.facts}
+
+    def para(p: Paragraph) -> Paragraph:
+        parts = []
+        for part in p.parts:
+            if part.type == "fact":
+                if part.fact_id not in known:
+                    raise KeyError(part.fact_id or "?")
+                fresh = pi.pf.fact(part.fact_id, part.formatter or known[part.fact_id], bold=part.bold)
+                parts.append(part.model_copy(update={"display": fresh.display,
+                                                     "formatter": part.formatter or known[part.fact_id]}))
+            else:
+                parts.append(part)
+        return p.model_copy(update={"parts": parts})
+
+    return Headline(claim=[para(p) for p in head.claim], evidence=[para(p) for p in head.evidence])
+
+
 def plan(pi: PlannerInput, call: Callable[[str, int, str], dict], instruction: str = "") -> tuple[Diagnosis, list[str]]:
     """Ask, check, and ask once more with the reasons if something was left out. `call(user, attempt, note)`."""
     if not pi.facts:
@@ -531,7 +552,7 @@ def planner_input(db: Session, project, brand_id: str) -> PlannerInput:
 
 
 def generate(db: Session, project, brand_id: str, instruction: str = "", origin: str = "rewrite",
-             pi: Optional[PlannerInput] = None, job_id: Optional[str] = None) -> DiagnosisVersion:
+             pi: Optional[PlannerInput] = None, job_id: Optional[str] = None, by: str = "ai") -> DiagnosisVersion:
     """Write one self brand's diagnosis and save it as the new active version (no commit)."""
     from app.services.ledger import RunLedger
     pi = pi or planner_input(db, project, brand_id)
@@ -546,7 +567,7 @@ def generate(db: Session, project, brand_id: str, instruction: str = "", origin:
 
     data, dropped = plan(pi, call, instruction)
     return save_version(project, brand_id, DiagnosisVersion(version=0, fp=fp, origin=origin, instruction=instruction,
-                                                            data=data, dropped=dropped))
+                                                            data=data, dropped=dropped, by=by))
 
 
 def ensure(db: Session, project, job_id: Optional[str] = None) -> dict:
