@@ -173,9 +173,20 @@ def _decode(body: bytes, ctype: str) -> str:
     return body.decode("utf-8", errors="replace")
 
 
+NAVER_BLOG_POST = re.compile(r"^https?://(?:www\.)?blog\.naver\.com/([A-Za-z0-9_-]+)/(\d+)")
+
+
+def readable_url(url: str) -> str:
+    """같은 공개 글을 본문이 있는 주소로. 네이버 블로그 PC 주소(blog.naver.com/{id}/{글번호})는 본문을
+    iframe으로 감싼 껍데기라 제목 한 줄(예: '얼마나좋을까 : 네이버 블로그')만 나온다 — 모바일 주소는 본문이
+    그대로 있다(로그인 없음). 2026-11-11 실제 확인: PC 16자, 모바일 2,747자."""
+    m = NAVER_BLOG_POST.match(url)
+    return f"https://m.blog.naver.com/{m.group(1)}/{m.group(2)}" if m else url
+
+
 def fetch_page(url: str, *, resolve: Resolver = _default_resolver,
                transport: Optional[httpx.BaseTransport] = None) -> Page:
-    final_url, ctype, body = _get(url, accept="text/html,application/xhtml+xml", max_bytes=MAX_PAGE_BYTES,
+    final_url, ctype, body = _get(readable_url(url), accept="text/html,application/xhtml+xml", max_bytes=MAX_PAGE_BYTES,
                                   resolve=resolve, transport=transport)
     if "html" not in ctype and "text" not in ctype:
         raise ProviderError("SOURCE_UNAVAILABLE", f"HTML 문서가 아닙니다 ({ctype or '형식 불명'})")

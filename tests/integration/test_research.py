@@ -33,6 +33,8 @@ class Fakes:
         self.fail_search = None
         self.fail_trends = False
         self.search_name = "경쟁X"  # how the fake articles name the brand
+        self.naver_items: dict = {}  # P2-3 가짜 네이버 검색 결과(종류별), 비어 있으면 결과 없음
+        self.naver_denied: set = set()  # 'API HUB에서 비활성'으로 막을 검색 종류
 
     def _hit(self, name):
         self.calls[name] = self.calls.get(name, 0) + 1
@@ -105,6 +107,16 @@ class Fakes:
                 else:
                     rows.append({"index": idx, "sentiment": "neutral"})
             return CallResult(data={"comments": rows}, usage={"model": "fake"}, cost_usd=0.001)
+        if set(props) == {"docs"}:  # P2-5 블로그 문서 유형 — 표시 문구·간단한 키워드 규칙으로 흉내
+            self._hit("blog_type_classify")
+            rows = []
+            for m in re.finditer(r'<doc index="(\d+)">(.*?)</doc>', user, re.S):
+                idx, body = int(m.group(1)), m.group(2)
+                kind = ("sponsored" if "<markers>sponsored" in body else
+                        "shopping_affiliate" if "affiliate" in body.split("</markers>")[0] else
+                        "promo_template" if "입고 안내" in body else "real_use" if "써 보니" in body else "other")
+                rows.append({"index": idx, "type": kind})
+            return CallResult(data={"docs": rows}, usage={"model": "fake"}, cost_usd=0.002)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
             data: dict = {}
@@ -126,13 +138,16 @@ class Fakes:
         if "action" in props:  # 초안 흐름 장표 피드백
             fb = user.split("<feedback>")[-1]
             if "빼" in fb:
-                return CallResult(data={"reply": "이 장을 뺐습니다.", "action": "omit", "segments": []}, usage={"model": "fake"}, cost_usd=0.002)
-            if "순서" in fb:
-                return CallResult(data={"reply": "장 순서는 이 단계에서 바꿀 수 없습니다.", "action": "none", "segments": []},
+                return CallResult(data={"reply": "이 장을 뺐습니다.", "action": "omit", "claim": [], "evidence": []},
                                   usage={"model": "fake"}, cost_usd=0.002)
-            seg = [{"text": "브랜드 검색 점유 12% 우위 축소", "fact_ref": None, "bold": True}] if "깨기" in fb else \
-                  [{"text": "브랜드 검색 점유 우위가 줄어든 흐름", "fact_ref": None, "bold": True}]
-            return CallResult(data={"reply": "리드를 다시 썼습니다.", "action": "rewrite_lead", "segments": seg},
+            if "순서" in fb:
+                return CallResult(data={"reply": "장 순서는 이 단계에서 바꿀 수 없습니다.", "action": "none", "claim": [],
+                                        "evidence": []}, usage={"model": "fake"}, cost_usd=0.002)
+            seg = [{"text": "브랜드 검색 점유 12% 우위 축소", "fact_ref": None, "accent": True}] if "깨기" in fb else \
+                  [{"text": "브랜드 검색 점유 ", "fact_ref": None, "accent": False},
+                   {"text": "우위가 줄어든 흐름", "fact_ref": None, "accent": True}]
+            ev = [[{"text": "자사 점유 ", "fact_ref": None, "accent": False}, {"text": "", "fact_ref": 1, "accent": False}]]
+            return CallResult(data={"reply": "리드를 다시 썼습니다.", "action": "rewrite_lead", "claim": seg, "evidence": ev},
                               usage={"model": "fake"}, cost_usd=0.002)
         if "suggestions" in props:  # 문장 추천: one verbatim quote, one made-up quote, one with a bare number
             return CallResult(data={"suggestions": [
@@ -182,14 +197,23 @@ class Fakes:
                            {"kind": "interpretation", "text": "방문객 {{1}} 규모의 체험형 접점", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
                            {"kind": "fact", "text": "3월 팝업 개최", "quote": "경쟁X는 2026년 3월 성수동에서 팝업스토어를 열었다."}],
             }, usage={"input_tokens": 1000, "output_tokens": 200, "model": "fake"}, cost_usd=0.008, cost_is_estimate=False)
-        # lead: first answer breaks the digit rule, the rewrite is valid
+        if set(props) == {"insights"}:  # P3-5: all three cards cite a displayed fact
+            card = lambda title, body: {"title": [{"text": title, "fact_ref": None, "accent": False}],
+                                        "body_segments": [{"text": body, "fact_ref": None, "accent": False},
+                                                          {"text": "", "fact_ref": 1, "accent": False}]}
+            return CallResult(data={"insights": [card("수치 확인", "본문 수치 "), card("격차 점검", "비교 수치 "),
+                                                   card("운영 우선", "다음 확인 값 ")]},
+                              usage={"model": "fake"}, cost_usd=0.003, cost_is_estimate=False)
+        # headline (P3-4): first answer breaks the digit rule and has no evidence line, the rewrite is valid
         n = self.calls["structured"]
         if "이전 답의 문제" not in user:
-            segs = [{"text": "검색 점유 12M 기준 우위 축소", "fact_ref": None, "bold": False}]
+            data = {"claim": [{"text": "검색 점유 12M 기준 우위 축소", "fact_ref": None, "accent": False}], "evidence": []}
         else:
-            segs = [{"text": "브랜드 검색 점유 우위 축소", "fact_ref": None, "bold": True}, {"text": " — 격차 ", "fact_ref": None, "bold": False},
-                    {"text": "", "fact_ref": 1, "bold": True}]
-        return CallResult(data={"segments": segs}, usage={"input_tokens": 500, "output_tokens": 50, "model": "fake"},
+            data = {"claim": [{"text": "브랜드 검색 점유 ", "fact_ref": None, "accent": False},
+                              {"text": "우위 축소", "fact_ref": None, "accent": True}],
+                    "evidence": [[{"text": "격차 ", "fact_ref": None, "accent": False}, {"text": "", "fact_ref": 1, "accent": False}],
+                                 [{"text": "'검색 우위'가 줄어드는 흐름", "fact_ref": None, "accent": False}]]}
+        return CallResult(data=data, usage={"input_tokens": 500, "output_tokens": 50, "model": "fake"},
                           cost_usd=0.003 + n * 0, cost_is_estimate=False)
 
     def instagram_post(self, url, **kw):
@@ -253,6 +277,43 @@ class Fakes:
                   "published_at": "2026-09-01", "length_seconds": 120, "is_short": False}]
         return CallResult(data={"videos": videos, "continuation_token": None}, cost_usd=0.002)
 
+    def youtube_channel_shorts(self, channel_id=None, handle=None, continuation_token=None, **kw):
+        self._hit("youtube_channel_shorts")
+        return CallResult(data={"shorts": [], "continuation_token": None}, cost_usd=0.002)
+
+    # P2-6 공식 계정 채널: 기본은 계정이 없거나 글이 없는 것처럼 — 전용 테스트가 덮어쓴다.
+    def tiktok_profile(self, handle, **kw):
+        self._hit("tiktok_profile")
+        raise ProviderError("SOURCE_UNAVAILABLE", "TikTok 계정을 찾을 수 없습니다", 404)
+
+    def tiktok_profile_videos(self, handle, max_cursor=None, **kw):
+        self._hit("tiktok_profile_videos")
+        return CallResult(data={"posts": [], "cursor": None, "has_more": False}, cost_usd=0.002)
+
+    def facebook_profile(self, url, **kw):
+        self._hit("facebook_profile")
+        raise ProviderError("SOURCE_UNAVAILABLE", "Facebook 페이지를 찾을 수 없습니다", 404)
+
+    def facebook_profile_posts(self, url, cursor=None, **kw):
+        self._hit("facebook_profile_posts")
+        return CallResult(data={"posts": [], "cursor": None}, cost_usd=0.002)
+
+    def twitter_profile(self, handle, **kw):
+        self._hit("twitter_profile")
+        raise ProviderError("SOURCE_UNAVAILABLE", "X 계정을 찾을 수 없습니다", 404)
+
+    def twitter_user_tweets(self, handle, **kw):
+        self._hit("twitter_user_tweets")
+        return CallResult(data={"posts": []}, cost_usd=0.002)
+
+    def threads_profile(self, handle, **kw):
+        self._hit("threads_profile")
+        raise ProviderError("SOURCE_UNAVAILABLE", "Threads 계정을 찾을 수 없습니다", 404)
+
+    def threads_user_posts(self, handle, **kw):
+        self._hit("threads_user_posts")
+        return CallResult(data={"posts": []}, cost_usd=0.002)
+
     def search_trend(self, groups, start, end, **kw):
         self._hit("search_trend")
         # One ratio per month in [start, end], distinct per group so shares aren't tied.
@@ -266,6 +327,16 @@ class Fakes:
             {"group": name, "points": [{"period": period, "ratio": float(base[name] + i)} for i, period in enumerate(months)]}
             for name, _ in groups
         ]}, usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
+
+    # P2-3 네이버 검색: 기본은 결과 없음(기존 테스트는 Perplexity 경로 그대로). 테스트가 naver_items를 채우면 그것을,
+    # naver_denied에 넣은 종류는 'API HUB에서 비활성'으로 돌려준다.
+    def naver_search(self, kind, query, *, display=100, start=1, sort="date", **kw):
+        self._hit("naver_search")
+        if kind in self.naver_denied:
+            raise ProviderError("PROVIDER_AUTH", f"NAVER API HUB 앱에서 '{kind}' 검색 API가 활성화되어 있지 않습니다", 401)
+        items = self.naver_items.get(kind, []) if start == 1 else []
+        return CallResult(data={"total": len(items), "items": items, "via": "api_hub"}, usage={"requests": 1},
+                          cost_usd=0.0, cost_is_estimate=False)
 
     SHOP_CODE = "50000001"  # 가짜 데이터: 모든 제품군이 패션잡화에만 클릭이 있다
 
@@ -314,7 +385,12 @@ def fakes(monkeypatch):
                               google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments,
                               twitter_search_posts=f.twitter_search_posts, threads_search=f.threads_search,
                               shopping_keyword_trend=f.shopping_keyword_trend,
-                              shopping_keyword_breakdown=f.shopping_keyword_breakdown)
+                              shopping_keyword_breakdown=f.shopping_keyword_breakdown, naver_search=f.naver_search,
+                              youtube_channel_shorts=f.youtube_channel_shorts, tiktok_profile=f.tiktok_profile,
+                              tiktok_profile_videos=f.tiktok_profile_videos, facebook_profile=f.facebook_profile,
+                              facebook_profile_posts=f.facebook_profile_posts, twitter_profile=f.twitter_profile,
+                              twitter_user_tweets=f.twitter_user_tweets, threads_profile=f.threads_profile,
+                              threads_user_posts=f.threads_user_posts)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -660,6 +736,118 @@ def test_search_items_auto_collect_via_naver(client, fakes):
     assert next(s for s in sp["plan"] if s["template_id"] == "2-8c")["readiness"] == "ready"
 
 
+def test_search_item_counts_mentions_per_channel_without_calling_it_search_volume(client, fakes):
+    """P2-4: 자사·경쟁사 × 블로그·카페글·뉴스·지식iN의 검색 결과 문서 수(누적) + 최근 3개월 블로그·뉴스 달별 수.
+    카페글이 비활성이면 그 종류만 사유를 남기고 건너뛴다(오류 아님). 블로그는 1,000건 한도에 걸려 일부만 센 달 표시."""
+    from core.ingestion.mentions import recent_months
+
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    assert "naver_mentions" in {c["id"] for c in it["channels"]}
+    months = recent_months(date.today(), 3)
+    newest = date.fromisoformat(f"{months[-1]}-15")
+    fakes.naver_denied = {"cafearticle"}
+    seen = []
+
+    def naver_search(kind, query, *, display=100, start=1, sort="date", **kw):
+        fakes._hit("naver_search")
+        seen.append((kind, query, display, start, sort))
+        if kind in fakes.naver_denied:
+            raise ProviderError("PROVIDER_AUTH", "NAVER API HUB 앱에서 '카페글' 검색 API가 활성화되어 있지 않습니다", 401)
+        total = {"blog": 5000, "news": 40, "kin": 7}[kind] + (1 if " " in query else 0)
+        items = []
+        if display == 100 and sort == "date":
+            if kind == "blog":  # 하루 20건씩 — 1,000건(10쪽)으로는 최근 50일까지만 닿는다
+                items = [{"title": "t", "url": f"https://blog.naver.com/x/{start + i}", "snippet": "",
+                          "date": date.fromordinal(newest.toordinal() + 15 - (start - 1 + i) // 20).isoformat(),
+                          "author": None, "author_url": None} for i in range(100)]
+            elif start == 1:  # 뉴스는 이번 달 1건, 지난달 2건뿐
+                items = [{"title": "t", "url": f"https://n.example/{i}", "snippet": "", "date": d, "author": None,
+                          "author_url": None} for i, d in enumerate([f"{months[-1]}-03", f"{months[-2]}-20", f"{months[-2]}-02"])]
+        return CallResult(data={"total": total, "items": items, "via": "api_hub"}, usage={"requests": 1}, cost_usd=0.0,
+                          cost_is_estimate=False)
+    research.PROVIDERS["naver_search"] = naver_search
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded"
+    assert "활성화" in res["mentions"]["unavailable"]["cafe"] and not res["mentions"]["errors"]
+    assert sum(1 for c in seen if c[0] == "cafearticle") == 1  # 비활성 종류는 한 번만 묻는다
+
+    facts = ok(client.get(f"/v1/projects/{pid}/facts"))
+    totals = [f for f in facts if f["metric"] == "mention_total"]
+    entities = {f["entity"] for f in totals}
+    assert {"브랜드A", "경쟁X"} <= entities
+    assert {f["dims"]["channel"] for f in totals} == {"blog", "news", "kin"}
+    assert all(f["verification_status"] == "candidate" for f in totals)
+    blog_a = {f["dims"]["keyword_group"]: f for f in totals if f["entity"] == "브랜드A" and f["dims"]["channel"] == "blog"}
+    assert float(blog_a["brand"]["value"]) == 5000 and blog_a["brand"]["dims"]["keyword"] == "브랜드A"
+    assert float(blog_a["brand+가방"]["value"]) == 5001 and blog_a["brand+가방"]["dims"]["keyword"] == "브랜드A 가방"
+    assert all("검색량" not in (f["label"] or "") for f in totals)
+
+    monthly = {(f["dims"]["channel"], f["dims"]["month"]): f for f in facts
+               if f["metric"] == "mention_monthly" and f["entity"] == "브랜드A"}
+    news = [float(monthly[("news", m)]["value"]) for m in months]
+    assert news == [0, 2, 1] and not any("partial" in monthly[("news", m)]["dims"] for m in months)
+    # 블로그: 최근 50일만 닿았다 — 가장 최근 달은 다 셌고, 그 앞 달은 일부(partial),
+    # 가장 오래된 달은 하나도 닿지 못해 Fact를 만들지 않는다(0으로 남기지 않음)
+    assert "partial" not in monthly[("blog", months[-1])]["dims"] and monthly[("blog", months[1])]["dims"]["partial"] == "1"
+    assert ("blog", months[0]) not in monthly
+    assert any("닿지 못함" in x for x in res["mentions"]["partial_months"])
+
+
+def test_search_item_classifies_top_blog_posts_by_type(client, fakes):
+    """P2-5: 브랜드명·대표 조합어마다 블로그 상위 30건을 유형별로 나누고 비중 Fact(n=30)와 근거 주소를 남긴다.
+    본문은 모바일 주소로 받아 끝의 대가 표시·제휴 링크까지 본다. 확인 전(candidate)."""
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    assert "naver_blog_types" in {c["id"] for c in it["channels"]}
+    bodies = (["몇 달 써 보니 바퀴가 튼튼해요"] * 15 + ["소정의 원고료를 받아 작성했습니다"] * 6
+              + ["쿠팡 파트너스 활동의 일환으로 수수료를 제공받습니다"] * 6 + ["신상 입고 안내 매장 방문 환영"] * 3)
+    fakes.naver_items = {"blog": [{"title": f"글 {i}", "url": f"https://blog.naver.com/u{i}/{100 + i}", "snippet": "요약",
+                                   "date": "2026-05-01", "author": "블로거", "author_url": None} for i in range(30)]}
+
+    def fetch_page(url, **kw):
+        fakes._hit("fetch_page")
+        i = int(url.rsplit("/", 1)[-1]) - 100
+        text = "본문 " * 900 + bodies[i]  # 표시 문구가 글 끝에 있다
+        return Page(url=url, final_url=url, title=f"글 {i}", text=text, content_hash=f"h{i}", published=None,
+                    publisher=None, image_urls=[])
+    research.PROVIDERS["fetch_page"] = fetch_page
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    bt = res["blog_types"]
+    assert set(bt["keywords"]) == {"브랜드A", "브랜드A 가방"} and fakes.calls["blog_type_classify"] == 6  # 30건 ÷ 10 × 2
+    assert bt["keywords"]["브랜드A"]["types"] == {"real_use": 15, "sponsored": 6, "shopping_affiliate": 6,
+                                                "promo_template": 3, "other": 0}
+
+    shares = [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"] == "blog_type_share"]
+    assert len(shares) == 10 and all(f["verification_status"] == "candidate" for f in shares)
+    by = {(f["dims"]["keyword"], f["dims"]["type"]): f for f in shares}
+    real = by[("브랜드A", "real_use")]
+    assert float(real["value"]) == 50.0 and real["dims"]["n"] == "30" and real["entity"] == "브랜드A"
+    assert float(by[("브랜드A", "other")]["value"]) == 0.0
+    assert sum(float(by[("브랜드A", t)]["value"]) for t in ("real_use", "sponsored", "shopping_affiliate",
+                                                           "promo_template", "other")) == 100.0
+
+
+def test_blog_types_are_not_made_from_a_thin_sample(client, fakes):
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    fakes.naver_items = {"blog": [{"title": f"글 {i}", "url": f"https://blog.naver.com/u{i}/{i}", "snippet": "써 보니 좋아요",
+                                   "date": None, "author": None, "author_url": None} for i in range(5)]}
+    research.PROVIDERS["fetch_page"] = lambda url, **kw: (_ for _ in ()).throw(ProviderError("SOURCE_UNAVAILABLE", "x"))
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["blog_types"]["keywords"]["브랜드A"]["n"] == 5 and res["blog_types"]["keywords"]["브랜드A"]["fetched"] == 0
+    assert any("5건" in n for n in res["blog_types"]["notes"])
+    assert not [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"] == "blog_type_share"]
+
+
 def _set_brand(client, pid, **changes):
     proj = ok(client.get(f"/v1/projects/{pid}"))
     brands = [{**proj["config"]["brands"][0], **changes}, *proj["config"]["brands"][1:]]
@@ -1000,12 +1188,62 @@ def test_lead_proposal_rewrite_then_accept(client, fakes):
     props = ok(client.get(f"/v1/projects/{pid}/insight-proposals"))
     lp = next(p for p in props if p["slide_id"] == "2-8a")
     assert lp["status"] == "pending" and lp["attempts"] == 2  # first answer had a bare number
-    assert any(p["type"] == "fact" for p in lp["parts"])
+    assert any(p["type"] == "fact" for para in lp["parts"]["evidence"] for p in para["parts"])
     ok(client.post(f"/v1/insight-proposals/{lp['id']}/review", json={"action": "accept"}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     assert not [i for i in sp["qc"]["issues"] if i["slide_id"] == "2-8a" and i["severity"] == "block"]
     # The rule lead comes back when the override is cleared.
     ok(client.delete(f"/v1/projects/{pid}/lead-overrides/2-8a"))
+
+
+def test_deck_build_writes_claim_evidence_and_page_insights_once_per_page_body(client, fakes):
+    """P3-4/5: deck builds cache evidence-backed headlines and three page insights per unchanged body."""
+    from app.models import SlideWriting
+
+    pid, _ = setup_project(client)
+    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+        ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
+    clear_cache()
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
+    job = ok(client.get(f"/v1/jobs/{out['job']['id']}"))
+    assert job["state"] == "succeeded" and job["result"]["writing"]["lead"]["written"] > 0
+    assert job["result"]["writing"]["insights"]["written"] > 0
+    deck = ok(client.get(f"/v1/projects/{pid}/decks"))[0]
+    slide = next(s for s in ok(client.get(f"/v1/decks/{deck['id']}"))["spec"]["slides"] if s["slide_id"] == "2-8a")
+    ev = next(b for b in slide["blocks"] if b.get("role") == "lead_evidence")
+    assert ev["block_id"] == "lead_evidence" and any(p["type"] == "fact" for para in ev["paragraphs"] for p in para["parts"])
+    claim = next(b for b in slide["blocks"] if b.get("role") == "lead")
+    assert any(p.get("color") == "accent" for para in claim["paragraphs"] for p in para["parts"])
+    cards = [b for b in slide["blocks"] if b.get("role") == "insight" and b["block_id"].endswith("_body")]
+    assert len(cards) == 3 and all(any(p["type"] == "fact" for p in b["paragraphs"][0]["parts"]) for b in cards)
+    fact = next(part for part in cards[0]["paragraphs"][0]["parts"] if part["type"] == "fact")
+    override = {"insights": [
+        {"title": {"parts": [{"type": "text", "text": title}]},
+         "body_segments": {"parts": [{"type": "text", "text": body}, fact]}}
+        for title, body in [("사람 확인", "직접 고친 값 "), ("격차 확인", "비교할 값 "), ("다음 확인", "운영할 값 ")]
+    ]}
+    saved = ok(client.put(f"/v1/projects/{pid}/insight-overrides/2-8a", json=override))
+    assert saved["slide_id"] == "2-8a" and len(saved["insights"]) == 3
+    assert "2-8a" not in ok(client.delete(f"/v1/projects/{pid}/insight-overrides/2-8a"))["insight_overrides"]
+    with SessionLocal() as db:
+        rows = {row.kind: row for row in db.scalars(select(SlideWriting).where(
+            SlideWriting.project_id == pid, SlideWriting.slide_id == "2-8a"))}
+        assert rows["lead"].status == "ok" and rows["lead"].attempts == 2  # the first answer broke the rules
+        assert rows["insights"].status == "ok" and len(rows["insights"].data["insights"]) == 3
+    qc = ok(client.get(f"/v1/projects/{pid}/slide-plan"))["qc"]
+    assert not [i for i in qc["issues"] if i["severity"] == "block" and i["slide_id"] == "2-8a"]
+
+    def lead_calls():
+        return sum(1 for r in ledger_rows(pid) if r.endpoint == "lead")
+
+    def insight_calls():
+        return sum(1 for r in ledger_rows(pid) if r.endpoint == "page_insights")
+
+    before, before_insights = lead_calls(), insight_calls()
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds", json={"confirm_pending": True}), 202)
+    job = ok(client.get(f"/v1/jobs/{out['job']['id']}"))
+    assert job["result"]["writing"]["lead"]["written"] == 0 and lead_calls() == before
+    assert job["result"]["writing"]["insights"]["written"] == 0 and insight_calls() == before_insights
 
 
 def test_same_activity_from_two_outlets_becomes_one_card(client, fakes):
@@ -1341,7 +1579,143 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     assert len(ok(client.get(f"/v1/projects/{pid}/owned-posts"))) == 2
 
 
+def test_owned_item_collects_every_channel_and_every_account(client, fakes):
+    """P2-6: 틱톡·페이스북·X·스레드·유튜브 쇼츠·네이버 블로그 + 한 채널의 계정 여러 개(account dim).
+    비공개 계정은 '접근 불가'로 남고 다른 채널은 계속 모은다. X는 인기 글이라 게시 빈도를 만들지 않는다."""
+    clear_cache()
+    pid, plan = setup_project(client)
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    cfg = proj["config"]
+    cfg["brands"][0]["official_profiles"] = [
+        {"channel": "instagram", "url": "https://www.instagram.com/brand1/"},
+        {"channel": "instagram", "url": "https://www.instagram.com/brand1_outlet/"},
+        {"channel": "youtube", "url": "https://www.youtube.com/@brand1"},
+        {"channel": "tiktok", "url": "https://www.tiktok.com/@brand1"},
+        {"channel": "facebook", "url": "https://www.facebook.com/brand1"},
+        {"channel": "x", "url": "https://x.com/brand1"},
+        {"channel": "threads", "url": "https://www.threads.net/@brand1"},
+        {"channel": "threads", "url": "https://www.threads.net/@brand1_private"},
+        {"channel": "blog", "url": "https://blog.naver.com/brand1blog"},
+    ]
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"], "changes": {"brands": cfg["brands"]}}))
+    it = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "owned")
+    start, end = it["period_start"], it["period_end"]
+    assert start <= "2026-03-01" and end >= "2026-09-30"
+
+    def instagram_user_posts(handle, next_max_id=None, **kw):
+        fakes._hit("instagram_user_posts")
+        return CallResult(data={"posts": [{"post_id": f"{handle}-1", "posted_at": "2026-05-05", "likes": 10, "comments": 1,
+                                           "views": None, "url": None, "image_url": None}],
+                                "next_max_id": None, "more_available": False}, cost_usd=0.002)
+
+    def tiktok_profile(handle, **kw):
+        fakes._hit("tiktok_profile")
+        return CallResult(data={"followers": 5000, "videos": 40, "name": handle}, usage={"credits": 1}, cost_usd=0.002)
+
+    def tiktok_profile_videos(handle, max_cursor=None, **kw):
+        fakes._hit("tiktok_profile_videos")
+        old = {"post_id": "t0", "posted_at": "2025-06-01", "views": 1, "likes": 1, "comments": 0, "shares": 0, "pinned": True}
+        if max_cursor is None:  # 1쪽: 고정된 옛 글 + 최신 글 2개 — 고정 글 때문에 멈추면 안 된다
+            return CallResult(data={"posts": [old,
+                                              {"post_id": "t1", "posted_at": "2026-09-01", "views": 1000, "likes": 100,
+                                               "comments": 10, "shares": 4, "pinned": False},
+                                              {"post_id": "t2", "posted_at": "2026-08-01", "views": 3000, "likes": 300,
+                                               "comments": 30, "shares": 8, "pinned": False}],
+                                    "cursor": "c2", "has_more": True}, cost_usd=0.002)
+        return CallResult(data={"posts": [{"post_id": "t3", "posted_at": "2026-03-01", "views": 2000, "likes": 200,
+                                           "comments": 20, "shares": 6, "pinned": False},
+                                          {"post_id": "t4", "posted_at": "2025-12-01", "views": 9, "likes": 9, "comments": 9,
+                                           "shares": 9, "pinned": False}], "cursor": "c3", "has_more": True}, cost_usd=0.002)
+
+    def facebook_profile(url, **kw):
+        fakes._hit("facebook_profile")
+        return CallResult(data={"followers": 12000, "name": "브랜드A"}, cost_usd=0.002)
+
+    def facebook_profile_posts(url, cursor=None, **kw):
+        fakes._hit("facebook_profile_posts")
+        return CallResult(data={"posts": [{"post_id": "f1", "url": "u", "posted_at": "2026-07-01", "likes": 50, "comments": 5,
+                                           "shares": 2, "views": None}], "cursor": None}, cost_usd=0.002)
+
+    def twitter_profile(handle, **kw):
+        fakes._hit("twitter_profile")
+        return CallResult(data={"followers": 800, "name": handle}, cost_usd=0.002)
+
+    def twitter_user_tweets(handle, **kw):
+        fakes._hit("twitter_user_tweets")
+        return CallResult(data={"posts": [{"post_id": "x1", "url": "u", "posted_at": "2026-04-01", "likes": 30, "comments": 3,
+                                           "shares": 6, "views": 900},
+                                          {"post_id": "x0", "url": "u", "posted_at": "2023-01-01", "likes": 999,
+                                           "comments": 99, "shares": 99, "views": 99999}]}, cost_usd=0.002)
+
+    def threads_profile(handle, **kw):
+        fakes._hit("threads_profile")
+        if handle.endswith("private"):
+            raise ProviderError("SOURCE_UNAVAILABLE", "Threads 비공개 계정이라 볼 수 없습니다", None)
+        return CallResult(data={"followers": 300, "name": handle}, cost_usd=0.002)
+
+    def threads_user_posts(handle, **kw):
+        fakes._hit("threads_user_posts")
+        return CallResult(data={"posts": [{"post_id": "h1", "url": "u", "posted_at": "2026-06-01", "likes": 7, "comments": 1,
+                                           "shares": 0}]}, cost_usd=0.002)  # 기간 시작까지 닿지 못한 묶음
+
+    def youtube_channel_shorts(channel_id=None, handle=None, continuation_token=None, **kw):
+        fakes._hit("youtube_channel_shorts")
+        shorts = [{"id": f"s{i}", "url": f"https://youtube.com/watch?v=s{i}", "title": "s", "views": 100 * (i + 1),
+                   "likes": 1, "comments": 0, "published_at": f"2026-0{i + 1}-15"} for i in range(3)]
+        return CallResult(data={"shorts": shorts, "continuation_token": None}, cost_usd=0.002)
+
+    fakes.naver_items = {"blog": [
+        {"title": "공식 글", "url": "https://blog.naver.com/brand1blog/1", "snippet": "", "date": "2026-02-01",
+         "author": "브랜드A 공식", "author_url": "https://blog.naver.com/brand1blog"},
+        {"title": "다른 사람 글", "url": "https://blog.naver.com/someone/2", "snippet": "", "date": "2026-02-02",
+         "author": "x", "author_url": "https://blog.naver.com/someone"}]}
+    for name, fn in dict(instagram_user_posts=instagram_user_posts, tiktok_profile=tiktok_profile,
+                         tiktok_profile_videos=tiktok_profile_videos, facebook_profile=facebook_profile,
+                         facebook_profile_posts=facebook_profile_posts, twitter_profile=twitter_profile,
+                         twitter_user_tweets=twitter_user_tweets, threads_profile=threads_profile,
+                         threads_user_posts=threads_user_posts, youtube_channel_shorts=youtube_channel_shorts).items():
+        research.PROVIDERS[name] = fn
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "partial"  # 비공개 스레드 계정 하나 때문에
+    assert any(e["code"] == "ACCESS_UNAVAILABLE" and "비공개" in e["message"] for e in res["errors"])
+    assert {c["channel"] for c in res["channels"]} == {"instagram", "youtube", "tiktok", "facebook", "x", "threads", "naver_blog"}
+    assert fakes.calls["tiktok_profile_videos"] == 2  # 고정된 옛 글에서 멈추지 않고 다음 쪽까지
+
+    facts = [f for f in ok(client.get(f"/v1/projects/{pid}/facts")) if f["metric"].startswith("owned_")]
+
+    def one(metric, channel, **dims):
+        hits = [f for f in facts if f["metric"] == metric and f["dims"].get("channel") == channel
+                and all(f["dims"].get(k) == v for k, v in dims.items())]
+        assert len(hits) == 1, (metric, channel, dims, hits)
+        return float(hits[0]["value"])
+
+    # 인스타그램 계정 두 개는 account dim으로 나뉜다
+    assert one("owned_followers", "instagram", account="brand1") == one("owned_followers", "instagram", account="brand1_outlet")
+    months = len({f["dims"]["month"] for f in facts if f["metric"] == "owned_posts_by_month" and f["dims"]["channel"] == "tiktok"})
+    assert one("owned_followers", "tiktok") == 5000
+    assert one("owned_posts_monthly", "tiktok") == round(3 / months, 2)  # t1·t2·t3 (고정 글·기간 밖 제외)
+    assert one("owned_likes_median", "tiktok") == 200 and one("owned_shares_median", "tiktok") == 6
+    assert one("owned_comments_median", "tiktok") == 20 and one("owned_views_avg", "tiktok") == 2000
+    assert one("owned_followers", "facebook") == 12000 and one("owned_likes_median", "facebook") == 50
+    # X: 팔로워와 인기 게시물 기준 반응만, 게시 빈도 없음
+    assert one("owned_followers", "x") == 800 and one("owned_likes_median", "x", basis="popular") == 30
+    assert not [f for f in facts if f["dims"].get("channel") == "x" and "posts" in f["metric"]]
+    # 스레드: 최근 묶음이 기간 시작까지 닿지 못해 월 게시 수는 만들지 않는다
+    assert one("owned_followers", "threads", account="brand1") == 300
+    assert not [f for f in facts if f["dims"].get("channel") == "threads" and "posts" in f["metric"]]
+    assert any("Threads" in n for n in res["notes"])
+    # 유튜브 쇼츠는 쇼츠 탭에서
+    assert one("owned_videos_monthly", "youtube", format="shorts") == round(3 / months, 2)
+    assert one("owned_views_avg", "youtube", format="shorts") == 200
+    # 네이버 블로그: 공식 블로그 글만
+    assert one("owned_posts_monthly", "naver_blog") == round(1 / months, 2)
+    assert all(f["verification_status"] == "candidate" for f in facts)
+
+
 def test_owned_item_also_runs_for_a_competitor_without_leaking_into_self(client, fakes):
+    clear_cache()
     pid, plan = setup_project(client)
     proj = ok(client.get(f"/v1/projects/{pid}"))
     cfg = proj["config"]
@@ -1520,10 +1894,47 @@ def test_collection_mix_owned_channel_enough_once_every_confirmed_account_is_rec
                                         "action": "자료 확인에서 '다시 모으기'로 최근 자료를 받으세요"}
 
 
+def test_voc_item_finds_naver_blog_and_kin_posts_via_search_api(client, fakes):
+    """P2-3: 블로그·지식iN은 네이버 검색 API로, 카페글이 비활성이면 카페는 Perplexity로."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "voc", "브랜드A")
+    fakes.naver_items = {
+        "blog": [{"title": "브랜드A 3개월 사용 후기", "url": "https://blog.naver.com/a/1", "snippet": "튼튼해요",
+                  "date": "2026-05-01", "author": "여행 블로그", "author_url": "https://blog.naver.com/a"},
+                 {"title": "브랜드A 언박싱", "url": "https://blog.naver.com/b/2", "snippet": "예뻐요",
+                  "date": "2026-06-02", "author": "일상 블로그", "author_url": "https://blog.naver.com/b"},
+                 {"title": "브랜드A 오래된 후기", "url": "https://blog.naver.com/c/3", "snippet": "",
+                  "date": "2019-01-01", "author": "x", "author_url": None}],
+        "kin": [{"title": "브랜드A 바퀴 고장 났어요", "url": "https://kin.naver.com/qna/1", "snippet": "AS 되나요",
+                 "date": None, "author": None, "author_url": None}],
+    }
+    fakes.naver_denied = {"cafearticle"}
+    seen_sites = []
+
+    def search(queries, sites=None, **kw):
+        fakes._hit("search")
+        seen_sites.append(list(sites or []))
+        return CallResult(data={"id": "s", "results": []}, cost_usd=0.005)
+    research.PROVIDERS["search"] = search
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["naver_search"]["blog"] == 2 and res["naver_search"]["kin"] == 1
+    assert "활성화" in res["naver_search"]["cafearticle"]  # 비활성 사유가 남는다
+    assert "blog.naver.com" not in seen_sites[0] and "cafe.naver.com" in seen_sites[0]  # 카페는 Perplexity가
+    mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "voc"]
+    urls = {m["source"]["url"] for m in mats}
+    assert urls == {"https://blog.naver.com/a/1", "https://blog.naver.com/b/2", "https://kin.naver.com/qna/1"}
+    assert all(m["review_status"] == "candidate" for m in mats)  # 자동 채택하지 않는다
+    assert res["out_of_period"] >= 1  # 2019년 글은 기간 밖이라 빠진다
+
+
 def test_voc_item_collects_and_classifies_consumer_posts(client, fakes):
     pid, plan = setup_project(client)
     clear_cache()
     it = item(plan, "voc", "브랜드A")
+    # 네이버 검색 API가 막히면(비활성) Perplexity 사이트 검색이 블로그·카페까지 예전처럼 찾는다.
+    fakes.naver_denied = {"blog", "cafearticle", "kin"}
 
     def search(queries, sites=None, **kw):
         fakes._hit("search")

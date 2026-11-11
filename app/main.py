@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import jobs
 from app.config import settings
 from app.errors import ApiError, api_error_handler, unhandled_handler
-from app.routers import decks, editor, materials, meta, projects
+from app.routers import decks, editor, materials, meta, projects, summary
 from app.services import deck as _deck_handlers  # noqa: F401  (registers job handlers)
 from app.services import insights as _insight_handlers  # noqa: F401
 from app.services import case_commentary as _case_commentary_handlers  # noqa: F401
@@ -52,7 +52,7 @@ async def require_backend_token(request: Request, call_next):
 
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(Exception, unhandled_handler)
-for r in (meta.router, projects.router, materials.router, decks.router, editor.router):
+for r in (meta.router, projects.router, materials.router, decks.router, editor.router, summary.router):
     app.include_router(r, prefix="/v1")
 
 

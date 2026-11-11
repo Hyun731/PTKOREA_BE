@@ -28,7 +28,10 @@ FORBIDDEN_WORDS = ["검토 필요", "재측정 필요", "공개 자료 없음", 
 INTERNAL_ID = re.compile(r"\b(?:F|DF|FN|SRC|EV|AS|CL)-[0-9A-Za-z]{4,}")
 # Assertions the data cannot support (ad heuristics / relative search indexes as facts).
 OVERCLAIMS = ["광고 집행 게시물", "유료 광고 게시물", "광고비 투입", "광고비를", "검색량이 증가", "검색량 증가", "판매 증가",
-              "매출 증가", "구매 전환 저하", "관심이 이동", "관심 이동", "시장 점유율"]
+              "매출 증가", "구매 전환 저하", "관심이 이동", "관심 이동", "시장 점유율",
+              # P2-4: 언급량(mention_total·mention_monthly)은 검색 결과 문서 수(누적)지 검색량이 아니다
+              "블로그 검색량", "카페 검색량", "뉴스 검색량", "언급 검색량", "검색량이 많", "검색량이 가장", "검색량 1위",
+              "검색량이 높", "검색량이 적", "검색량이 낮"]
 DIGIT = re.compile(r"\d")
 
 
@@ -64,6 +67,19 @@ AssetLookup = Callable[[str], Optional[AssetRef]]
 def self_brand_names(project_config: dict) -> frozenset[str]:
     """Names of the client's own brands in a project (never compared against each other)."""
     return frozenset(b["name"] for b in project_config.get("brands", []))
+
+
+def self_brands_in(text: str, self_brands) -> set[str]:
+    """Self brand names written in free text, longest first so '샘소나이트 레드' is not also '샘소나이트'."""
+    found: set[str] = set()
+    for name in sorted((n for n in self_brands or () if n), key=len, reverse=True):
+        if name in text:
+            found.add(name)
+            text = text.replace(name, " ")
+    return found
+
+
+HEADLINE_ROLES = ("lead", "lead_evidence", "insight")  # AI-written prose: brand names may be plain text
 
 
 def run_qc(deck: DeckSpec, registry: FactRegistry, assets: AssetLookup,
@@ -146,9 +162,13 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
     # 3b. the client's own brands are never compared against each other in prose (PRD 핵심가치 1)
     if self_brands and len(self_brands) > 1:
         mentioned: dict[str, set[str]] = {}
-        for block_id, _, part in _text_parts(slide):
+        for block_id, b, part in _text_parts(slide):
+            role = getattr(b, "role", None)
+            key = "lead_claim" if role in ("lead", "lead_evidence") else block_id  # claim + evidence = one headline
             if part.type == "name" and part.text in self_brands:
-                mentioned.setdefault(block_id, set()).add(part.text)
+                mentioned.setdefault(key, set()).add(part.text)
+            elif part.type == "text" and role in HEADLINE_ROLES and part.text:
+                mentioned.setdefault(key, set()).update(self_brands_in(part.text, self_brands))
         for block_id, names in mentioned.items():
             if len(names) > 1:
                 add(Issue("SELF_BRAND_COMPARISON", "block", f"자사 브랜드끼리 비교: {', '.join(sorted(names))}",
@@ -157,20 +177,25 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
     # 4. lead / commentary rules
     body_facts = set()
     for b in slide.blocks:
-        if isinstance(b, TextBlock) and b.role == "lead":
+        if isinstance(b, TextBlock) and b.role in ("lead", "lead_evidence"):
             continue
         body_facts |= {bd.fact_id for bd in slide.bindings if bd.block_id.split("[")[0] == b.block_id}
     for b in slide.blocks:
         if not isinstance(b, TextBlock):
             continue
-        if b.role == "lead":
+        if b.role in ("lead", "lead_evidence"):
+            # claim: at most 2 numbers; evidence: at most 2 per line (P3-4 헤드라인 v2)
+            groups = [b.paragraphs] if b.role == "lead" else [[p] for p in b.paragraphs]
+            for paras in groups:
+                n = sum(1 for para in paras for p in para.parts if p.type == "fact")
+                if n > 2:
+                    add(Issue("LEAD_TOO_MANY_NUMBERS", "block", f"헤드라인 숫자 {n}개(줄마다 최대 2개)", "헤드라인 축약",
+                              sid, b.block_id))
             facts = [p.fact_id for para in b.paragraphs for p in para.parts if p.type == "fact"]
-            if len(facts) > 2:
-                add(Issue("LEAD_TOO_MANY_NUMBERS", "block", f"리드 숫자 {len(facts)}개(최대 2개)", "리드 축약", sid, b.block_id))
             outside = [f for f in facts if f not in body_facts]
             if outside:
-                add(Issue("LEAD_CITES_HIDDEN", "block", "리드가 본문에 표시되지 않은 수치를 인용", "문장 수정 또는 본문 근거 추가",
-                          sid, b.block_id))
+                add(Issue("LEAD_CITES_HIDDEN", "block", "헤드라인이 본문에 표시되지 않은 수치를 인용",
+                          "문장 수정 또는 본문 근거 추가", sid, b.block_id))
         lines = sum(line_count(_paragraph_runs(p, b.weight, b.bold), _inner_width(b), b.size) for p in b.paragraphs) if b.paragraphs else 0
         if b.max_lines and lines > b.max_lines:
             add(Issue("TOO_MANY_LINES", "block", f"{b.role} {lines}줄(최대 {b.max_lines}줄)", "문장 축약 또는 분할",
@@ -238,7 +263,15 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
             if foot and "†" not in "".join(p.rendered() for para in foot.paragraphs for p in para.parts):
                 add(Issue("FOOTNOTE_MISSING", "block", "† 정의 각주 누락", "각주 추가", sid, "footnote"))
     if slide.needs_review and not frame:
-        add(Issue("NEUTRAL_LEAD", "warn", "Finding 없는 중립 리드", "리드 문장 검토", sid, "lead"))
+        add(Issue("NEUTRAL_LEAD", "warn", "Finding 없는 중립 리드", "리드 문장 검토", sid, "lead_claim"))
+    # 9. P3-4: a body page's headline is a claim with evidence lines under it
+    if slide.page_role == "content" and slide.is_data:
+        has_lead = any(isinstance(b, TextBlock) and b.role == "lead" for b in slide.blocks)
+        has_evidence = any(isinstance(b, TextBlock) and b.role == "lead_evidence" and any(p.parts for p in b.paragraphs)
+                           for b in slide.blocks)
+        if has_lead and not has_evidence:
+            add(Issue("LEAD_NO_EVIDENCE", "warn", "헤드라인에 근거 줄이 없음", "덱을 다시 만들면 AI가 근거 줄을 씁니다(또는 초안에서 직접 쓰기)",
+                      sid, "lead_claim"))
 
 
 def _inner_width(b: TextBlock) -> float:
