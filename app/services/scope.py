@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from app.services.catalog import CHANNELS, shift_months
+from core.industry_profiles import profile_for
 from core.ingestion.csv_import import window_months
 from core.schemas.project import INDUSTRY_TYPES, Project, ScopeSetting
 
@@ -227,6 +228,9 @@ def _default_setting(spec: dict, project: Project) -> ScopeSetting:
         enabled = any("metric" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
     if spec["id"] == "2-9":  # 커머스 리뷰: 리뷰 중심 업종에서만 기본으로 켠다(전자·뷰티·패션은 꺼도 감사 기록)
         enabled = any("review" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
+    # P4-2: 업종 프로필이 기본으로 켜라고 한 항목(예: 여행 → 업종 KPI의 출입국자 수)은 유형과 상관없이 켠다.
+    if any(spec["id"] in getattr(profile_for(b.industry), "default_scope_on", ()) for b in project.brands):
+        enabled = True
     section = next((sec for sec, iid in SECTION_ITEM.items() if iid == spec["id"]), None)
     w = project.window_for(section) if section else None
     if w and (w.start, w.end) != (project.period.start, project.period.end):  # a window set before scope existed

@@ -2402,12 +2402,13 @@ def test_create_project_fills_industry_and_official_accounts(client, fakes):
     # (even just a candidate) is not searched again.
     pid = p["id"]
     patched = ok(client.patch(f"/v1/projects/{pid}", json={"base_version": p["version"], "changes": {
-        "brands": [{**brand, "industry": "뷰티"}]}}))
-    assert patched["config"]["brands"][0]["industry"] == "뷰티"
+        "brands": [{**brand, "industry": "기타"}]}}))
+    assert patched["config"]["brands"][0]["industry"] == "기타"
     assert fakes.calls["industry"] == 1  # still just the one call from create
     assert fakes.calls["official_accounts"] == 2
     assert fakes.calls["hero_products"] == 2  # a brand/competitor with a candidate already on file isn't re-searched
-    # "뷰티"는 프로필이 없어 AI가 후보 키워드를 낸다 — 확인 전까지는 시장 조사 검색에 쓰이지 않는다.
+    # "기타"는 프로필에 키워드 초안이 없어 AI가 후보 키워드를 낸다 — 확인 전까지는 시장 조사 검색에 쓰이지 않는다.
+    # (키워드 초안이 있는 업종은 외부 호출 없이 초안을 후보로 낸다 — tests/unit/test_industry_profiles.py)
     beauty_brand = patched["config"]["brands"][0]
     assert [k["status"] for k in beauty_brand["industry_keywords"]] == ["candidate"]
     assert beauty_brand["industry_keywords"][0]["text"] == "트래블룩"
