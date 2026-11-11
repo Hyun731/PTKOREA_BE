@@ -48,6 +48,7 @@ TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2":
                     "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
                     "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
                     "ES": "recap", "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
+TEMPLATE_SECTION.update({"OW-CMP": "owned"})  # P3 비교·차트 장
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
@@ -57,6 +58,7 @@ TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타�
                   "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
                   "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트",
                   "SWOT": "SWOT", "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
+TEMPLATE_LABEL.update({"OW-CMP": "자사 vs 경쟁사 채널 비교"})
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
 # A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
@@ -85,8 +87,11 @@ TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2":
                     "2-8c": "competitor", "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
                     "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
+TEMPLATE_CHAPTER.update({"OW-CMP": "company"})
+# P3 비교·차트 장은 같은 자료를 쓰는 기존 장이 켜져 있으면 함께 켜진다(따로 켜도 된다).
+FOLLOWS = {"OW-CMP": "2-1"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
-PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
+PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
               "2-8c", "2-8d", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
               "PROBLEM", "SOLUTION", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
@@ -165,6 +170,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     ctx = quant.QuantContext(project, metrics, findings, pf, cfg, synthetic, infl_assets)
 
     enabled = set(project.enabled_slides)
+    enabled |= {t for t, parent in FOLLOWS.items() if parent in enabled}
     plan: list[SlotPlan] = []
     by_template: dict[str, list[SlideSpec]] = {}
 
@@ -230,6 +236,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("2-1"):
             s = owned.channel_inventory_page(c)
             slot("2-1", "2-1", [s] if s else [], "공식 계정 전체 게시물 데이터 없음(Brand.official_profiles 확인)", part=part)
+        if on("OW-CMP"):
+            # 자사 하나 + 그 경쟁사만(원칙 8): 다른 자사 브랜드는 경쟁사 목록에 있어도 빼고 그린다.
+            slot("OW-CMP", "OW-CMP", owned.channel_compare_page(c, frozenset(b.name for b in project.brands)),
+                 "경쟁사 공식 계정 수치 없음(설정에서 경쟁사 공식 계정 확인 후 수집·확인 필요)", part=part)
         if on("2-2"):
             s = owned.operating_gap_page(c)
             slot("2-2", "2-2", [s] if s else [],

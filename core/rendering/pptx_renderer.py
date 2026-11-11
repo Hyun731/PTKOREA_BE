@@ -198,6 +198,21 @@ def _bar_frame(slide, b: BarChartBlock, data: CategoryChartData):
     return chart, plot, val
 
 
+def _label_width(text: str, size_pt: float) -> float:
+    """Rough width (canvas px) of a bar value label: digits ~0.6em, Hangul ~1em, plus padding."""
+    em = size_pt * 96 / 72
+    return sum(em if ord(ch) > 0x3000 else em * 0.6 for ch in text) + 8
+
+
+def _plot_width(b: BarChartBlock) -> float:
+    """Rough length of the value axis of a horizontal single-series chart (canvas px): the frame minus
+    the category labels on the left."""
+    if b.orientation != "h":
+        return b.region.h
+    cats = max((_label_width(it.label, b.label_size) for it in b.items), default=0.0)
+    return max(b.region.w - cats - 16, 1.0)
+
+
 def _bar_chart(slide, b: BarChartBlock):
     if b.multi:
         _bar_chart_multi(slide, b)
@@ -219,19 +234,36 @@ def _bar_chart(slide, b: BarChartBlock):
     labels.font.size = Pt(b.label_size + 0.5)
     labels.font.bold = True
     labels.font.color.rgb = _rgb("white")
+    plot_w = _plot_width(b)
     for i, it in enumerate(b.items):
         point = series.points[i]
         point.format.fill.solid()
         point.format.fill.fore_color.rgb = _rgb(ROLE_COLORS[it.role])
         point.format.line.fill.background()
-        # Short bars cannot hold a white label: put it outside in dark text (reference p.26).
-        if top > 0 and it.value / (top * 1.12) < 0.22:
+        # Short bars cannot hold a white label: put it outside in dark text (reference p.26). In a narrow
+        # chart a bar can be long relative to the axis and still narrower than its label.
+        ratio = it.value / (top * 1.12) if top > 0 else 1.0
+        if top > 0 and (ratio < 0.22 or ratio * plot_w < _label_width(it.display, b.label_size + 0.5)):
             dl = point.data_label
             dl.position = XL_LABEL_POSITION.OUTSIDE_END
             dl.font.size = Pt(b.label_size + 0.5)
             dl.font.bold = True
             dl.font.color.rgb = _rgb("text")
             _show_value(dl)
+        elif not _is_dark(ROLE_COLORS[it.role]):  # white on a pale bar is unreadable
+            dl = point.data_label
+            dl.position = XL_LABEL_POSITION.INSIDE_END
+            dl.font.size = Pt(b.label_size + 0.5)
+            dl.font.bold = True
+            dl.font.color.rgb = _rgb("text")
+            _show_value(dl)
+    _no_wrap(series._element)
+
+
+def _no_wrap(element) -> None:
+    """Value labels on one line: LibreOffice otherwise breaks '4,200' into '4,20' / '0' in a narrow chart."""
+    for body in element.iter(qn("a:bodyPr")):
+        body.set("wrap", "none")
 
 
 def _bar_chart_multi(slide, b: BarChartBlock):
@@ -278,6 +310,7 @@ def _bar_chart_multi(slide, b: BarChartBlock):
             for i, it in enumerate(s.items):
                 if it is not None and it.value / top < STACK_LABEL_MIN:
                     _hide_value(series.points[i].data_label)
+        _no_wrap(series._element)
 
 
 def _is_dark(role: str) -> bool:
