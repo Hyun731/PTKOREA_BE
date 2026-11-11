@@ -1170,8 +1170,8 @@ def run_owned_item(db: Session, ledger: RunLedger, project: Project, item: Resea
     """2-1: 공식 계정 전체 게시물에서 팔로워·기간 내 게시 빈도·반응을 집계. 자사는 Brand.official_profiles,
     경쟁사는 Brand.competitor_profiles에 등록된(확인된) handle만 쓴다 — 어떤 계정이 '그 주체'인지
     추측하지 않는다. 콘텐츠 타겟·톤앤매너·자체/공동 게시 비중처럼 판단이 필요한 열은 여기서 만들지
-    않는다(core/composition/owned.py 참고). 2-1·2-2·2-4·2-5는 자사 전용 장표라, 경쟁사 결과는
-    item.entity로만 구분해 기록해 둔다 — 나란히 비교하거나 장표에 끌어오지 않는다."""
+    않는다(core/composition/owned.py 참고). 경쟁사 결과는 item.entity로 구분해 자사 brand_id 아래
+    기록한다 — 2-1·2-2·2-4·2-5는 자사만 보여주고, OW-CMP(P3-1)가 자사와 그 경쟁사를 나란히 비교한다."""
     from statistics import median
 
     from core.ingestion.owned import monthly_post_count_fact, owned_fact

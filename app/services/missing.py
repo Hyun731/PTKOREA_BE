@@ -26,7 +26,12 @@ CAUSES = {
 SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
            "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
            "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
-           "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search"}
+           "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search", "OW-CMP": "owned"}
+# P3 비교·차트 장: 자료 카드가 아니라 자동 수집 수치(Fact)로 채워지므로, 확인 전 수치가 있으면 '채택 대기'.
+FACT_METRICS: dict[str, tuple[str, ...]] = {
+    "OW-CMP": ("owned_followers", "owned_posts_monthly", "owned_videos_monthly", "owned_likes_median",
+               "owned_reactions_median", "owned_comments_median", "owned_views_avg", "owned_views_median"),
+}
 UPLOAD: set[str] = set()  # 검색 점유(2-8a~d)는 네이버 데이터랩으로 자동 수집한다(P2-1) — 업로드 전용 장표 없음
 
 
@@ -47,6 +52,14 @@ def _search_setup(slot: SlotPlan, brands: list, related: list) -> Optional[str]:
             b.target and naver_target_filter(b.target.age_min, b.target.age_max, b.target.gender) for b in brands):
         return "설정에서 키 타겟의 연령이나 성별을 넣으세요 — 타겟 검색 점유를 따로 잽니다"
     return None
+
+
+def _facts_waiting(waiting: set, template: str, brands: list) -> bool:
+    """Candidate numbers that would fill this page — for OW-CMP only a competitor's (the self brand's own
+    numbers already fill 2-1; what the comparison lacks is the other side)."""
+    if template == "OW-CMP":
+        return any((b.id, c) in waiting for b in brands for c in b.competitors)
+    return any(bid == b.id for bid, _ in waiting for b in brands)
 
 
 def _case_role(slot: SlotPlan) -> Optional[str]:
@@ -81,6 +94,15 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
     waiting_search = {r.data.get("brand_id") for r in db.scalars(select(FactRow).where(
         FactRow.project_id == project.id, FactRow.verification_status == "candidate", FactRow.origin == "auto"))
         if (r.data or {}).get("metric") in ("search_group_sum", "search_index_monthly")}
+    waiting_facts: dict[str, set] = {}  # template -> (brand id, entity) with candidate numbers for it
+    if any(s.template_id in FACT_METRICS for s in gaps):
+        for r in db.scalars(select(FactRow).where(FactRow.project_id == project.id, FactRow.origin == "auto",
+                                                  FactRow.verification_status == "candidate",
+                                                  FactRow.superseded_by.is_(None))):
+            metric = (r.data or {}).get("metric")
+            for template, metrics in FACT_METRICS.items():
+                if metric in metrics:
+                    waiting_facts.setdefault(template, set()).add((r.data.get("brand_id"), r.data.get("entity")))
     role_of: dict[str, str] = {}
     for b in core.brands:
         role_of.update({c: "competitor" for c in b.competitors})
@@ -106,10 +128,15 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             cause = None  # built from the other pages (1-1, recap): nothing of its own to fetch
         elif any(mine(m.brand_id, m.entity, m.section_id) for m in waiting) or \
                 any(mine(r.brand_id, r.entity, "commerce_review") for r in waiting_reviews) or \
-                (section == "search" and any(b.id in waiting_search for b in brands)):
+                (section == "search" and any(b.id in waiting_search for b in brands)) or \
+                _facts_waiting(waiting_facts.get(slot.template_id, set()), slot.template_id, brands):
             cause = "adopt"
         elif section == "owned" and not any(p.status == "confirmed" for b in brands for p in b.official_profiles):
             cause = "setup"  # a candidate account still needs a person's check before it can be collected
+        elif slot.template_id == "OW-CMP" and not any(p.status == "confirmed" for b in brands
+                                                      for ps in b.competitor_profiles.values() for p in ps):
+            cause = "setup"
+            slot.action = "설정에서 경쟁사 공식 계정 URL을 넣거나, AI가 찾은 후보를 확인하세요 — 자사와 나란히 비교합니다"
         elif section == "voc" and any(mine(m.brand_id, m.entity, m.section_id) for m in unavailable):
             cause = "access"  # found posts, but every one was behind a login wall or otherwise unreachable
         else:
@@ -119,6 +146,10 @@ def annotate(db: Session, project: Project, core: CoreProject, plan: list[SlotPl
             slot.action = search_fix
         elif cause == "adopt" and section == "search":
             slot.action = "모은 검색 지수가 있습니다 — 자료 확인에서 검색 지수를 확인(채택)하세요"
+        elif cause == "adopt" and slot.template_id in FACT_METRICS:
+            slot.action = "모은 수치가 있습니다 — 자료 확인에서 수치를 확인(채택)하세요"
+        elif slot.action:
+            pass  # set above with the cause
         elif cause == "setup":
             slot.action = "설정에서 공식 계정 URL을 넣거나, AI가 찾은 후보를 확인하세요"
         elif cause == "access":

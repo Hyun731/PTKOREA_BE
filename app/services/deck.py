@@ -75,11 +75,25 @@ def _recollect_missing(db: Session, project: Project, progress: Callable[[int], 
     run_research(db, job, lambda pct: progress(10 + pct // 10))  # 0~10%만 이 단계에 배정 (끝에서 db.expire_all())
 
 
+def _write_slides(db: Session, project: Project, job: Job, progress: Callable[[int], None]) -> dict:
+    """P3-4~: AI가 장마다 헤드라인(주장 + 근거)을 쓴다. 장 본문이 그대로면 예전 글을 다시 쓰고, AI를 못 부르면
+    규칙 문장으로 만든다 — 덱 만들기 자체는 멈추지 않는다."""
+    from app.services import insights
+    from integrations.base import ProviderError
+
+    try:
+        return insights.write_slides(db, project, job.id, lambda pct: progress(10 + pct // 20))
+    except ProviderError as exc:
+        db.rollback()
+        return {"error": exc.code}
+
+
 @register("deck_build")
 def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     project = db.get(Project, job.project_id)
     deck = db.get(Deck, job.params["deck_id"])
     _recollect_missing(db, project, progress)
+    writing = _write_slides(db, project, job, progress)
     inputs = load_inputs(db, project)
     inputs.deck_id, inputs.deck_version = deck.id, deck.version
     inputs.generated_on = deck.created_at.astimezone(SEOUL).date()
@@ -109,7 +123,7 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     deck.status = "ready"  # only after the real-render preview exists (or is known unavailable)
     db.commit()
     return {"deck_id": deck.id, "deck_version": deck.version, "qc_blocks": qc.blocks, "qc_warns": qc.warns,
-            "render_status": deck.render_status}
+            "render_status": deck.render_status, "writing": writing}
 
 
 def next_deck_version(db: Session, project_id: str) -> int:
