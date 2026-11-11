@@ -546,7 +546,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         try:
             return ledger.call("anthropic", "extract", {"url": src.original_url, "hash": src.content_hash,
                                                         "item": item.question}, 0.08,
-                               lambda: p["structured"](EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, max_tokens=4000)), None
+                               lambda: p["structured"](EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, max_tokens=6000)), None
         except ProviderError as exc:
             return None, exc
 

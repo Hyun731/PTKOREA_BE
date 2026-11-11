@@ -39,13 +39,15 @@ FIGURES_SCHEMA = {"type": "array", "items": {
 
 FIGURES_PROMPT = """- figures: 사용자 메시지에 '수치 추출: 사용'이 있을 때만 씁니다(그 외에는 빈 배열). 원문에 숫자로 나온 시장·정책·업종 지표를 최대 8개.
   metric: "market_size"(시장 규모·거래액), "market_cagr"(연평균 성장률·CAGR), "macro_indicator"(출입국자 수·관광객 수·수입액 같은 거시 지표), "industry_kpi"(그 밖의 업종 지표).
-  name: 지표 이름(예: "국민 해외관광객 수", "국내 러기지 시장 규모"). value: 원문 숫자를 쉼표 없이 그대로(단위 변환·추정 금지).
+  name: 지표 이름(예: "국민 해외관광객 수", "국내 러기지 시장 규모"). value: 원문 숫자를 쉼표 없이 그대로(단위 변환·추정 금지 — '억', '백만', 'million' 같은 단위는 서버가 원문에서 읽습니다).
   unit: "krw"(원), "usd"(달러), "percent"(%), "people"(명), "count"(그 밖의 개수).
   period: 수치의 기준 기간 — "2025", "2025-06", "2026-01~2026-08", "2026~2031" 형식. 원문에 기간이 없으면 빈 문자열.
   segment: 시장 범위(예: "국내", "글로벌 러기지", "프리미엄 캐리어"), 없으면 빈 문자열.
   quote: 그 숫자가 들어 있는 원문 문장을 글자 그대로 복사."""
 
-UNIT_SCALE = {"조": Decimal(10) ** 12, "억": Decimal(10) ** 8, "만": Decimal(10) ** 4, "천": Decimal(10) ** 3}
+UNIT_SCALE = {"조": Decimal(10) ** 12, "억": Decimal(10) ** 8, "백만": Decimal(10) ** 6, "만": Decimal(10) ** 4,
+              "천": Decimal(10) ** 3, "million": Decimal(10) ** 6, "billion": Decimal(10) ** 9, "trillion": Decimal(10) ** 12}
+SCALE_WORD = re.compile(r"\s*(조|억|백만|만|천|million|billion|trillion)", re.I)
 PERIOD = re.compile(r"^(\d{4})(?:[-.](\d{1,2}))?(?:\s*[~\-–]\s*(\d{4})(?:[-.](\d{1,2}))?)?$")
 
 
@@ -101,9 +103,10 @@ def validate_figures(data: dict, page_text: str) -> tuple[list[dict], list[str]]
             issues.append(f"시장 수치 {i}: 지표·단위 오류")
             continue
         if f["unit"] != "percent":
-            scale = re.search(re.escape(raw).replace(r"\.", r"[.,]?") + r"\s*(조|억|만|천)", _digits(quote))
+            # the number as printed ('2,958만명', '18,617백만 달러', 'USD 18.6 billion') -> its full value
+            scale = re.search(re.escape(raw).replace(r"\.", r"[.,]?") + SCALE_WORD.pattern, _digits(quote), re.I)
             if scale:
-                value *= UNIT_SCALE[scale.group(1)]
+                value *= UNIT_SCALE[scale.group(1).lower()]
         if f["unit"] in ("people", "count") and value != value.to_integral_value():
             issues.append(f"시장 수치 {i}: 사람 수·개수가 정수가 아님")
             continue

@@ -107,6 +107,17 @@ def fmt_krw(value: Decimal) -> str:
     return f"{fmt_int(quantize(v, 0))}원"
 
 
+def fmt_usd(value: Decimal) -> str:
+    """Dollar amounts as Korean reports write them: 186억 달러 / 1.2조 달러 / 9,900달러."""
+    v = Decimal(value)
+    for unit, name in ((Decimal(10) ** 12, "조"), (Decimal(10) ** 8, "억")):
+        if abs(v) >= unit:
+            q = v / unit
+            digits = 0 if q == q.to_integral_value() or abs(q) >= 100 else 1
+            return f"{fmt_int(quantize(q, digits)) if digits == 0 else f'{quantize(q, digits):,}'}{name} 달러"
+    return f"{fmt_int(quantize(v, 0))}달러"
+
+
 def fmt_count_unit(value: Decimal) -> str:
     return fmt_int(quantize(Decimal(value), 0))
 
@@ -151,6 +162,7 @@ FORMATTERS: dict[str, Callable] = {
     "posts": fmt_posts,
     "strength": fmt_strength,
     "krw": fmt_krw,
+    "usd": fmt_usd,
     "count": fmt_count_unit,
     "times": fmt_times,
     "days": fmt_days,
@@ -170,4 +182,4 @@ def format_value(formatter: str, value, partial: bool = False) -> Optional[str]:
 
 # Default formatter by derived unit, used when a manual fact is inserted into text.
 UNIT_FORMATTER = {"percent": "pct_given", "pp": "pp", "count": "int", "rank": "rank", "months": "months",
-                  "index": "index", "krw": "krw", "rating": "rating"}
+                  "index": "index", "krw": "krw", "rating": "rating", "usd": "usd"}

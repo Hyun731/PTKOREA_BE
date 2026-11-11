@@ -42,6 +42,18 @@ def test_validate_figures_checks_quotes_and_restores_units():
     assert no_period.period_start == no_period.period_end == date(2026, 11, 1) and no_period.dims["segment"] == "러기지"
 
 
+def test_million_dollar_figures_and_usd_display():
+    from core.composition.formatters import format_value
+    page = "세계 러기지 및 백 시장 규모는 2024년 18,617백만 달러로 추정된다. The market reached USD 18.6 billion."
+    figs, _ = validate_figures({"figures": [
+        {"metric": "market_size", "name": "세계 러기지 시장 규모", "value": "18617", "unit": "usd", "period": "2024",
+         "segment": "", "quote": "세계 러기지 및 백 시장 규모는 2024년 18,617백만 달러로 추정된다."},
+        {"metric": "market_size", "name": "world luggage", "value": "18.6", "unit": "usd", "period": "2024",
+         "segment": "", "quote": "The market reached USD 18.6 billion."}]}, page)
+    assert [f["value"] for f in figs] == [Decimal("18617000000"), Decimal("18600000000.0")]
+    assert format_value("usd", figs[0]["value"]) == "186억 달러" and format_value("usd", Decimal(9900)) == "9,900달러"
+
+
 def test_gov_queries_follow_the_industry():
     assert gov_queries("여행", "캐리어", 2026) == ["한국관광공사 국민 해외관광객 출국자 수 보도자료 2026"]
     assert gov_queries(None, "백팩", 2026) == ["백팩 통계청 관세청 보도자료 2026"]
