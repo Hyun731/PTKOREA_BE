@@ -66,6 +66,9 @@ CHANNELS = {
     "search_csv": {"label": "검색 지수 CSV (보유 자료)", "support": "manual_only", "provider": None},
     # Phase 3-4: Google Trends 공개 경로 — 봇 차단으로 자주 막힌다(그러면 "수집 필요"로 조용히 빠짐).
     "google_trends": {"label": "Google Trends (카테고리·브랜드 키워드 월별 추이)", "support": "auto", "provider": "google_trends"},
+    # P2-2 품목별 쇼핑 수요: 제품군별 클릭 추이·성수기·연령/성별(네이버 데이터랩 쇼핑인사이트)
+    "shopping_insight": {"label": "네이버 쇼핑인사이트 (제품군별 클릭 추이·성수기·연령·성별)", "support": "auto",
+                         "provider": "naver"},
     "web": {"label": "웹 기사·공식 자료", "support": "auto", "provider": "perplexity"},
     "instagram": {"label": "Instagram 공개 게시물", "support": "auto", "provider": "scrapecreators"},
     "youtube": {"label": "YouTube 공개 영상", "support": "auto", "provider": "scrapecreators"},

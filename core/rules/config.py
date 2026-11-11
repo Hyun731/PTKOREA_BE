@@ -28,6 +28,9 @@ class RulesConfig:
     r13_gap_days: int
     # P1-2 파생 수치: 비율 Fact를 만들 최소 표본 수(작은 표본의 비율을 장표에 올리지 않는다).
     derived_min_n: int = 20
+    # P2-2 쇼핑인사이트 성수기: 월 클릭 지수가 기간 평균의 이 배수 이상인 달
+    shop_peak_lift: Decimal = Decimal("1.2")
+    shop_peak_min_months: int = 9  # 데이터가 있는 달이 이보다 적은 드문 키워드는 성수기를 말하지 않는다
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "RulesConfig":
@@ -48,4 +51,6 @@ class RulesConfig:
             r12_min_creator_sample=int(raw["R12"]["min_creator_sample"]),
             r13_gap_days=int(raw["R13"]["gap_days"]),
             derived_min_n=int(raw.get("derived", {}).get("min_n", 20)),
+            shop_peak_lift=Decimal(raw.get("shopping", {}).get("peak_lift", "1.2")),
+            shop_peak_min_months=int(raw.get("shopping", {}).get("peak_min_months", 9)),
         )

@@ -38,6 +38,13 @@ HUB_NOT_SELECTED = '"210"'  # API HUB gateway: Permission Denied — the API is 
 
 Breakdown = Literal["age", "gender", "device"]
 
+# 네이버쇼핑 최상위 분야 코드 — 2026-11-11 실제 호출로 확인(분야마다 대표 검색어의 월별 데이터 유무).
+SHOP_TOP_CATEGORIES: dict[str, str] = {
+    "50000000": "패션의류", "50000001": "패션잡화", "50000002": "화장품/미용", "50000003": "디지털/가전",
+    "50000004": "가구/인테리어", "50000005": "출산/육아", "50000006": "식품", "50000007": "스포츠/레저",
+    "50000008": "생활/건강", "50000009": "여가/생활편의",
+}
+
 
 class Route(NamedTuple):
     via: Literal["api_hub", "developers"]
@@ -138,7 +145,8 @@ def shopping_category_trend(categories: list[tuple[str, list[str]]], start: date
                             ages: Optional[list[str]] = None, gender: Optional[str] = None,
                             transport: Optional[httpx.BaseTransport] = None) -> CallResult:
     """쇼핑인사이트 분야별 클릭 추이. categories: up to 3 (name, [category_id, ...]) pairs — ids are
-    네이버쇼핑 분야 코드(예: 패션잡화 50000005). Ratio = click share, relative within the response."""
+    네이버쇼핑 분야 코드(SHOP_TOP_CATEGORIES, 예: 패션잡화 50000001). Ratio = click share, relative within
+    the response."""
     _keys()
     if not 1 <= len(categories) <= MAX_CATEGORIES:
         raise ValueError(f"categories must have 1-{MAX_CATEGORIES} items")
@@ -170,6 +178,17 @@ def shopping_category_breakdown(category_id: str, by: Breakdown, start: date, en
         raise ValueError("by는 age·gender·device 중 하나")
     body = {**_range(start, end, time_unit), "category": category_id}
     data = _post(f"/shopping/category/{by}", body, "쇼핑인사이트", transport)
+    return _result(data.get("results"), breakdown=by)
+
+
+def shopping_keyword_breakdown(category_id: str, keyword: str, by: Breakdown, start: date, end: date, *,
+                               time_unit: str = "month", transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """쇼핑인사이트 분야 안 한 키워드의 연령·성별·기기별 클릭 비중(예: 패션잡화의 '캐리어'를 누가 누르나)."""
+    _keys()
+    if by not in ("age", "gender", "device"):
+        raise ValueError("by는 age·gender·device 중 하나")
+    body = {**_range(start, end, time_unit), "category": category_id, "keyword": keyword}
+    data = _post(f"/shopping/category/keyword/{by}", body, "쇼핑인사이트", transport)
     return _result(data.get("results"), breakdown=by)
 
 
