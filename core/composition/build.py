@@ -11,11 +11,12 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from core.composition import cases, commerce, customer, overview, owned, quant, synthesis
 from core.composition.chrome import (
-    D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
+    D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, headline_blocks, lead_block, synthetic_badge, text_block,
+    title_block,
 )
 from core.composition.tokens import region
 from core.metrics.derived import DerivedInputs, derive, measured_on
@@ -26,8 +27,8 @@ from core.schemas.facts import Fact, Finding, Post
 from core.schemas.materials import AssetRef, CaseMaterial, OwnedPostRef, ReviewSnapshotRef, SourceRef
 from core.schemas.project import Brand, Project
 from core.schemas.slidespec import (
-    BarChartBlock, Binding, DeckSpec, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, SlotPlan, TableBlock,
-    TextBlock,
+    BarChartBlock, Binding, DeckSpec, Headline, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, SlotPlan,
+    TableBlock, TextBlock,
 )
 
 # section_id: (number, label, index group, divider subtitle)
@@ -105,7 +106,11 @@ class BuildInputs:
     materials: list[CaseMaterial] = field(default_factory=list)
     owned_posts: list[OwnedPostRef] = field(default_factory=list)
     omitted_slots: dict[str, str] = field(default_factory=dict)  # slot_id -> reason
-    lead_overrides: dict[str, list[Paragraph]] = field(default_factory=dict)
+    # A person's headline per slide: Headline (claim + evidence) or, saved before P3-4, a claim-only list.
+    lead_overrides: dict[str, Union[list[Paragraph], Headline]] = field(default_factory=dict)
+    # AI writing made at deck build time (P3-4~), {kind: {slide_id: {"fp": body fingerprint, ...}}}; applied
+    # only while the slide body still has the fingerprint it was written for.
+    ai_writing: dict = field(default_factory=dict)
     # {brand_id: {"insight": {...}, "swot": {...}, "problem": {...}}} — active SynthesisRun per self brand.
     synthesis: dict = field(default_factory=dict)
     # {brand_id: [query, ...]} — Phase 3-4 Google Trends 연관 검색어, 그 브랜드의 최신 search_trend 수집 결과.
@@ -355,17 +360,9 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
 
-    # Lead overrides (user-fixed sentences) replace the generated lead text only.
-    for slides in by_template.values():
-        for s in slides:
-            if s.slide_id in inputs.lead_overrides:
-                for b in s.blocks:
-                    if isinstance(b, TextBlock) and b.block_id == "lead":
-                        b.paragraphs = [_refresh_facts(p, pf) for p in inputs.lead_overrides[s.slide_id]]
-                s.needs_review = False
-
     ordered = _assemble(project, [s for _, _, s in sorted(built, key=lambda x: (x[0], x[1]))], enabled,
                         inputs.generated_on or date.today(), synthetic)
+    _apply_headlines(ordered, inputs, pf)
     for s in ordered:
         s.bindings = _bindings(s, metrics, pf)
         s.notes = _notes(s, metrics)
@@ -448,6 +445,67 @@ def _refresh_facts(p: Paragraph, pf: PartFactory) -> Paragraph:
         else:
             parts.append(part.model_copy())
     return p.model_copy(update={"parts": parts})
+
+
+HEAD_ROLES = {"lead", "lead_evidence", "insight", "title", "chip", "page_no"}
+
+
+def body_fingerprint(slide: SlideSpec) -> str:
+    """Hash of what a page's body shows — everything but its headline, insights and frame (P3-4). AI writing
+    is kept for a page only while this stays the same, so a sentence never outlives the numbers it cites."""
+    body = [b.model_dump(mode="json", exclude={"region"}) for b in slide.blocks
+            if not b.block_id.startswith("chrome_") and getattr(b, "role", None) not in HEAD_ROLES]
+    payload = {"id": slide.slide_id, "template": slide.template_id, "title": slide.title, "body": body}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+
+def lead_of(slide: SlideSpec) -> Optional[TextBlock]:
+    return next((b for b in slide.blocks if isinstance(b, TextBlock) and b.role == "lead"), None)
+
+
+def set_headline(slide: SlideSpec, head: Headline, pf: Optional[PartFactory] = None) -> None:
+    """Swap a page's headline for `head` in the same area (claim on top, evidence lines under it)."""
+    lead = lead_of(slide)
+    if lead is None or not head.claim:
+        return
+    area = lead.region
+    old_ev = next((b for b in slide.blocks if isinstance(b, TextBlock) and b.role == "lead_evidence"), None)
+    if old_ev is not None:  # already split once: the area is both blocks together
+        area = Region(x=area.x, y=area.y, w=area.w, h=old_ev.region.y + old_ev.region.h - area.y)
+    claim = [_refresh_facts(p, pf) if pf else p for p in head.claim]
+    evidence = [_refresh_facts(p, pf) if pf else p for p in head.evidence]
+    if evidence:
+        new = headline_blocks(claim, evidence, area)
+    else:  # claim only: keep the template's own type and area
+        new = [lead.model_copy(update={"block_id": "lead_claim", "paragraphs": claim, "region": area})]
+    i = slide.blocks.index(lead)
+    rest = [b for b in slide.blocks if b is not lead and b is not old_ev]
+    slide.blocks = rest[:i] + new + rest[i:]
+
+
+def _apply_headlines(slides: list[SlideSpec], inputs: BuildInputs, pf: PartFactory) -> None:
+    """A person's headline wins; otherwise the AI headline written for this exact body (P3-4)."""
+    ai = (inputs.ai_writing or {}).get("lead", {})
+    for s in slides:
+        if s.page_role not in ("content", "recap", "appendix") or lead_of(s) is None:
+            continue
+        if s.slide_id in inputs.lead_overrides:
+            set_headline(s, Headline.coerce(inputs.lead_overrides[s.slide_id]), pf)
+            s.needs_review = False
+            continue
+        w = ai.get(s.slide_id)
+        if w and w.get("fp") == body_fingerprint(s) and _facts_known(w, pf):
+            set_headline(s, Headline.coerce({"claim": w["claim"], "evidence": w.get("evidence") or []}), pf)
+            s.needs_review = False
+
+
+def _facts_known(writing: dict, pf: PartFactory) -> bool:
+    for key in ("claim", "evidence"):
+        for p in writing.get(key) or []:
+            for part in p.get("parts", []):
+                if part.get("type") == "fact" and part.get("fact_id") not in pf.registry:
+                    return False
+    return True
 
 
 def _case_lead(chunk: list[CaseMaterial]) -> list[Paragraph]:
@@ -764,7 +822,9 @@ def fingerprint(inputs: BuildInputs) -> str:
         "posts": sorted((p.batch_id or "", p.post_id, p.verification_status) for p in inputs.posts),
         "materials": sorted(json.dumps(m.model_dump(mode="json"), sort_keys=True, ensure_ascii=False) for m in inputs.materials),
         "omitted": inputs.omitted_slots,
-        "leads": {k: [p.model_dump(mode="json") for p in v] for k, v in sorted(inputs.lead_overrides.items())},
+        "leads": {k: ([p.model_dump(mode="json") for p in v] if isinstance(v, list) else v.model_dump(mode="json"))
+                  for k, v in sorted(inputs.lead_overrides.items())},
         **({"synthesis": inputs.synthesis} if inputs.synthesis else {}),  # absent = same hash as before it existed
+        **({"ai_writing": inputs.ai_writing} if inputs.ai_writing else {}),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()

@@ -210,8 +210,8 @@ def test_deck_editor_copy_ai_and_export(client):
     # A selection scope keeps the AI inside the marked element.
     sel = ok(client.post(f"/v1/decks/{deck_id}/edit/ai", json={
         "message": "파란색으로 바꿔줘", "slides": slides, "current_slide_id": sid, "scope": "selection",
-        "selection": {"element_ids": {sid: ["lead"]}}, "mode": "mock"}))
-    assert {a["element_id"] for a in sel["applied"]} == {"lead"}
+        "selection": {"element_ids": {sid: ["lead_claim"]}}, "mode": "mock"}))
+    assert {a["element_id"] for a in sel["applied"]} == {"lead_claim"}
 
     # Save the previewed slides; optimistic version; QC still holds numbers to evidence.
     merged = [next((x for x in out["slides"] if x["slide_id"] == s["slide_id"]), s) for s in slides]

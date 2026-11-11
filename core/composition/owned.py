@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.composition.chrome import D, M, N, P, PERIOD, T, lead_block, text_block, title_block
+from core.composition.tokens import region
 from core.composition.formatters import fmt_month_label, fmt_month_range
 from core.composition.quant import QuantContext, _footnote, _panel_header, _panel_xs
 from core.schemas.facts import Fact
@@ -127,7 +128,7 @@ def operating_gap_page(ctx: QuantContext) -> Optional[SlideSpec]:
 
     xs, w = _panel_xs(len(panels_data), single=820)
     chart_h = 220
-    top = 110
+    top = region("body").y  # under the two-tier headline (P3-4)
     blocks: list[Block] = []
     fact_ids: list[str] = []
     for i, ((b, months, by_month, ranges), x) in enumerate(zip(panels_data, xs)):
@@ -171,7 +172,7 @@ def top_posts_page(project: Project, owned_posts: list[OwnedPostRef]) -> Optiona
 
     xs, w = _panel_xs(len(panels_data))
     img_h = 230
-    top = 110
+    top = region("body").y  # under the two-tier headline (P3-4)
     blocks: list[Block] = []
     asset_ids: list[str] = []
     for i, ((b, posts), x) in enumerate(zip(panels_data, xs)):
@@ -245,7 +246,7 @@ def youtube_performance_page(ctx: QuantContext) -> Optional[SlideSpec]:
 
     xs, w = _panel_xs(len(panels_data), single=820)
     chart_h = 190
-    top = 110
+    top = region("body").y  # under the two-tier headline (P3-4)
     blocks: list[Block] = []
     for i, ((b, subs, views_video, views_shorts, by_month), x) in enumerate(zip(panels_data, xs)):
         blocks += _panel_header(f"panel{i}_header", x, top, w, [N(b.name), T(" YouTube 월별 업로드")])

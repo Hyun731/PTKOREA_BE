@@ -322,6 +322,25 @@ class ProviderCache(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class SlideWriting(Base):
+    """AI writing for one deck page, made when the deck is built (P3-4 헤드라인, P3-5 인사이트). One row per
+    page and kind; it is shown only while the page body still has `body_fp` (a changed body is rewritten
+    at the next build). A person's own text (lead_overrides) always wins."""
+    __tablename__ = "slide_writings"
+    __table_args__ = (UniqueConstraint("project_id", "slide_id", "kind", name="uq_slide_writing"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    slide_id: Mapped[str] = mapped_column(String(80))
+    kind: Mapped[str] = mapped_column(String(20))  # lead | insights
+    body_fp: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | failed (rules not met after rewrites)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)  # lead: {"claim": [Paragraph], "evidence": [Paragraph]}
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    model: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class LeadProposal(Base):
     """AI lead sentence candidate for one slide. Never overwrites a person's text until accepted."""
     __tablename__ = "lead_proposals"

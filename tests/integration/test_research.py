@@ -128,13 +128,16 @@ class Fakes:
         if "action" in props:  # 초안 흐름 장표 피드백
             fb = user.split("<feedback>")[-1]
             if "빼" in fb:
-                return CallResult(data={"reply": "이 장을 뺐습니다.", "action": "omit", "segments": []}, usage={"model": "fake"}, cost_usd=0.002)
-            if "순서" in fb:
-                return CallResult(data={"reply": "장 순서는 이 단계에서 바꿀 수 없습니다.", "action": "none", "segments": []},
+                return CallResult(data={"reply": "이 장을 뺐습니다.", "action": "omit", "claim": [], "evidence": []},
                                   usage={"model": "fake"}, cost_usd=0.002)
-            seg = [{"text": "브랜드 검색 점유 12% 우위 축소", "fact_ref": None, "bold": True}] if "깨기" in fb else \
-                  [{"text": "브랜드 검색 점유 우위가 줄어든 흐름", "fact_ref": None, "bold": True}]
-            return CallResult(data={"reply": "리드를 다시 썼습니다.", "action": "rewrite_lead", "segments": seg},
+            if "순서" in fb:
+                return CallResult(data={"reply": "장 순서는 이 단계에서 바꿀 수 없습니다.", "action": "none", "claim": [],
+                                        "evidence": []}, usage={"model": "fake"}, cost_usd=0.002)
+            seg = [{"text": "브랜드 검색 점유 12% 우위 축소", "fact_ref": None, "accent": True}] if "깨기" in fb else \
+                  [{"text": "브랜드 검색 점유 ", "fact_ref": None, "accent": False},
+                   {"text": "우위가 줄어든 흐름", "fact_ref": None, "accent": True}]
+            ev = [[{"text": "자사 점유 ", "fact_ref": None, "accent": False}, {"text": "", "fact_ref": 1, "accent": False}]]
+            return CallResult(data={"reply": "리드를 다시 썼습니다.", "action": "rewrite_lead", "claim": seg, "evidence": ev},
                               usage={"model": "fake"}, cost_usd=0.002)
         if "suggestions" in props:  # 문장 추천: one verbatim quote, one made-up quote, one with a bare number
             return CallResult(data={"suggestions": [
@@ -184,14 +187,16 @@ class Fakes:
                            {"kind": "interpretation", "text": "방문객 {{1}} 규모의 체험형 접점", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
                            {"kind": "fact", "text": "3월 팝업 개최", "quote": "경쟁X는 2026년 3월 성수동에서 팝업스토어를 열었다."}],
             }, usage={"input_tokens": 1000, "output_tokens": 200, "model": "fake"}, cost_usd=0.008, cost_is_estimate=False)
-        # lead: first answer breaks the digit rule, the rewrite is valid
+        # headline (P3-4): first answer breaks the digit rule and has no evidence line, the rewrite is valid
         n = self.calls["structured"]
         if "이전 답의 문제" not in user:
-            segs = [{"text": "검색 점유 12M 기준 우위 축소", "fact_ref": None, "bold": False}]
+            data = {"claim": [{"text": "검색 점유 12M 기준 우위 축소", "fact_ref": None, "accent": False}], "evidence": []}
         else:
-            segs = [{"text": "브랜드 검색 점유 우위 축소", "fact_ref": None, "bold": True}, {"text": " — 격차 ", "fact_ref": None, "bold": False},
-                    {"text": "", "fact_ref": 1, "bold": True}]
-        return CallResult(data={"segments": segs}, usage={"input_tokens": 500, "output_tokens": 50, "model": "fake"},
+            data = {"claim": [{"text": "브랜드 검색 점유 ", "fact_ref": None, "accent": False},
+                              {"text": "우위 축소", "fact_ref": None, "accent": True}],
+                    "evidence": [[{"text": "격차 ", "fact_ref": None, "accent": False}, {"text": "", "fact_ref": 1, "accent": False}],
+                                 [{"text": "'검색 우위'가 줄어드는 흐름", "fact_ref": None, "accent": False}]]}
+        return CallResult(data=data, usage={"input_tokens": 500, "output_tokens": 50, "model": "fake"},
                           cost_usd=0.003 + n * 0, cost_is_estimate=False)
 
     def instagram_post(self, url, **kw):
@@ -1012,12 +1017,45 @@ def test_lead_proposal_rewrite_then_accept(client, fakes):
     props = ok(client.get(f"/v1/projects/{pid}/insight-proposals"))
     lp = next(p for p in props if p["slide_id"] == "2-8a")
     assert lp["status"] == "pending" and lp["attempts"] == 2  # first answer had a bare number
-    assert any(p["type"] == "fact" for p in lp["parts"])
+    assert any(p["type"] == "fact" for para in lp["parts"]["evidence"] for p in para["parts"])
     ok(client.post(f"/v1/insight-proposals/{lp['id']}/review", json={"action": "accept"}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     assert not [i for i in sp["qc"]["issues"] if i["slide_id"] == "2-8a" and i["severity"] == "block"]
     # The rule lead comes back when the override is cleared.
     ok(client.delete(f"/v1/projects/{pid}/lead-overrides/2-8a"))
+
+
+def test_deck_build_writes_claim_and_evidence_headlines_once_per_page_body(client, fakes):
+    """P3-4: 덱을 만들 때 AI가 장마다 주장 + 근거 헤드라인을 쓴다. 규칙 위반은 다시 쓰고, 본문이 같으면
+    다음 생성에서 다시 부르지 않으며, 사람이 고친 헤드라인은 건드리지 않는다."""
+    from app.models import SlideWriting
+
+    pid, _ = setup_project(client)
+    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+        ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
+    clear_cache()
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
+    job = ok(client.get(f"/v1/jobs/{out['job']['id']}"))
+    assert job["state"] == "succeeded" and job["result"]["writing"]["lead"]["written"] > 0
+    deck = ok(client.get(f"/v1/projects/{pid}/decks"))[0]
+    slide = next(s for s in ok(client.get(f"/v1/decks/{deck['id']}"))["spec"]["slides"] if s["slide_id"] == "2-8a")
+    ev = next(b for b in slide["blocks"] if b.get("role") == "lead_evidence")
+    assert ev["block_id"] == "lead_evidence" and any(p["type"] == "fact" for para in ev["paragraphs"] for p in para["parts"])
+    claim = next(b for b in slide["blocks"] if b.get("role") == "lead")
+    assert any(p.get("color") == "accent" for para in claim["paragraphs"] for p in para["parts"])
+    with SessionLocal() as db:
+        row = db.scalars(select(SlideWriting).where(SlideWriting.project_id == pid, SlideWriting.slide_id == "2-8a")).one()
+        assert row.status == "ok" and row.attempts == 2  # the first answer broke the rules
+    qc = ok(client.get(f"/v1/projects/{pid}/slide-plan"))["qc"]
+    assert not [i for i in qc["issues"] if i["severity"] == "block" and i["slide_id"] == "2-8a"]
+
+    def lead_calls():
+        return sum(1 for r in ledger_rows(pid) if r.endpoint == "lead")
+
+    before = lead_calls()
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds", json={"confirm_pending": True}), 202)
+    job = ok(client.get(f"/v1/jobs/{out['job']['id']}"))
+    assert job["result"]["writing"]["lead"]["written"] == 0 and lead_calls() == before
 
 
 def test_same_activity_from_two_outlets_becomes_one_card(client, fakes):

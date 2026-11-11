@@ -40,7 +40,8 @@
     "amber": "E6BE78",
     "link": "2F5A8C",
     "card_label": "F0F3F8",
-    "badge": "FBE9DD"
+    "badge": "FBE9DD",
+    "accent": "D66E28"
   },
   "regions": {
     "margin_x": 48,
@@ -48,7 +49,7 @@
     "chip": {"x": 48, "y": 21, "w": 107, "h": 27},
     "title": {"x": 171, "y": 25, "w": 693, "h": 21},
     "meta": {"x": 912, "y": 20, "w": 320, "h": 37},
-    "lead": {"x": 48, "y": 59, "w": 1184, "h": 61},
+    "lead": {"x": 48, "y": 55, "w": 1184, "h": 75},
     "body": {"x": 48, "y": 131, "w": 1184, "h": 400},
     "takeaway": {"x": 48, "y": 532, "w": 1184, "h": 38},
     "takeaway_rule_y": 572,
@@ -64,6 +65,8 @@
     "meta": {"size": 9.5, "line": 13, "weight": "semibold"},
     "lead": {"size": 16.5, "line": 22, "max_lines": 2, "weight": "bold"},
     "lead_sub": {"size": 12, "weight": "semibold"},
+    "lead_claim": {"size": 18, "line": 24, "max_lines": 1, "weight": "bold"},
+    "lead_evidence": {"size": 11.5, "line": 15.5, "max_lines": 2, "weight": "regular"},
     "panel_header": {"size": 11, "line": 15, "weight": "semibold"},
     "caption": {"size": 9.5, "line": 13, "max_lines": 2},
     "takeaway": {"size": 11, "line": 16, "max_lines": 2, "weight": "semibold"},
