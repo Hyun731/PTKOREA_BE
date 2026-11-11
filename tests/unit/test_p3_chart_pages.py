@@ -94,7 +94,7 @@ def test_p3_chart_pages_build_bind_and_render(tmp_path):
     path = render_deck(result.deck, tmp_path / "p3-3.pptx")
     presentation = Presentation(str(path))
     assert len(presentation.slides) == len(P3_SLIDES)
-    assert any(shape.name == "line" and shape.has_chart for shape in presentation.slides[-1].shapes)
+    assert any(shape.name == "chart" and shape.has_chart for shape in presentation.slides[-1].shapes)
 
 
 def test_p3_chart_pages_leave_needs_input_slots_when_data_is_thin():
