@@ -1,6 +1,7 @@
 """Stage 2 with fake providers (no network): research runs, ledger/cache, budget, failures,
 influencer collection and AI lead proposals (DEVELOPMENT_PLAN 단계 2 완료 조건; PRD A10, A14)."""
 import io
+import json
 import re
 from datetime import date
 
@@ -101,11 +102,11 @@ class Fakes:
             for m in re.finditer(r"^(\d+)\. (.+)$", user, re.M):
                 idx, text = int(m.group(1)), m.group(2)
                 if "예뻐요" in text or "재구매" in text:
-                    rows.append({"index": idx, "sentiment": "positive"})
+                    rows.append({"index": idx, "sentiment": "positive", "pain_points": []})
                 elif "별로" in text or "실망" in text:
-                    rows.append({"index": idx, "sentiment": "negative"})
+                    rows.append({"index": idx, "sentiment": "negative", "pain_points": ["품질 불만"]})
                 else:
-                    rows.append({"index": idx, "sentiment": "neutral"})
+                    rows.append({"index": idx, "sentiment": "neutral", "pain_points": []})
             return CallResult(data={"comments": rows}, usage={"model": "fake"}, cost_usd=0.001)
         if set(props) == {"docs"}:  # P2-5 블로그 문서 유형 — 표시 문구·간단한 키워드 규칙으로 흉내
             self._hit("blog_type_classify")
@@ -119,21 +120,34 @@ class Fakes:
             return CallResult(data={"docs": rows}, usage={"model": "fake"}, cost_usd=0.002)
         self._hit("structured")
         if "es_company" in props or "swot_lead" in props or "problem_lead" in props:  # 종합 장표(고른 유형만)
+            pages = json.loads(re.search(r"<pages>\n(.*)\n</pages>", user, re.S).group(1))
+            page_ids = {page["id"] for page in pages}
+            first_ref = pages[0]["id"]
+            competitor_ref = "2-8a" if "2-8a" in page_ids else first_ref
+            first_fact = next((binding["fact_ref"] for page in pages if page["id"] == competitor_ref
+                               for binding in page.get("bindings", [])), None)
             data: dict = {}
             if "es_company" in props:  # one line has a number and one points at a page that doesn't exist
-                ref = re.search(r'"id": "([^"]+)"', user).group(1)
                 data.update({
-                    "es_company": [{"text": "크리에이터 게시물 중심의 자사 관측", "ref": ref}],
-                    "es_competitor": [{"text": "경쟁 세트 안 검색 점유 우위 축소", "ref": "2-8a"},
+                    "es_company": [{"text": "크리에이터 게시물 중심의 자사 관측", "ref": first_ref,
+                                    "fact_ref": None}],
+                    "es_competitor": [{"text": "경쟁 세트 안 검색 점유 우위 축소", "ref": competitor_ref,
+                                       "fact_ref": first_fact},
                                       {"text": "점유 12퍼센트 하락", "ref": "2-8a"}, {"text": "없는 장 근거", "ref": "Z-9"}],
                     "es_customer": [], "task": "검색 점유 방어를 위한 접점 확대 필요",
-                    "insights": [{"title": "검색 우위 축소", "body": "경쟁 세트 안에서 검색 점유가 줄어드는 흐름"}]})
+                    "insights": [{"title": "검색 우위 축소", "body": "경쟁 세트 안에서 검색 점유가 줄어드는 흐름",
+                                  "ref": competitor_ref, "fact_ref": first_fact}]})
             if "swot_lead" in props:
-                data.update({"swot_lead": "자사 접점은 넓고 검색 점유는 낮은 편", "S": ["크리에이터 협업 접점"],
-                            "W": ["검색 점유 우위 축소"], "O": ["카테고리 조합어 검색 수요"], "T": ["경쟁사 검색 점유 상승"]})
+                line = lambda text: {"text": text, "ref": competitor_ref, "fact_ref": first_fact}
+                data.update({"swot_lead": "자사 접점은 넓고 검색 점유는 낮은 편", "S": [line("크리에이터 협업 접점")],
+                            "W": [line("검색 점유 우위 축소")], "O": [line("카테고리 조합어 검색 수요")],
+                            "T": [line("경쟁사 검색 점유 상승")]})
             if "problem_lead" in props:
-                data.update({"problem_lead": "검색 접점에서 경쟁 열위", "problems": ["검색 노출 열세", "콘텐츠 반응 둔화"],
-                            "solutions": [{"title": "검색 접점 확대", "body": "크리에이터 콘텐츠에 브랜드명 검색 유도 문구 배치"}]})
+                line = lambda text: {"text": text, "ref": competitor_ref, "fact_ref": first_fact}
+                data.update({"problem_lead": "검색 접점에서 경쟁 열위",
+                            "problems": [line("검색 노출 열세"), line("콘텐츠 반응 둔화")],
+                            "solutions": [{"title": "검색 접점 확대", "body": "크리에이터 콘텐츠에 브랜드명 검색 유도 문구 배치",
+                                           "ref": competitor_ref, "fact_ref": first_fact}]})
             return CallResult(data=data, usage={"model": "fake"}, cost_usd=0.01)
         if "action" in props:  # 초안 흐름 장표 피드백
             fb = user.split("<feedback>")[-1]
@@ -252,14 +266,30 @@ class Fakes:
         ]
         return CallResult(data={"posts": posts, "next_max_id": None, "more_available": False}, cost_usd=0.002)
 
-    def instagram_post_comments(self, url, cursor=None, **kw):
-        self._hit("instagram_post_comments")
+    @staticmethod
+    def _post_comments_result():
         comments = [
             {"id": "c1", "text": "진짜 예뻐요 재구매각", "posted_at": "2026-08-10", "likes": 2},
             {"id": "c2", "text": "별로예요 실망", "posted_at": "2026-08-11", "likes": 0},
             {"id": "c3", "text": "ㅎㅇ", "posted_at": "2026-08-12", "likes": 0},
         ]
         return CallResult(data={"comments": comments, "cursor": None}, cost_usd=0.002)
+
+    def instagram_post_comments(self, url, cursor=None, **kw):
+        self._hit("instagram_post_comments")
+        return self._post_comments_result()
+
+    def youtube_video_comments(self, url, cursor=None, **kw):
+        self._hit("youtube_video_comments")
+        return self._post_comments_result()
+
+    def tiktok_video_comments(self, url, cursor=None, **kw):
+        self._hit("tiktok_video_comments")
+        return self._post_comments_result()
+
+    def facebook_post_comments(self, url, cursor=None, **kw):
+        self._hit("facebook_post_comments")
+        return self._post_comments_result()
 
     # 피드백 #5(SNS 네이티브 검색): 기존 VOC 테스트를 건드리지 않도록 기본은 빈 결과 — 전용 테스트가
     # research.PROVIDERS["twitter_search_posts"]/["threads_search"]를 따로 덮어쓴다.
@@ -383,6 +413,8 @@ def fakes(monkeypatch):
                               youtube_channel=f.youtube_channel, naver_search_trend=f.search_trend,
                               instagram_user_posts=f.instagram_user_posts, youtube_channel_videos=f.youtube_channel_videos,
                               google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments,
+                              youtube_video_comments=f.youtube_video_comments, tiktok_video_comments=f.tiktok_video_comments,
+                              facebook_post_comments=f.facebook_post_comments,
                               twitter_search_posts=f.twitter_search_posts, threads_search=f.threads_search,
                               shopping_keyword_trend=f.shopping_keyword_trend,
                               shopping_keyword_breakdown=f.shopping_keyword_breakdown, naver_search=f.naver_search,
@@ -931,7 +963,8 @@ def test_search_trend_item_collects_monthly_index_and_related_queries(client, fa
     ok(client.patch(f"/v1/projects/{pid}", json={"base_version": project["version"],
                                                 "changes": {"enabled_slides": project["config"]["enabled_slides"] + ["TR1"]}}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
-    assert next(s for s in sp["plan"] if s["slot_id"] == "TR1")["readiness"] == "ready"
+    tr1 = next(s for s in sp["plan"] if s["slot_id"] == "TR1")
+    assert tr1["readiness"] == "thin" and "검색 경쟁 분석" in tr1["reason"]
 
 
 def test_search_trend_item_tracks_every_product_category_not_just_one(client, fakes):
@@ -1547,19 +1580,21 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     assert fakes.calls["instagram_user_posts"] == 1 and fakes.calls["youtube_channel_videos"] == 1
 
     posts = ok(client.get(f"/v1/projects/{pid}/owned-posts"))
-    assert len(posts) == 2  # p3 has no image_url, so only p1/p2 got downloaded
-    assert [p["likes"] for p in posts] == [900, 500]  # ordered by likes desc, p2 > p1
+    assert len(posts) == 3  # 댓글 분석용 게시물은 이미지가 없어도 보관한다
+    assert [p["likes"] for p in posts] == [900, 500, 100]  # ordered by likes desc
     # 피드백 #2(자사 SNS 정량 데이터): 조회수도 함께 저장된다(사진 게시물은 플랫폼이 공개 안 해 None).
-    assert [p["views"] for p in posts] == [45000, None]
+    assert [p["views"] for p in posts] == [45000, None, None]
     # 피드백 #2(댓글 감성 분석): 댓글 표본을 가져와 긍정/부정/중립으로 분류해 둔다.
-    assert fakes.calls["instagram_post_comments"] == 2  # 다운로드된 상위 게시물마다 한 번씩
-    assert fakes.calls["comment_sentiment"] == 2
+    assert fakes.calls["instagram_post_comments"] == 3  # 반응 상위 게시물마다 한 번씩
+    assert fakes.calls["comment_sentiment"] == 3
     for p in posts:
         s = p["comment_sentiment"]
         assert s["sample_size"] == 3 and s["positive"] == 1 and s["negative"] == 1 and s["neutral"] == 1
+        assert s["pain_points"] == ["품질 불만"]
     for p in posts:
-        assert p["asset"]["review_status"] == "candidate"
-        ok(client.patch(f"/v1/assets/{p['asset']['id']}", json={"review_status": "accepted"}))
+        if p["asset"]:
+            assert p["asset"]["review_status"] == "candidate"
+            ok(client.patch(f"/v1/assets/{p['asset']['id']}", json={"review_status": "accepted"}))
 
     facts = ok(client.get(f"/v1/projects/{pid}/facts"))
     owned_facts = [f for f in facts if f["metric"].startswith("owned_")]
@@ -1576,7 +1611,7 @@ def test_owned_item_collects_channel_facts_and_top_posts(client, fakes):
     # rerun without force: the succeeded item is skipped, no duplicate OwnedPost rows
     job2 = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job2['id']}"))["result"]["items"][it["id"]]["status"] == "skipped"
-    assert len(ok(client.get(f"/v1/projects/{pid}/owned-posts"))) == 2
+    assert len(ok(client.get(f"/v1/projects/{pid}/owned-posts"))) == 3
 
 
 def test_owned_item_collects_every_channel_and_every_account(client, fakes):
@@ -1761,14 +1796,15 @@ def test_owned_item_also_runs_for_a_competitor_without_leaking_into_self(client,
         if f["metric"].startswith("owned_"):
             ok(client.patch(f"/v1/facts/{f['id']}/review", params={"project_id": pid}, json={"action": "confirm"}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
-    assert next(s for s in sp["plan"] if s["slot_id"] == "2-1")["readiness"] == "ready"
+    inventory = next(s for s in sp["plan"] if s["slot_id"] == "2-1")
+    assert inventory["readiness"] == "thin"  # 경쟁사 Instagram 수치가 자사의 두 번째 채널로 새지 않는다
     build_job = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)["job"]
     ok(client.get(f"/v1/jobs/{build_job['id']}"))
     deck = ok(client.get(f"/v1/projects/{pid}/decks"))[0]
     spec = ok(client.get(f"/v1/decks/{deck['id']}"))["spec"]
-    slide_2_1 = next(s for s in spec["slides"] if s["slide_id"] == "2-1")
-    text = str(slide_2_1)
-    assert "브랜드A" in text and "경쟁X" not in text
+    assert not any(s["slide_id"] == "2-1" for s in spec["slides"])
+    compare = next(s for s in spec["slides"] if s["slide_id"] == "OW-CMP")
+    assert {b["entity"] for b in compare["bindings"]} >= {"브랜드A", "경쟁X"}
 
 
 def test_collection_mix_flags_press_heavy_research_and_thin_channels(client, fakes):
@@ -1957,13 +1993,17 @@ def test_voc_item_collects_and_classifies_consumer_posts(client, fakes):
                    content_hash="h1", published="2026-05-01", publisher="네이버 블로그", image_urls=[])
 
     def structured(system, user, schema, **kw):
-        if set(schema["properties"]) == {"relevant", "headline", "sentiment", "topic", "awareness", "sponsored"}:
+        if set(schema["properties"]) == {
+            "relevant", "headline", "sentiment", "topic", "awareness", "sponsored", "pain_points",
+        }:
             fakes._hit("voc_classify")
             if "협찬" in user:
                 return CallResult(data={"relevant": True, "headline": "디자인이 별로였음", "sentiment": "negative",
-                                        "topic": "design", "awareness": "other", "sponsored": True}, cost_usd=0.001)
+                                        "topic": "design", "awareness": "other", "sponsored": True,
+                                        "pain_points": ["디자인 불만"]}, cost_usd=0.001)
             return CallResult(data={"relevant": True, "headline": "가격이 합리적", "sentiment": "positive",
-                                    "topic": "price", "awareness": "referral", "sponsored": False}, cost_usd=0.001)
+                                    "topic": "price", "awareness": "referral", "sponsored": False,
+                                    "pain_points": []}, cost_usd=0.001)
         return fakes.structured(system, user, schema, **kw)
 
     research.PROVIDERS["search"] = search
@@ -2015,13 +2055,17 @@ def test_voc_item_also_collects_x_and_threads_public_posts(client, fakes):
         ]}, cost_usd=0.002)
 
     def structured(system, user, schema, **kw):
-        if set(schema["properties"]) == {"relevant", "headline", "sentiment", "topic", "awareness", "sponsored"}:
+        if set(schema["properties"]) == {
+            "relevant", "headline", "sentiment", "topic", "awareness", "sponsored", "pain_points",
+        }:
             fakes._hit("voc_classify")
             if "느려요" in user:
                 return CallResult(data={"relevant": True, "headline": "배송 지연", "sentiment": "negative",
-                                        "topic": "shipping", "awareness": "other", "sponsored": False}, cost_usd=0.001)
+                                        "topic": "shipping", "awareness": "other", "sponsored": False,
+                                        "pain_points": ["배송 지연"]}, cost_usd=0.001)
             return CallResult(data={"relevant": True, "headline": "가성비 호평", "sentiment": "positive",
-                                    "topic": "price", "awareness": "other", "sponsored": False}, cost_usd=0.001)
+                                    "topic": "price", "awareness": "other", "sponsored": False,
+                                    "pain_points": []}, cost_usd=0.001)
         return fakes.structured(system, user, schema, **kw)
 
     research.PROVIDERS["search"] = search
@@ -2217,7 +2261,8 @@ def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
     out = ok(client.post(f"/v1/projects/{pid}/synthesis", json={"brand_id": brand_id, "instruction": "검색 위주로"}))
     assert out["version"] == 1 and out["active"] and not out["stale"]
     assert out["types"] == ["insight"]  # 기본값
-    assert out["data"]["insight"]["competitor"] == ["경쟁 세트 안 검색 점유 우위 축소"]  # 숫자 포함 줄과 없는 장표 참조 줄은 빠짐
+    assert [line["text"] for line in out["data"]["insight"]["competitor"]] == ["경쟁 세트 안 검색 점유 우위 축소"]
+    assert out["data"]["insight"]["competitor"][0]["ref"] == "2-8a"
     assert any("숫자" in d for d in out["dropped"]) and any("Z-9" in d for d in out["dropped"])
     flow = ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]
     ids = [x.get("slide_id") for x in flow if x["kind"] == "slide"]
@@ -2245,6 +2290,28 @@ def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
 
     ok(client.delete(f"/v1/projects/{pid}/synthesis", params={"brand_id": brand_id}))
     assert "ES" not in [x.get("slide_id") for x in ok(client.get(f"/v1/projects/{pid}/outline"))["flow"]]
+
+
+def test_deck_build_creates_default_insight_once_and_reuses_fingerprint(client, fakes):
+    pid, _ = setup_project(client)
+    for batch in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+        ok(client.post(f"/v1/imports/{batch['id']}/review", json={"action": "accept"}))
+    assert ok(client.get(f"/v1/projects/{pid}/synthesis")) == []
+
+    first = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
+    job = ok(client.get(f"/v1/jobs/{first['job']['id']}"))
+    assert job["state"] == "succeeded" and job["result"]["synthesis"]["generated"]
+    deck = ok(client.get(f"/v1/decks/{first['deck_id']}"))
+    ids = [slide["slide_id"] for slide in deck["spec"]["slides"]]
+    assert "ES" in ids and "INSIGHT" in ids
+    assert ids.index("ES") < ids.index("INSIGHT")
+    runs = ok(client.get(f"/v1/projects/{pid}/synthesis"))
+    assert len(runs) == 1 and runs[0]["active"] and runs[0]["types"] == ["insight"]
+
+    second = ok(client.post(f"/v1/projects/{pid}/deck-builds", json={"confirm_pending": True}), 202)
+    job2 = ok(client.get(f"/v1/jobs/{second['job']['id']}"))
+    assert job2["state"] == "succeeded" and job2["result"]["synthesis"]["cached"]
+    assert len(ok(client.get(f"/v1/projects/{pid}/synthesis"))) == 1
 
 
 def test_synthesis_scopes_pages_to_their_own_brand(client, fakes, monkeypatch):

@@ -115,7 +115,6 @@ def _deactivate_active(db: Session, project_id: str, brand_id: str) -> None:
 def make_synthesis(project_id: str, body: SynthesisIn, db: Session = Depends(get_db), who: str = Depends(actor)):
     """종합 장표를 쓴다(다시 쓰기 포함) — 자사 브랜드 하나, 고른 유형만, 덮어쓰지 않고 새 버전으로 남긴다."""
     from app.config import settings
-    from app.models import SynthesisRun
     from app.services import synthesis
     from integrations.base import ProviderError
 
@@ -131,13 +130,7 @@ def make_synthesis(project_id: str, body: SynthesisIn, db: Session = Depends(get
         raise ApiError(409, "NO_BODY_PAGES", str(exc), "자료 확인에서 자료를 채택하세요")
     except ProviderError as exc:
         raise ApiError(502, exc.code, f"AI 응답을 받지 못했습니다: {exc.message}", "잠시 뒤 다시 시도하세요")
-    version = (db.scalar(select(func.max(SynthesisRun.version)).where(
-        SynthesisRun.project_id == project_id, SynthesisRun.brand_id == body.brand_id)) or 0) + 1
-    _deactivate_active(db, project_id, body.brand_id)
-    run = SynthesisRun(id=new_id("SYN"), project_id=project_id, brand_id=body.brand_id, version=version,
-                       types=out["types"], data=out["data"], instruction=body.instruction, dropped=out["dropped"],
-                       body_fingerprint=fp, active=True)
-    db.add(run)
+    run = synthesis.persist(db, p, body.brand_id, out, fp, body.instruction)
     audit(db, project_id, "project", project_id, "synthesis",
           after={"brand_id": body.brand_id, "types": out["types"], "instruction": body.instruction,
                 "dropped": out["dropped"]}, actor=who)
