@@ -44,13 +44,16 @@ def test_validate_figures_checks_quotes_and_restores_units():
 
 def test_million_dollar_figures_and_usd_display():
     from core.composition.formatters import format_value
-    page = "세계 러기지 및 백 시장 규모는 2024년 18,617백만 달러로 추정된다. The market reached USD 18.6 billion."
+    page = ("세계 러기지 및 백 시장 규모는 2024년 18,617백만 달러로 추정된다. The market reached USD 18.6 billion. "
+            "백팩 시장 USD 23.12 십억")
     figs, _ = validate_figures({"figures": [
         {"metric": "market_size", "name": "세계 러기지 시장 규모", "value": "18617", "unit": "usd", "period": "2024",
          "segment": "", "quote": "세계 러기지 및 백 시장 규모는 2024년 18,617백만 달러로 추정된다."},
         {"metric": "market_size", "name": "world luggage", "value": "18.6", "unit": "usd", "period": "2024",
-         "segment": "", "quote": "The market reached USD 18.6 billion."}]}, page)
-    assert [f["value"] for f in figs] == [Decimal("18617000000"), Decimal("18600000000.0")]
+         "segment": "", "quote": "The market reached USD 18.6 billion."},
+        {"metric": "market_size", "name": "백팩 시장", "value": "23.12", "unit": "usd", "period": "2026",
+         "segment": "", "quote": "백팩 시장 USD 23.12 십억"}]}, page)
+    assert [f["value"] for f in figs] == [Decimal("18617000000"), Decimal("18600000000.0"), Decimal("23120000000.00")]
     assert format_value("usd", figs[0]["value"]) == "186억 달러" and format_value("usd", Decimal(9900)) == "9,900달러"
 
 

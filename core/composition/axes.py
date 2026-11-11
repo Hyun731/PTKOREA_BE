@@ -118,6 +118,10 @@ def _source_name(m: CaseMaterial) -> str:
 
 
 def _figure_name(f) -> str:
+    if f.metric == "macro_indicator":  # an indicator is named by what it counts, not by its market segment
+        return f.dims.get("indicator") or getattr(f, "label", None) or f.entity
+    if f.metric in MARKET_METRICS and getattr(f, "label", None):  # P4-1 names say what it is ('… 규모 전망')
+        return f.label
     return f.dims.get("segment") or f.dims.get("indicator") or getattr(f, "label", None) or f.entity
 
 
@@ -224,7 +228,8 @@ def market_size_page(ctx: QuantContext, category: str, materials: list[CaseMater
     series_by: dict[str, dict[str, object]] = defaultdict(dict)
     for f in figs.get("macro") or []:
         key = f.period_end.isoformat()[:7] if f.period_end.month != 12 or f.period_start.month != 1 else str(f.period_end.year)
-        series_by[_figure_name(f)].setdefault(key, f)
+        if f.unit != "percent":  # a line of counts or amounts; rates and shares stay out of one axis
+            series_by[_figure_name(f)].setdefault(key, f)
     macro_name, macro_pts = max(series_by.items(), key=lambda kv: (len(kv[1]), kv[0]), default=(None, {}))
     has_line = len(macro_pts) >= ctx.config.line_chart_min_points
     fact_ids: list[str] = []
