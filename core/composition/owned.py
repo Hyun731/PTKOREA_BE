@@ -281,3 +281,11 @@ def youtube_performance_page(ctx: QuantContext) -> Optional[SlideSpec]:
     ]
     return SlideSpec(slide_id="2-5", template_id="youtube_performance.v1", page_role="content", section_id="owned",
                      title="YouTube 채널 성과", blocks=blocks, needs_review=True, is_data=True)
+
+
+def channel_compare_page(ctx: QuantContext, exclude: frozenset[str] = frozenset()) -> list[SlideSpec]:
+    """OW-CMP 자사 vs 경쟁사 채널 비교(P3-1) — 그리는 일은 compare.py가 한다. 경쟁사 공식 계정 수치는
+    run_owned_item이 자사 brand_id 아래 entity로 구분해 모아 둔 것을 쓴다. `exclude`: 다른 자사 브랜드
+    이름(경쟁사 목록에 있어도 한 장에 두 자사를 세우지 않는다)."""
+    from core.composition.compare import channel_compare_pages
+    return channel_compare_pages(ctx, exclude)
