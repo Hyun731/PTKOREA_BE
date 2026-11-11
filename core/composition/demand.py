@@ -274,7 +274,8 @@ def shopping_demand_page(ctx: QuantContext) -> Optional[SlideSpec]:
     insights = []
     for k in band_rows[:2]:
         f = max(peaks[k], key=lambda f: f.value)
-        insights.append(([N(k), T(" 성수기")], [M(fmt_month_label(f.dims["month"]), "month"), T(" 클릭 지수가 12개월 평균의 "),
+        insights.append(([N(k), T(" 성수기")], [M(fmt_month_label(f.dims["month"]), "month"), T(" 클릭 지수가 "),
+                                               M("12개월", "window"), T(" 평균의 "),
                                                ctx.pf.fact(f, "share", bold=True)]))
     if age_kws:
         k = age_kws[0]
@@ -286,8 +287,9 @@ def shopping_demand_page(ctx: QuantContext) -> Optional[SlideSpec]:
     lead = lead_block([P(N(brand.name), T(" 주력 제품군의 쇼핑 수요 — 월별 클릭 추이, 성수기, 클릭 연령대"))])
     blocks = [
         title_block("Market", "품목별 쇼핑 수요·성수기"), lead, *blocks, *insight_blocks(insights[:3]),
-        footnote(ctx, fact_ids, [T("네이버 쇼핑 클릭 지수(가장 큰 달 = 100인 상대값, 같은 요청끼리만 비교) · "
-                                   "성수기 = 12개월 평균 대비 기준 이상인 달")]),
+        footnote(ctx, fact_ids, [T("네이버 쇼핑 클릭 지수(가장 큰 달 = "), M("100", "index_peak"),
+                                   T("인 상대값, 같은 요청끼리만 비교) · 성수기 = "),
+                                   M("12개월", "window"), T(" 평균 대비 기준 이상인 달")]),
     ]
     return SlideSpec(slide_id="SH1", template_id="shopping_demand.v1", page_role="content", section_id="search_trend",
                      title="품목별 쇼핑 수요·성수기", blocks=_decorate(ctx, blocks), needs_review=True, is_data=True)
