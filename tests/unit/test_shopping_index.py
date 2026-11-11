@@ -33,7 +33,10 @@ def test_peaks_are_months_well_above_the_average():
     assert peaks[0].unit == "percent" and peaks[0].dims["n_months"] == "12"
     short = click_index_facts(brand_id="B1", category_code="c", results=[_series("백팩", [10, 90, 10])], scale_id="s",
                               measured_at=DAY)
-    assert peak_facts(short, lift=Decimal("1.2"), measured_at=DAY) == []  # 6개월 미만은 성수기를 말하지 않음
+    assert peak_facts(short, lift=Decimal("1.2"), measured_at=DAY) == []  # 데이터가 있는 달이 적으면 말하지 않음
+    sparse = click_index_facts(brand_id="B1", category_code="c", scale_id="s", measured_at=DAY,
+                               results=[_series("러기지", [0, 0, 0, 0, 0, 0, 0, 0, 100, 5, 3, 0])])
+    assert peak_facts(sparse, lift=Decimal("1.2"), measured_at=DAY) == []  # 실제로 '9월 1200%'로 튀던 경우
 
 
 def test_shares_average_the_period_and_sum_to_100():

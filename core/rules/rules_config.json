@@ -12,5 +12,5 @@
   "R12": {"max_ratio": "0.8", "min_creator_sample": 3},
   "R13": {"gap_days": 60},
   "derived": {"min_n": 20},
-  "shopping": {"peak_lift": "1.2"}
+  "shopping": {"peak_lift": "1.2", "peak_min_months": 9}
 }

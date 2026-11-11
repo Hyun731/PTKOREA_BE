@@ -1482,7 +1482,8 @@ def run_shopping_insight(db: Session, ledger: RunLedger, project: Project, item:
         out["facts"] += 1
         return True
 
-    lift = RulesConfig.load().shop_peak_lift
+    rules = RulesConfig.load()
+    lift, min_months = rules.shop_peak_lift, rules.shop_peak_min_months
     by_code: dict[str, list[str]] = {}
     for k, c in picked.items():
         if c:
@@ -1497,7 +1498,7 @@ def run_shopping_insight(db: Session, ledger: RunLedger, project: Project, item:
             continue
         index = click_index_facts(brand_id=item.brand_id, category_code=code, results=res.data["results"],
                                   scale_id=f"naver-shop:{item.brand_id}:{code}", measured_at=today)
-        for f in index + peak_facts(index, lift=lift, measured_at=today):
+        for f in index + peak_facts(index, lift=lift, measured_at=today, min_months=min_months):
             add(f)
         # 3) 제품군별 연령·성별
         for k in kws:

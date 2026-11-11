@@ -70,15 +70,17 @@ def click_index_facts(*, brand_id: str, category_code: str, results: list[dict],
     return out
 
 
-def peak_facts(index_facts: Iterable[Fact], *, lift: Decimal, measured_at: date) -> list[Fact]:
-    """키워드마다 월 지수가 기간 평균의 lift배 이상인 달 → shop_peak_lift(%) Fact."""
+def peak_facts(index_facts: Iterable[Fact], *, lift: Decimal, measured_at: date, min_months: int = 9) -> list[Fact]:
+    """키워드마다 월 지수가 기간 평균의 lift배 이상인 달 → shop_peak_lift(%) Fact.
+    클릭이 드문 키워드(데이터가 있는 달이 min_months 미만)는 평균이 너무 작아 한두 달이 수백 %로
+    튀므로 성수기를 말하지 않는다 — 실제로 '러기지'가 9월 1200%로 나왔다."""
     by_kw: dict[tuple[str, str], list[Fact]] = defaultdict(list)
     for f in index_facts:
         if f.metric == "shop_click_index":
             by_kw[(f.brand_id, f.entity)].append(f)
     out = []
     for (brand_id, kw), fs in sorted(by_kw.items()):
-        if len(fs) < 6:  # 반년도 안 되는 계열로 성수기를 말하지 않는다
+        if sum(1 for f in fs if f.value > 0) < min_months:
             continue
         mean = sum(f.value for f in fs) / len(fs)
         if mean <= 0:
