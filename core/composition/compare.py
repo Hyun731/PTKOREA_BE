@@ -102,6 +102,16 @@ def sample_note(facts: list, what: str) -> list[Part]:
     return [M(f"{what} {n} · AI 분류", "sample")]
 
 
+ROW_MAX = 200.0  # one channel row at most — a lone channel would otherwise stretch to the whole body
+BAR_ROW_MAX = 30.0  # px per bar at most — a tall cell with two bars should not draw two slabs
+
+
+def fit_bars(reg: Region, n: int, legend: bool = False) -> Region:
+    """The chart's own box inside a cell: at most BAR_ROW_MAX per bar, vertically centered."""
+    h = min(reg.h, BAR_ROW_MAX * max(n, 1) + 16 + (22 if legend else 0))
+    return Region(x=reg.x, y=reg.y + (reg.h - h) / 2, w=reg.w, h=h)
+
+
 def text(block_id: str, reg: Region, parts: list[Part], *, spec: str = "caption", align: str = "l",
          color: str = "text", valign: str = "m", size: Optional[float] = None, weight: Optional[str] = None):
     return text_block(block_id, "caption", reg, [P(*parts)], spec=spec, align=align, valign=valign, color=color,
@@ -287,7 +297,7 @@ def _compare_page(ctx: QuantContext, brand: Brand, channels: list[dict], slide_i
     label_w, gap, head_h, row_gap = 120.0, 14.0, 26.0, 10.0
     col_w = (body.w - label_w - gap * len(cols)) / len(cols)
     n = len(channels)
-    row_h = (body.h - head_h - 6 - row_gap * (n - 1)) / n
+    row_h = min(ROW_MAX, (body.h - head_h - 6 - row_gap * (n - 1)) / n)
     label_pt = 10.0 if row_h >= 120 else 9.0
     blocks: list[Block] = []
     fact_ids: list[str] = []
@@ -315,13 +325,15 @@ def _compare_page(ctx: QuantContext, brand: Brand, channels: list[dict], slide_i
             reg = Region(x=x, y=y, w=col_w, h=row_h)
             if key == "sentiment":
                 if ch["sentiment"]:
-                    chart = _sentiment_chart(ctx, f"row{r}_{key}", reg, ch["sentiment"], label_pt - 0.5)
+                    chart = _sentiment_chart(ctx, f"row{r}_{key}", fit_bars(reg, len(ch["sentiment"]), legend=True),
+                                             ch["sentiment"], label_pt - 0.5)
                     blocks.append(chart)
                     fact_ids += [it.fact_id for it in chart.bar_items()]
                     sent_facts += [f for _, pols in ch["sentiment"] for f in pols.values()]
                     continue
             elif key in ch["kpis"]:
-                chart = _kpi_chart(ctx, f"row{r}_{key}", reg, ch["kpis"][key], fmt, brand.name, label_pt)
+                cell = ch["kpis"][key]
+                chart = _kpi_chart(ctx, f"row{r}_{key}", fit_bars(reg, len(cell.rows)), cell, fmt, brand.name, label_pt)
                 blocks.append(chart)
                 fact_ids += [it.fact_id for it in chart.bar_items()]
                 continue

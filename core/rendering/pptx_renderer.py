@@ -310,6 +310,7 @@ def _bar_chart_multi(slide, b: BarChartBlock):
             for i, it in enumerate(s.items):
                 if it is not None and it.value / top < STACK_LABEL_MIN:
                     _hide_value(series.points[i].data_label)
+        _no_wrap(series._element)
 
 
 def _is_dark(role: str) -> bool:
