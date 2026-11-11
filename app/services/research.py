@@ -1574,6 +1574,123 @@ def run_mentions(db: Session, ledger: RunLedger, project: Project, item: Researc
     return out
 
 
+# ------------------------------------------------------------------ blog types (P2-5, 블로그 문서 유형)
+
+BLOG_TYPE_TOP = 30  # 검색어마다 정확도순 상위 글 수
+BLOG_TYPE_BATCH = 10  # AI 한 번에 분류하는 글 수
+BLOG_TYPE_HEAD, BLOG_TYPE_TAIL = 1500, 700  # 대가 표시·제휴 링크는 글 끝에 많아 앞뒤를 함께 보낸다
+BLOG_TYPE_SYSTEM = """당신은 네이버 블로그 글이 어떤 종류의 글인지 가려내는 리서처입니다. <docs>의 글마다 type 하나를 고릅니다.
+- real_use: 글쓴이가 직접 사거나 써 본 경험을 쓴 후기. 대가 표시가 없어야 합니다.
+- sponsored: 체험단·협찬·원고료·제품 무상 제공처럼 대가를 받고 쓴 글(본문에 표시가 있음).
+- shopping_affiliate: 쿠팡 파트너스 같은 제휴 링크·수수료 표시가 있거나, 직접 써 본 경험 없이 가격·할인코드·
+  최저가·상품 비교를 모아 구매로 이끄는 글.
+- promo_template: 매장·대리점·판매자·브랜드가 쓴 홍보 글, 입고·행사·할인 안내, 같은 문구를 되풀이하는 템플릿 글.
+- other: 위 어디에도 해당하지 않는 글(뉴스 옮김, 일상 글에서 잠깐 언급, 관련 없는 글 등).
+<markers>는 본문에서 찾은 표시 문구 종류입니다(sponsored = 대가 표시, affiliate = 제휴 링크·수수료). 표시가 있으면
+대개 sponsored·shopping_affiliate지만, 문구가 없다고 바로 real_use는 아닙니다. 본문이 짧거나 제목·요약뿐이면
+보이는 만큼으로 판단합니다."""
+BLOG_TYPE_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["docs"],
+    "properties": {"docs": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["index", "type"],
+        "properties": {"index": {"type": "integer"},
+                       "type": {"type": "string", "enum": ["real_use", "sponsored", "shopping_affiliate",
+                                                          "promo_template", "other"]}}}}},
+}
+
+
+def _blog_excerpt(text: str) -> str:
+    text = text or ""
+    if len(text) <= BLOG_TYPE_HEAD + BLOG_TYPE_TAIL:
+        return text
+    return f"{text[:BLOG_TYPE_HEAD]}\n…(중략)…\n{text[-BLOG_TYPE_TAIL:]}"
+
+
+def run_blog_types(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
+    """블로그 문서 유형: 자사 브랜드명과 대표 조합어(브랜드 + 첫 제품군)마다 네이버 블로그 정확도순 상위
+    BLOG_TYPE_TOP건의 본문을 받아 AI가 실사용·협찬·쇼핑 제휴·홍보 템플릿·기타로 나누고, 유형별 비중을
+    확인 전 Fact(blog_type_share)로 남긴다. 본문을 못 받은 글은 제목·요약으로 분류한다."""
+    from core.ingestion.blog_types import BLOG_TYPES, disclosure_markers, share_facts
+    from core.rules.config import RulesConfig
+
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    name = brand.names_for(brand.name)[0]
+    cats = [c for c in dict.fromkeys(brand.categories) if c and c != brand.name]
+    keywords = [name] + ([f"{name} {cats[0]}"] if cats else [])
+    today = date.today()
+    min_n = RulesConfig.load().derived_min_n
+    out: dict = {"facts": 0, "keywords": {}, "errors": []}
+    facts = []
+    for kw in keywords:
+        try:
+            res = ledger.call("naver", "search", {"kind": "blog", "q": kw, "display": BLOG_TYPE_TOP, "start": 1, "sort": "sim"},
+                              0.0, lambda q=kw: p["naver_search"]("blog", q, display=BLOG_TYPE_TOP, start=1, sort="sim"),
+                              cache_days=1)
+        except ProviderError as exc:
+            out["errors"].append({"code": exc.code, "message": f"블로그 유형 '{kw}': {exc.message}"})
+            if exc.code == "PROVIDER_AUTH":
+                break
+            continue
+        docs = [d for d in res.data["items"] if d.get("url")][:BLOG_TYPE_TOP]
+
+        def fetch(d):
+            try:
+                page = p["fetch_page"](d["url"])
+                return None if _is_login_wall(page) else page.text
+            except ProviderError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="blog_type_fetch") as pool:
+            texts = list(pool.map(fetch, docs))
+        typed: list[dict] = []
+        for b in range(0, len(docs), BLOG_TYPE_BATCH):
+            batch = list(zip(docs[b:b + BLOG_TYPE_BATCH], texts[b:b + BLOG_TYPE_BATCH]))
+            parts = []
+            for i, (d, text) in enumerate(batch):
+                body = _blog_excerpt(text) if text else d.get("snippet", "")
+                marks = disclosure_markers(f"{d.get('title', '')}\n{body}")
+                parts.append(f'<doc index="{i}">\n제목: {d.get("title", "")}\n블로그: {d.get("author") or ""}\n'
+                             f'<markers>{", ".join(marks) or "없음"}</markers>\n본문: {body}\n</doc>')
+            user = f"<keyword>{kw}</keyword>\n<docs>\n" + "\n".join(parts) + "\n</docs>"
+            try:
+                ans = ledger.call("anthropic", "blog_type_classify",
+                                  {"keyword": kw, "urls": [d["url"] for d, _ in batch],
+                                   "hash": hashlib.sha256(user.encode("utf-8")).hexdigest()}, 0.01,
+                                  lambda u=user: p["structured"](BLOG_TYPE_SYSTEM, u, BLOG_TYPE_SCHEMA, max_tokens=800))
+            except ProviderError as exc:
+                if exc.code == "BUDGET_EXCEEDED":
+                    raise
+                out["errors"].append({"code": exc.code, "message": f"블로그 유형 AI 분류 실패('{kw}'): {exc.message}"})
+                continue
+            by_index = {r.get("index"): r.get("type") for r in ans.data.get("docs") or []}
+            for i, (d, _) in enumerate(batch):
+                t = by_index.get(i)
+                if t in BLOG_TYPES:
+                    typed.append({"url": d["url"], "title": d.get("title"), "type": t})
+        made = share_facts(brand_id=item.brand_id, entity=brand.name, keyword=kw, docs=typed, measured_at=today,
+                           min_n=min_n)
+        facts += made
+        counts = {t: sum(1 for d in typed if d["type"] == t) for t in BLOG_TYPES}
+        out["keywords"][kw] = {"n": len(typed), "fetched": sum(1 for t in texts if t), "types": counts,
+                               "samples": typed}
+        if typed and not made:
+            out.setdefault("notes", []).append(f"'{kw}': 분류한 글이 {len(typed)}건이라 비중을 만들지 않았습니다(기준 {min_n}건)")
+
+    existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+    for f in facts:
+        if f.id in existing:
+            continue
+        db.add(FactRow(project_id=project.id, fact_id=f.id, origin="auto", research_item_id=item.id,
+                       data=json.loads(f.model_dump_json()), verification_status="candidate",
+                       review_note="네이버 블로그 상위 글 유형 AI 분류 자동 수집"))
+        existing.add(f.id)
+        out["facts"] += 1
+    db.commit()
+    return out
+
+
 # ------------------------------------------------------------------ shopping insight (P2-2, 네이버 데이터랩)
 
 SHOP_MAX_KEYWORDS = 5  # 쇼핑인사이트 키워드 추이: 요청당 최대 5개 = 한 스케일
@@ -1765,6 +1882,14 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                         men = run_mentions(s, ledger, project, item)
                         r = {**r, "facts": r.get("facts", 0) + men["facts"], "mentions": men,
                              "errors": [*r.get("errors", []), *men["errors"]]}
+                    if "naver_blog_types" in chans:  # P2-5 블로그 문서 유형(AI 분류)
+                        if ai_enabled:
+                            bt = run_blog_types(s, ledger, project, item)
+                            r = {**r, "facts": r.get("facts", 0) + bt["facts"], "blog_types": bt,
+                                 "errors": [*r.get("errors", []), *bt["errors"]]}
+                        else:
+                            r = {**r, "errors": [*r.get("errors", []), {"code": "PROVIDER_AUTH",
+                                 "message": "블로그 문서 유형: AI 키(ANTHROPIC_API_KEY)가 없어 분류하지 못했습니다"}]}
                     made = r.get("facts", 0)
                 elif item.section_id == "owned":
                     if not settings.provider_configured("scrapecreators"):

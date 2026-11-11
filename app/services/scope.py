@@ -33,7 +33,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "market_kpi": {"web"},
     "search_trend": {"google_trends", "shopping_insight"},
     "commerce_review": {"commerce_review"},
-    "search": {"search_naver", "naver_mentions"},
+    "search": {"search_naver", "naver_mentions", "naver_blog_types"},
     "voc": {"community", "naver_blog", "x_search", "threads_search"},
 }
 
@@ -100,8 +100,8 @@ ITEMS: list[dict] = [
     {"id": "3-2", "part": "competitor", "group": "시장 환경", "title": "경쟁 구도 (검색·점유)",
      "question": "{brand}·경쟁사({competitors}) 검색 점유·언급량(검색 결과 문서 수)·커머스 랭킹", "subject": "self", "collector": "search",
      "templates": ["2-8a", "2-8b", "2-8c", "2-8d"],
-     "channels": ["search_naver", "naver_mentions", "search_csv", "commerce_rank", "upload"],
-     "default_channels": ["search_naver", "naver_mentions"], "period": "inherit", "period_hint": "최근 12개월 + 조사 기간",
+     "channels": ["search_naver", "naver_mentions", "naver_blog_types", "search_csv", "commerce_rank", "upload"],
+     "default_channels": ["search_naver", "naver_mentions", "naver_blog_types"], "period": "inherit", "period_hint": "최근 12개월 + 조사 기간",
      "uploads": ["검색 지수 CSV(선택)"], "output": "한 장표에 한 소스, 같은 기준일"},
     {"id": "3-3", "part": "competitor", "group": "시장 환경", "title": "신규 진입자",
      "question": "{category} 최근 새로 들어온 플레이어와 차별점", "subject": "market", "collector": None,
