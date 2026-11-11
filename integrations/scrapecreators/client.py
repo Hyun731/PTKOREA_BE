@@ -154,11 +154,13 @@ def facebook_post_comments(url: str, *, cursor: Optional[str] = None,
 
 
 def instagram_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
-    """Follower count for a creator: the post endpoint leaves owner followers empty."""
+    """Follower count for a creator: the post endpoint leaves owner followers empty. bio는 P2-10
+    크리에이터 필터(한국어 계정인지)에 쓴다."""
     data = _get("/instagram/profile", {"handle": handle.lstrip("@")}, transport)
     user = (data.get("data") or {}).get("user") or {}
     return CallResult(data={"followers": _int((user.get("edge_followed_by") or {}).get("count")),
-                            "name": user.get("full_name") or user.get("username")},
+                            "name": user.get("full_name") or user.get("username"),
+                            "bio": user.get("biography") or ""},
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
 
 

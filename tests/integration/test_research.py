@@ -238,7 +238,7 @@ class Fakes:
 
     def instagram_profile(self, handle, **kw):
         self._hit("instagram_profile")
-        return CallResult(data={"followers": 80000, "name": handle}, cost_usd=0.002)
+        return CallResult(data={"followers": 80000, "name": handle, "bio": "서울 사는 러너"}, cost_usd=0.002)
 
     def youtube_video(self, url, **kw):
         self._hit("youtube_video")
@@ -1569,6 +1569,51 @@ def test_hashtag_discovery_adds_in_period_creator_posts(client, fakes, monkeypat
     urls = item(saved, "influencer")["inputs"]["post_urls"]
     assert urls == ["https://www.instagram.com/p/AAA/", "https://www.instagram.com/p/BBB/"]  # best engagement first
     assert fakes.calls["instagram_post"] >= 2 and res["posts"] >= 1  # the fake returns one post id for every URL
+
+
+def test_hashtag_discovery_leaves_out_small_and_foreign_creators(client, fakes, monkeypatch):
+    """P2-10: 팔로워 1,000 미만(small)과 캡션·바이오에 한글이 없는 계정(foreign)은 넣지 않고 건수만 남긴다.
+    캡션에 한글이 있으면 바이오가 영어여도 한국어 계정으로 본다."""
+    from datetime import date, timedelta
+
+    monkeypatch.setenv("APIFY_TOKEN", "test-token")
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "influencer")
+    day = str(date.fromisoformat(it["period_start"]) + timedelta(days=30))
+    post = lambda code, who, caption, likes: {"url": f"https://www.instagram.com/p/{code}/", "posted_at": day,
+                                              "creator": who, "likes": likes, "comments": 1, "views": None,
+                                              "caption": caption}
+
+    def hashtag(tags, per_tag=60, **kw):
+        fakes._hit("instagram_hashtag")
+        return CallResult(data={"posts": [post("K1", "seoul_runner", "", 900), post("T1", "tiny_kr", "좋아요", 800),
+                                          post("F1", "us_traveler", "love my bag", 700),
+                                          post("K2", "kr_caption", "여행 가방 추천", 600)]}, cost_usd=0.01)
+
+    profiles = {"seoul_runner": (52000, "서울 러닝 크루"), "tiny_kr": (300, "일상"), "us_traveler": (90000, "NYC traveler"),
+                "kr_caption": (4000, "travel lover")}
+
+    def instagram_profile(handle, **kw):
+        fakes._hit("instagram_profile")
+        followers, bio = profiles.get(handle, (80000, "서울"))
+        return CallResult(data={"followers": followers, "name": handle, "bio": bio}, cost_usd=0.002)
+
+    research.PROVIDERS.update(instagram_hashtag=hashtag, instagram_profile=instagram_profile)
+    ok(client.put(f"/v1/research-items/{it['id']}/inputs", json={"post_urls": [], "hashtags": ["#브랜드1"]}))
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    d = res["discovered"]
+    assert d["small"] == 1 and d["foreign"] == 1 and d["added"] == 2
+    urls = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "influencer")["inputs"]["post_urls"]
+    assert urls == ["https://www.instagram.com/p/K1/", "https://www.instagram.com/p/K2/"]
+
+
+def test_creator_filter_thresholds_come_from_rules_config():
+    from core.rules.config import RulesConfig
+    rules = RulesConfig.load()
+    assert rules.creator_min_followers == 1000 and rules.creator_require_korean is True
 
 
 def test_case_commentary_rewrite_then_accept(client, fakes):
