@@ -72,7 +72,8 @@ def _providers():
             instagram_user_posts, threads_profile, threads_search, threads_user_posts, tiktok_profile, tiktok_profile_videos,
             twitter_profile, twitter_search_posts, twitter_user_tweets, youtube_channel, youtube_channel_shorts,
             youtube_channel_videos, youtube_video, youtube_video_comments, tiktok_video_comments,
-            tiktok_search_keyword, youtube_search,
+            tiktok_search_keyword, youtube_search, facebook_ad_companies, facebook_company_ads, facebook_ad_search,
+            tiktok_ad_library_search, google_ad_advertisers, google_company_ads,
         )
         from integrations.naver.client import search_trend, shopping_keyword_breakdown, shopping_keyword_trend
         from integrations.naver.search import search as naver_search
@@ -91,7 +92,11 @@ def _providers():
                          twitter_profile=twitter_profile, twitter_user_tweets=twitter_user_tweets,
                          threads_profile=threads_profile, threads_user_posts=threads_user_posts,
                          youtube_channel_shorts=youtube_channel_shorts, youtube_video_comments=youtube_video_comments,
-                         tiktok_search_keyword=tiktok_search_keyword, youtube_search=youtube_search)
+                         tiktok_search_keyword=tiktok_search_keyword, youtube_search=youtube_search,
+                         facebook_ad_companies=facebook_ad_companies, facebook_company_ads=facebook_company_ads,
+                         facebook_ad_search=facebook_ad_search,
+                         tiktok_ad_library_search=tiktok_ad_library_search, google_ad_advertisers=google_ad_advertisers,
+                         google_company_ads=google_company_ads)
     return PROVIDERS
 
 
@@ -1242,6 +1247,219 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
     return out
 
 
+# ------------------------------------------------------------------ ad library (3-5 경쟁사 광고 소재, P2-9)
+
+# 메타는 지금 게재 중인 광고만 최신순으로 준다(중단된 광고는 오지 않음) — 조사 기간까지 닿도록 4쪽까지.
+AD_META_PAGES = 4  # 한 쪽 30개
+AD_GOOGLE_ADVERTISERS = 2  # 같은 회사가 광고주 계정을 여럿 쓴다(예: 쌤소나이트코리아 3개)
+AD_CLASSIFY_MAX = 24  # 경쟁사마다 AI가 이미지와 함께 보는 소재 수 — 유형 비중의 표본
+AD_CLASSIFY_BATCH = 8
+AD_SAMPLE_IMAGES = 4  # 소재 카드에 이미지 후보로 붙이는 대표 소재 수
+AD_SHARE_MIN_N = 5  # 분류한 소재가 이보다 적으면 유형 비중(%)을 만들지 않는다 — 한두 건의 100%는 오해를 부른다
+
+
+def _ad_call(ledger: RunLedger, out: dict, platform: str, endpoint: str, req: dict, fn):
+    try:
+        return ledger.call("scrapecreators", endpoint, req, 0.002, fn, cache_days=1)
+    except ProviderError as exc:
+        if exc.code == "BUDGET_EXCEEDED":
+            raise
+        out.setdefault("platform_errors", {})[platform] = exc.message
+        return None
+
+
+def _meta_ads(ledger: RunLedger, p: dict, names: list[str], out: dict) -> tuple[list[dict], Optional[dict]]:
+    """메타: 한글 이름으로 국내 게재 광고를 검색해 광고를 낸 브랜드 페이지를 찾고(페이지 검색은 한글로 안 된다),
+    그 페이지의 국내 게재 광고를 받는다. 검색에서 못 찾으면 영문 이름으로 페이지를 찾는다(한국 페이지 우선)."""
+    from app.services.ad_library import is_korean_page, latin_names, matches, pick_meta_page
+    q = next((n for n in names if HANGUL.search(n)), names[0])
+    res = _ad_call(ledger, out, "meta", "facebook_ad_search", {"q": q, "country": "KR"},
+                   lambda: p["facebook_ad_search"](q, country="KR"))
+    found_ads = [a for a in (res.data["ads"] if res else []) if a.get("page_id") and matches(a["advertiser"], names)]
+    page = None
+    if found_ads:
+        top = max({a["page_id"] for a in found_ads}, key=lambda pid: sum(a["page_id"] == pid for a in found_ads))
+        page = {"page_id": top, "name": next(a["advertiser"] for a in found_ads if a["page_id"] == top)}
+    latin = latin_names(names)
+    for q2 in ((f"{latin[0]} Korea", latin[0]) if latin and page is None else ()):
+        res = _ad_call(ledger, out, "meta", "facebook_ad_companies", {"q": q2}, lambda qq=q2: p["facebook_ad_companies"](qq))
+        cand = pick_meta_page(res.data["pages"], names) if res else None
+        page = page or cand
+        if cand and is_korean_page(cand):
+            page = cand
+            break
+    if page is None:
+        out.setdefault("platform_notes", {})["meta"] = "국내에 게재된 광고를 찾지 못했습니다"
+        return [], None
+    ads: list[dict] = [{**a, "platform": "meta"} for a in found_ads]
+    cursor = None
+    for _ in range(AD_META_PAGES):
+        res = _ad_call(ledger, out, "meta", "facebook_company_ads",
+                       {"page": page["page_id"], "country": "KR", "cursor": cursor},
+                       lambda c=cursor: p["facebook_company_ads"](page["page_id"], country="KR", cursor=c))
+        if res is None:
+            break
+        ads += [{**a, "platform": "meta"} for a in res.data["ads"]]
+        cursor = res.data.get("cursor")
+        if not cursor:
+            break
+    if not ads:
+        out.setdefault("platform_notes", {})["meta"] = f"‘{page['name']}’ 페이지에 국내 게재 광고가 없습니다"
+    return ads, page
+
+
+def _google_ads(ledger: RunLedger, p: dict, names: list[str], out: dict) -> list[dict]:
+    """구글: 한글 이름으로 광고주를 찾아(같은 회사의 계정 여럿) 국내 게재 광고를 받는다."""
+    from app.services.ad_library import pick_google_advertisers
+    q = next((n for n in names if HANGUL.search(n)), names[0])
+    res = _ad_call(ledger, out, "google", "google_ad_advertisers", {"q": q}, lambda: p["google_ad_advertisers"](q))
+    advertisers = pick_google_advertisers(res.data["advertisers"], names, AD_GOOGLE_ADVERTISERS) if res else []
+    if res is not None and not advertisers:
+        out.setdefault("platform_notes", {})["google"] = "광고주를 찾지 못했습니다"
+    ads: list[dict] = []
+    for adv in advertisers:
+        res = _ad_call(ledger, out, "google", "google_company_ads", {"advertiser": adv["advertiser_id"], "region": "KR"},
+                       lambda a=adv["advertiser_id"]: p["google_company_ads"](a, region="KR"))
+        if res:
+            ads += [{**a, "platform": "google"} for a in res.data["ads"]]
+    return ads
+
+
+def _tiktok_ads(ledger: RunLedger, p: dict, names: list[str], out: dict) -> list[dict]:
+    """틱톡: 공개 광고 라이브러리는 유럽분뿐 — 광고주 이름이 맞는 것만 건수로 남긴다."""
+    from app.services.ad_library import latin_names, matches
+    latin = latin_names(names)
+    if not latin:
+        return []
+    res = _ad_call(ledger, out, "tiktok", "tiktok_ad_library_search", {"q": latin[0]},
+                   lambda: p["tiktok_ad_library_search"](latin[0]))
+    return [{**a, "platform": "tiktok"} for a in (res.data["ads"] if res else []) if matches(a["advertiser"], names)]
+
+
+def run_ad_library_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem, ai_enabled: bool) -> dict:
+    """3-5 경쟁사 포지셔닝: 메타·구글·틱톡 공개 광고 라이브러리에서 기간 안에 게재된 소재를 모아, 경쟁사마다
+    소재 카드 하나(대표 소재 이미지 후보 + 플랫폼별 소재 수 + AI가 나눈 유형 비중)를 후보로 만든다.
+    수치(ad_creative_count, ad_creative_type_share)는 카드에 묶여 카드를 채택할 때 함께 채택된다."""
+    from app.services import ad_library as al
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    out: dict = {"created": 0, "facts": 0, "ads": {}, "errors": []}
+    names = list(dict.fromkeys([*brand.names_for(item.entity),
+                                *(k for g in brand.keyword_groups if g.entity == item.entity for k in g.keywords)]))
+    meta, page = _meta_ads(ledger, p, names, out)
+    collected = meta + _google_ads(ledger, p, names, out) + _tiktok_ads(ledger, p, names, out)
+    seen: set[tuple[str, str]] = set()
+    ads: list[dict] = []
+    for ad in collected:
+        if (ad["platform"], ad["group"]) in seen:  # 같은 소재의 변형(메타 collation)은 한 번만
+            continue
+        seen.add((ad["platform"], ad["group"]))
+        if not al.in_window(ad, item.period_start, item.period_end):
+            out["out_of_period"] = out.get("out_of_period", 0) + 1
+            continue
+        ads.append(ad)
+    for ad in ads:
+        out["ads"][ad["platform"]] = out["ads"].get(ad["platform"], 0) + 1
+    if not ads:
+        if not out.get("out_of_period"):
+            out["errors"].append({"code": "NO_MATERIAL",
+                                  "message": f"공개 광고 라이브러리에서 ‘{item.entity}’의 광고를 찾지 못했습니다"})
+        return out
+
+    # 유형 비중 표본: 국내 광고만, 이미지가 있는 소재 먼저, 플랫폼끼리 번갈아.
+    pool = sorted((a for a in ads if a["platform"] in al.SHARE_PLATFORMS), key=lambda a: a.get("image_url") is None)
+    sample = _round_robin(pool, lambda a: a["platform"])[:AD_CLASSIFY_MAX]
+
+    def grab(ad):
+        try:
+            return ad["group"], p["fetch_image"](ad["image_url"])
+        except ProviderError:
+            return ad["group"], None
+
+    images: dict[str, bytes] = {}
+    with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="ad_image") as workers:
+        for gid, data in workers.map(grab, [a for a in sample if a.get("image_url")]):
+            if data:
+                images[gid] = data
+    types: dict[str, str] = {}
+    if ai_enabled and sample:
+        for i in range(0, len(sample), AD_CLASSIFY_BATCH):
+            batch = sample[i:i + AD_CLASSIFY_BATCH]
+            pics: list[bytes] = []
+            image_no: dict[int, int] = {}
+            for j, ad in enumerate(batch, start=1):
+                if ad["group"] in images:
+                    pics.append(images[ad["group"]])
+                    image_no[j] = len(pics)
+            user = al.classify_prompt(item.entity, batch, image_no)
+            try:
+                res = ledger.call("anthropic", "ad_creative_classify",
+                                  {"entity": item.entity, "ids": [a["group"] for a in batch]}, 0.03,
+                                  lambda u=user, im=pics: p["structured"](al.AD_CLASSIFY_SYSTEM, u, al.AD_CLASSIFY_SCHEMA,
+                                                                          max_tokens=1000, images=im))
+            except ProviderError as exc:
+                if exc.code == "BUDGET_EXCEEDED":
+                    raise
+                out["errors"].append({"code": exc.code, "message": f"AI 분류 실패: {exc.message}"})
+                continue
+            for row in res.data.get("ads") or []:
+                no = row.get("no")
+                if isinstance(no, int) and 1 <= no <= len(batch) and row.get("type") in al.AD_CREATIVE_TYPES:
+                    types[batch[no - 1]["group"]] = row["type"]
+
+    # 경쟁사마다 소재 카드 하나 — 출처는 메타 광고 라이브러리의 그 페이지(없으면 첫 광고).
+    today = date.today()
+    url = (f"https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=KR&view_all_page_id={page['page_id']}"
+           if page and out["ads"].get("meta") else ads[0]["url"])
+    counts = {pf: out["ads"][pf] for pf in ("meta", "google", "tiktok") if out["ads"].get(pf)}
+    shares = al.type_shares(list(types.values())) if len(types) >= AD_SHARE_MIN_N else {}
+    if types and not shares:
+        out.setdefault("platform_notes", {})["share"] = f"분류한 소재가 {len(types)}건뿐이라 유형 비중은 내지 않았습니다"
+    count_line = " · ".join(f"{al.AD_PLATFORM_LABEL[pf]} {n}건" for pf, n in counts.items())
+    share_line = " · ".join(f"{al.AD_CREATIVE_LABEL[t]} {v:g}%" for t, v in sorted(shares.items(), key=lambda kv: -kv[1]) if v)
+    samples = [a for a in ads if a.get("text")][:6]
+    excerpt = "\n".join([f"게재 소재: {count_line}",
+                         *([f"소재 유형(국내 광고 {len(types)}건 AI 분류): {share_line}"] if shares else []),
+                         *(f"- [{al.AD_PLATFORM_LABEL[a['platform']]}] {_norm(a['text'])[:120]}" for a in samples)])
+    src = Source(id=new_id("SRC"), project_id=project.id, title=f"{item.entity} 공개 광고 라이브러리",
+                 original_url=url, publisher="메타·구글·틱톡 공개 광고 라이브러리", published_at=today,
+                 fetched_at=utcnow(), source_type="web", access_status="ok", text=excerpt[:SOURCE_TEXT_CHARS])
+    db.add(src)
+    db.flush()
+    m = Material(id=new_id("EV"), project_id=project.id, source_id=src.id, research_item_id=item.id,
+                 brand_id=item.brand_id, entity=item.entity, section_id="ad_library",
+                 title=f"{item.entity} 광고 소재 {len(ads)}건", excerpt=excerpt[:1200], input_path="auto",
+                 review_status="candidate", comment="", order=0,
+                 summary=(f"{item.period_start:%Y.%m}~{item.period_end:%Y.%m} 게재 소재 {count_line}"
+                          + (f". 유형: {share_line}" if share_line else ""))[:800])
+    db.add(m)
+    db.flush()
+    out["created"] = 1
+
+    def add_fact(metric: str, value, unit: str, dims: dict, label: str) -> None:
+        f = al.ad_fact(brand_id=item.brand_id, entity=item.entity, metric=metric, value=Decimal(str(value)), unit=unit,
+                       dims=dims, period_start=item.period_start, period_end=item.period_end, measured_at=today,
+                       source="공개 광고 라이브러리(ScrapeCreators)", label=label, url=url, evidence_id=m.id)
+        db.add(FactRow(project_id=project.id, fact_id=f.id, origin="auto", material_id=m.id, research_item_id=item.id,
+                       data=json.loads(f.model_dump_json()), verification_status="candidate",
+                       review_note="광고 라이브러리 집계" if metric == "ad_creative_count" else "AI 소재 유형 분류"))
+        out["facts"] += 1
+
+    for pf, n in counts.items():
+        add_fact("ad_creative_count", n, "count", {"platform": pf}, f"{al.AD_PLATFORM_LABEL[pf]} 게재 소재 수")
+    for t, v in shares.items():
+        add_fact("ad_creative_type_share", v, "percent", {"type": t, "n": len(types)},
+                 f"광고 소재 유형 비중 — {al.AD_CREATIVE_LABEL[t]}")
+    # 대표 소재 이미지: 자산 채택 흐름 그대로(후보 → 사람이 고름).
+    for ad in [a for a in sample if a["group"] in images][:AD_SAMPLE_IMAGES]:
+        label = al.AD_CREATIVE_LABEL.get(types.get(ad["group"], ""), "")
+        _save_image_candidate(db, m, images[ad["group"]],
+                              f"{item.entity} {al.AD_PLATFORM_LABEL[ad['platform']]} 광고" + (f" · {label}" if label else ""))
+    db.commit()
+    out["classified"] = len(types)
+    return out
+
 # ------------------------------------------------------------------ owned (2-1 채널 인벤토리)
 
 MAX_OWNED_PAGES = 40  # per channel per item — paging starts at today, so it must reach back past period_start
@@ -2224,6 +2442,11 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                     if not settings.provider_configured("perplexity"):
                         raise ProviderError("PROVIDER_AUTH", "Perplexity 키가 없습니다")
                     r = run_voc_item(s, ledger, project, item, ai_enabled)
+                    made = r["created"]
+                elif item.section_id == "ad_library":
+                    if not settings.provider_configured("scrapecreators"):
+                        raise ProviderError("PROVIDER_AUTH", "ScrapeCreators 키가 없습니다")
+                    r = run_ad_library_item(s, ledger, project, item, ai_enabled)
                     made = r["created"]
                 elif item.section_id == "search_trend":
                     # Google Trends는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.

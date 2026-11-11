@@ -98,6 +98,8 @@ CHANNELS = {
     "tiktok_search": {"label": "TikTok 공개 영상 검색", "support": "auto", "provider": "scrapecreators"},
     "youtube_search": {"label": "YouTube 영상 검색과 댓글", "support": "auto", "provider": "scrapecreators"},
     "naver_kin": {"label": "네이버 지식iN 질문·답변", "support": "auto", "provider": "naver"},
+    # P2-9: 메타(국내 게재)·구글(국내 게재)·틱톡(유럽 공개분) 공개 광고 라이브러리 — 소재 수와 AI 유형 비중.
+    "ad_library": {"label": "공개 광고 라이브러리 (메타·구글·틱톡)", "support": "auto", "provider": "scrapecreators"},
     # Phase 2: 무신사·29CM·올리브영·스마트스토어·쿠팡 모두 공개 페이지 자동 수집을 시도한다.
     # 무신사만 정직한 봇 식별 요청을 허용하고, 나머지는 봇 차단(Cloudflare·Akamai 등)으로
     # 접근 불가가 흔하다 — 우회 없이 "접근 불가"로 남긴다.
