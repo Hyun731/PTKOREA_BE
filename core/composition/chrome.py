@@ -89,10 +89,41 @@ def title_block(main: str, sub: Optional[str] = None, sub_parts: Optional[list[P
     return text_block("title", "title", region("title"), [P(*parts)], spec="title", valign="m", color="muted")
 
 
+CLAIM_H = 32  # one claim line at the lead_claim size (24pt line = 32px)
+EVIDENCE_BULLET = "-"
+
+
 def lead_block(paragraphs: list[Paragraph]) -> TextBlock:
-    """v6 headline: the slide's message, navy, left aligned, at most two lines."""
-    return text_block("lead", "lead", region("lead"), paragraphs, spec="lead", align="l", valign="t", color="navy",
-                      editable=True)
+    """v6 headline: the slide's message, navy, left aligned, at most two lines. Templates write the rule
+    headline (claim only) here; the build swaps in a claim + evidence headline when there is one (P3-4)."""
+    return text_block("lead_claim", "lead", region("lead"), paragraphs, spec="lead", align="l", valign="t",
+                      color="navy", editable=True)
+
+
+def headline_blocks(claim: list[Paragraph], evidence: list[Paragraph], area: Optional[Region] = None) -> list[TextBlock]:
+    """Headline v2 (P3-4) in `area` (the template's lead region): the claim on one line on top, then
+    the evidence lines ("- …", one number or quote each) under it. No evidence: the claim alone, two
+    lines allowed, like the rule headline."""
+    area = area or region("lead")
+    if not evidence:
+        return [text_block("lead_claim", "lead", area, claim, spec="lead", color="navy", editable=True)]
+    claim_reg = Region(x=area.x, y=area.y, w=area.w, h=CLAIM_H)
+    ev_reg = Region(x=area.x, y=area.y + CLAIM_H + 1, w=area.w, h=max(18.0, area.h - CLAIM_H - 1))
+    ev = type_spec("lead_evidence")
+    size, line = ev["size"], ev["line"]
+    n = min(len(evidence), ev["max_lines"])
+    if n * line * 96 / 72 > ev_reg.h:  # a shorter area: smaller evidence type, never past the area
+        line = int(ev_reg.h * 72 / 96 / n * 10) / 10
+        size = min(size, round(line / 1.32, 1))
+    lines = [p.model_copy(update={"bullet": EVIDENCE_BULLET}) for p in evidence[:ev["max_lines"]]]
+    return [text_block("lead_claim", "lead", claim_reg, claim, spec="lead_claim", color="navy", editable=True),
+            text_block("lead_evidence", "lead_evidence", ev_reg, lines, spec="lead_evidence", color="text",
+                       editable=True, size=size, line=line)]
+
+
+def accent(text: str) -> Part:
+    """The one keyword of a claim drawn in the accent color (P3-4)."""
+    return T(text, color="accent")
 
 
 def takeaway_block(paragraph: Paragraph) -> TextBlock:

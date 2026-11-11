@@ -376,14 +376,14 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
             span = [D(day)] + ([T(" – "), D(m.activity_date_end)] if m.activity_date_end and m.activity_date_end != day else [])
             blocks.append(text_block("meta", "meta", region("meta"), [P(T("기간  "), *span)], spec="meta", align="r",
                                      valign="m", color="navy"))
-        blocks.append(text_block("case_kicker", "caption", Region(x=48, y=61, w=1184, h=21), [P(N(_card_label(m)))],
+        blocks.append(text_block("case_kicker", "caption", Region(x=48, y=52, w=1184, h=18), [P(N(_card_label(m)))],
                                  spec="panel_header", color="muted"))
         head = interp[0] if interp else facts_claims[0]
         # P4 사례 카드 해설이 채택돼 있으면(경쟁사·벤치마크 사례만 해당) 그 쪽이 리드로 우선한다 —
         # 원문 그대로의 claim보다 '무엇을 했고 왜 통했나'로 다듬은 문장이 낫다.
         lead_parts = [T(m.ai_detail)] if m.ai_detail else _claim_parts(head, pf)
         l_size, l_line = (19, 25) if height_at([P(*lead_parts)], 1184, 19, 25) <= 50 else (15, 20)
-        blocks.append(text_block("lead", "lead", Region(x=48, y=84, w=1184, h=50), [P(*lead_parts)],
+        blocks.append(text_block("lead_claim", "lead", Region(x=48, y=71, w=1184, h=73), [P(*lead_parts)],
                                  spec="lead", color="navy", size=l_size, line=l_line, editable=True))
         # left: the image with its source caption
         img = Region(x=48, y=146, w=560, h=315)

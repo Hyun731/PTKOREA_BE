@@ -206,4 +206,4 @@ def build_inputs(asset_dir: Path):
     return project, all_facts, all_posts, materials
 
 
-REFERENCE_PAGES = {26: "2-8a", 27: "2-8b", 29: "2-8d", 40: "3-1-B1", 54: "C1-p2", 68: "C1", 89: "5-recap", 104: "A-source"}
+REFERENCE_PAGES = {26: "2-8a", 27: "2-8b", 29: "2-8d-B1", 40: "3-1-B1", 54: "C1-p2", 68: "C1", 89: "5-recap-B1", 104: "A-source"}

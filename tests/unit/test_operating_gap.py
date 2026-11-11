@@ -38,3 +38,17 @@ def test_operating_gap_absent_when_no_zero_month():
     assert not any(s.slide_id == "2-2" for s in result.deck.slides)
     slot = next(p for p in result.deck.plan if p.slot_id == "2-2")
     assert slot.readiness == "needs_input"
+
+
+def test_panels_start_under_the_two_tier_headline():
+    """P3-4: 헤드라인 근거 줄(55~130) 아래에서 패널이 시작한다 — 근거 줄과 겹치지 않음."""
+    from core.composition.tokens import region
+
+    project, _, _ = load_fixture()
+    facts = [_monthly_fact("2026-01", 3), _monthly_fact("2026-02", 0), _monthly_fact("2026-03", 2)]
+    cfg = project.model_copy(update={"enabled_slides": ["2-2"]})
+    slide = next(s for s in build_deck(BuildInputs(project=cfg, facts=facts, generated_on=date(2026, 10, 12))).deck.slides
+                 if s.slide_id == "2-2")
+    lead = region("lead")
+    body = [b for b in slide.blocks if not b.block_id.startswith(("chrome_", "lead", "title", "badge"))]
+    assert body and min(b.region.y for b in body) >= lead.y + lead.h

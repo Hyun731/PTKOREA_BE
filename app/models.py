@@ -28,7 +28,8 @@ class Project(Base):
     config: Mapped[dict] = mapped_column(JSON)  # core.schemas.project.Project dump
     version: Mapped[int] = mapped_column(Integer, default=1)
     omitted_slots: Mapped[dict] = mapped_column(JSON, default=dict)  # slot_id -> {reason, by, at}
-    lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [Paragraph]
+    lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> Headline
+    insight_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [{title, body_segments}]
     synthesis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Phase 3-1 전: 더 안 씀, SynthesisRun으로 대체
     owner: Mapped[str] = mapped_column(String(120), default="dev")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -319,6 +320,25 @@ class ProviderCache(Base):
     provider: Mapped[str] = mapped_column(String(30))
     data: Mapped[Any] = mapped_column(JSON)
     usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SlideWriting(Base):
+    """AI writing for one deck page, made when the deck is built (P3-4 헤드라인, P3-5 인사이트). One row per
+    page and kind; it is shown only while the page body still has `body_fp` (a changed body is rewritten
+    at the next build). A person's own text (lead_overrides) always wins."""
+    __tablename__ = "slide_writings"
+    __table_args__ = (UniqueConstraint("project_id", "slide_id", "kind", name="uq_slide_writing"),)
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    slide_id: Mapped[str] = mapped_column(String(80))
+    kind: Mapped[str] = mapped_column(String(20))  # lead | insights
+    body_fp: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | failed (rules not met after rewrites)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)  # lead: {claim, evidence}; insights: {insights: [{title, body_segments}]}
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    model: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

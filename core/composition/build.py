@@ -11,11 +11,12 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
-from core.composition import cases, commerce, customer, overview, owned, quant, synthesis
+from core.composition import cases, commerce, compare, customer, demand, overview, owned, quant, synthesis
 from core.composition.chrome import (
-    D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
+    D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, headline_blocks, insight_blocks, lead_block, synthetic_badge,
+    text_block, title_block,
 )
 from core.composition.tokens import region
 from core.metrics.derived import DerivedInputs, derive, measured_on
@@ -26,8 +27,8 @@ from core.schemas.facts import Fact, Finding, Post
 from core.schemas.materials import AssetRef, CaseMaterial, OwnedPostRef, ReviewSnapshotRef, SourceRef
 from core.schemas.project import Brand, Project
 from core.schemas.slidespec import (
-    BarChartBlock, Binding, DeckSpec, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, SlotPlan, TableBlock,
-    TextBlock,
+    BarChartBlock, Binding, DeckSpec, Headline, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, SlotPlan,
+    TableBlock, TextBlock,
 )
 
 # section_id: (number, label, index group, divider subtitle)
@@ -47,6 +48,14 @@ TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2":
                     "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
                     "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
                     "ES": "recap", "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
+TEMPLATE_SECTION.update({
+    "OW-CMP": "owned",
+    "MN1": "search",
+    "BL1": "voc",
+    "VC1": "voc",
+    "PP1": "voc",
+    "SH1": "search_trend",
+})  # P3 비교·차트 장
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
@@ -56,6 +65,14 @@ TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타�
                   "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
                   "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트",
                   "SWOT": "SWOT", "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
+TEMPLATE_LABEL.update({
+    "OW-CMP": "자사 vs 경쟁사 채널 비교",
+    "MN1": "채널별 언급량 비교",
+    "BL1": "블로그 문서 유형",
+    "VC1": "커뮤니티별 부정 비율",
+    "PP1": "페인 포인트",
+    "SH1": "품목별 쇼핑 수요·성수기",
+})
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
 # A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
@@ -70,11 +87,13 @@ CHAPTERS: dict[str, tuple[str, str, str, str]] = {
 }
 CHAPTER_ORDER = list(CHAPTERS)
 # With several self brands each one gets its own 자사·경쟁사·소비자·요약 parts ("company:B1"), so one
-# brand's cases never get lost among another's. Pages that set the brands side by side (v6 p26~p29,
-# channel tables, recap) stay shared: they open the deck as 브랜드 비교, the recap stays in 종합. "exec"
+# brand's cases never get lost among another's. Pages that set each brand's own competition set in
+# separate panels (v6 p26~p28, channel tables) stay shared: they open the deck as 브랜드 비교. "exec"
 # (Executive Summary) is also per self brand — Phase 3-1: 자사 브랜드가 여럿이면 브랜드마다 따로 쓴다.
+# 2-8d(키 타겟 점유)와 Recap은 발견 사항을 문장으로 나열하므로 브랜드마다 따로 만든다(P2-1): 한 장에
+# 모으면 자사 브랜드들의 발견이 한 문단에 나란히 놓여 자사 브랜드끼리 비교가 된다(QC SELF_BRAND_COMPARISON).
 BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
-SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap", "M1"}
+SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "M1"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
                     "M2": "competitor", "TR1": "competitor", "CM1": "company", "CM2": "competitor",
@@ -82,16 +101,20 @@ TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2":
                     "2-8c": "competitor", "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
                     "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
+TEMPLATE_CHAPTER.update({"OW-CMP": "company", "MN1": "competitor", "BL1": "customer", "VC1": "customer",
+                         "PP1": "customer", "SH1": "competitor"})
+# P3 비교·차트 장은 같은 자료를 쓰는 기존 장이 켜져 있으면 함께 켜진다(따로 켜도 된다).
+FOLLOWS = {"OW-CMP": "2-1"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
-PAGE_ORDER = ["ES", "1-1", "2-1", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
-              "2-8c", "2-8d", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
+PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
+              "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
               "PROBLEM", "SOLUTION", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
                ("benchmark", "competitor", "C1b", "C2b", "Benchmark", "벤치마크 사례")]
-TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1",
-                  "5-1", "5-2", "5-recap", "A-source"]
+TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "3-1", "C1", "C2", "M1",
+                  "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "A-source"]
 FRAME_TEMPLATES = {"cover", "index", "divider", "end"}
 
 
@@ -103,7 +126,13 @@ class BuildInputs:
     materials: list[CaseMaterial] = field(default_factory=list)
     owned_posts: list[OwnedPostRef] = field(default_factory=list)
     omitted_slots: dict[str, str] = field(default_factory=dict)  # slot_id -> reason
-    lead_overrides: dict[str, list[Paragraph]] = field(default_factory=dict)
+    # A person's headline per slide: Headline (claim + evidence) or, saved before P3-4, a claim-only list.
+    lead_overrides: dict[str, Union[list[Paragraph], Headline]] = field(default_factory=dict)
+    # A person's numbered insights per slide. An empty list intentionally hides the generated cards.
+    insight_overrides: dict[str, list[dict]] = field(default_factory=dict)
+    # AI writing made at deck build time (P3-4~), {kind: {slide_id: {"fp": body fingerprint, ...}}}; applied
+    # only while the slide body still has the fingerprint it was written for.
+    ai_writing: dict = field(default_factory=dict)
     # {brand_id: {"insight": {...}, "swot": {...}, "problem": {...}}} — active SynthesisRun per self brand.
     synthesis: dict = field(default_factory=dict)
     # {brand_id: [query, ...]} — Phase 3-4 Google Trends 연관 검색어, 그 브랜드의 최신 search_trend 수집 결과.
@@ -158,6 +187,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     ctx = quant.QuantContext(project, metrics, findings, pf, cfg, synthetic, infl_assets)
 
     enabled = set(project.enabled_slides)
+    enabled |= {t for t, parent in FOLLOWS.items() if parent in enabled}
     plan: list[SlotPlan] = []
     by_template: dict[str, list[SlideSpec]] = {}
 
@@ -223,6 +253,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("2-1"):
             s = owned.channel_inventory_page(c)
             slot("2-1", "2-1", [s] if s else [], "공식 계정 전체 게시물 데이터 없음(Brand.official_profiles 확인)", part=part)
+        if on("OW-CMP"):
+            # 자사 하나 + 그 경쟁사만(원칙 8): 다른 자사 브랜드는 경쟁사 목록에 있어도 빼고 그린다.
+            slot("OW-CMP", "OW-CMP", owned.channel_compare_page(c, frozenset(b.name for b in project.brands)),
+                 "경쟁사 공식 계정 수치 없음(설정에서 경쟁사 공식 계정 확인 후 수집·확인 필요)", part=part)
         if on("2-2"):
             s = owned.operating_gap_page(c)
             slot("2-2", "2-2", [s] if s else [],
@@ -253,6 +287,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("2-8d"):
             s = quant.target_table(c)
             slot("2-8d", "2-8d", [s] if s else [], "전체·타겟 9M 검색 세트 미확보", part=part)
+        if on("MN1"):
+            s = compare.mention_page(c, frozenset(b.name for b in project.brands))
+            slot("MN1", "MN1", [s] if s else [], "자사·경쟁사 채널별 언급량이 2개 채널 이상 필요", part=part)
+        if on("SH1"):
+            s = demand.shopping_demand_page(c)
+            slot("SH1", "SH1", [s] if s else [], "월별 쇼핑 클릭 지수가 4개 이상인 제품군 없음", part=part)
         if on("3-1"):
             for b in c.project.brands:
                 slot(f"3-1-{b.id}", "3-1", quant.creator_pages(c, b.id), "기간 내 채택된 creator 게시물 없음", b.id,
@@ -319,6 +359,15 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("5-2"):
             s = customer.awareness_channel_page(c.project, voc)
             slot("5-2", "5-2", [s] if s else [], "인식 경로가 드러난 소비자 원문 없음", part=part)
+        if on("BL1"):
+            s = compare.blog_type_page(c, frozenset(b.name for b in project.brands))
+            slot("BL1", "BL1", [s] if s else [], "유형이 분류된 블로그 검색어 표본 20건 이상 없음", part=part)
+        if on("VC1"):
+            s = demand.voc_negative_page(c, voc)
+            slot("VC1", "VC1", [s] if s else [], "출처별 부정 비율과 채택 원문이 부족함", part=part)
+        if on("PP1"):
+            s = demand.pain_point_page(c, voc)
+            slot("PP1", "PP1", [s] if s else [], "원문 수가 있는 페인 포인트 3개 이상 없음", part=part)
         if on("5-recap"):
             s = quant.recap(c)
             slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음", part=part)
@@ -353,17 +402,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
 
-    # Lead overrides (user-fixed sentences) replace the generated lead text only.
-    for slides in by_template.values():
-        for s in slides:
-            if s.slide_id in inputs.lead_overrides:
-                for b in s.blocks:
-                    if isinstance(b, TextBlock) and b.block_id == "lead":
-                        b.paragraphs = [_refresh_facts(p, pf) for p in inputs.lead_overrides[s.slide_id]]
-                s.needs_review = False
-
     ordered = _assemble(project, [s for _, _, s in sorted(built, key=lambda x: (x[0], x[1]))], enabled,
                         inputs.generated_on or date.today(), synthetic)
+    _apply_headlines(ordered, inputs, pf)
+    _apply_page_insights(ordered, inputs, pf)
     for s in ordered:
         s.bindings = _bindings(s, metrics, pf)
         s.notes = _notes(s, metrics)
@@ -446,6 +488,103 @@ def _refresh_facts(p: Paragraph, pf: PartFactory) -> Paragraph:
         else:
             parts.append(part.model_copy())
     return p.model_copy(update={"parts": parts})
+
+
+HEAD_ROLES = {"lead", "lead_evidence", "insight", "title", "chip", "page_no"}
+
+
+def body_fingerprint(slide: SlideSpec) -> str:
+    """Hash of what a page's body shows — everything but its headline, insights and frame (P3-4). AI writing
+    is kept for a page only while this stays the same, so a sentence never outlives the numbers it cites."""
+    body = [b.model_dump(mode="json", exclude={"region"}) for b in slide.blocks
+            if not b.block_id.startswith(("chrome_", "insight")) and getattr(b, "role", None) not in HEAD_ROLES]
+    payload = {"id": slide.slide_id, "template": slide.template_id, "title": slide.title, "body": body}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+
+def lead_of(slide: SlideSpec) -> Optional[TextBlock]:
+    return next((b for b in slide.blocks if isinstance(b, TextBlock) and b.role == "lead"), None)
+
+
+def set_headline(slide: SlideSpec, head: Headline, pf: Optional[PartFactory] = None) -> None:
+    """Swap a page's headline for `head` in the same area (claim on top, evidence lines under it)."""
+    lead = lead_of(slide)
+    if lead is None or not head.claim:
+        return
+    area = lead.region
+    old_ev = next((b for b in slide.blocks if isinstance(b, TextBlock) and b.role == "lead_evidence"), None)
+    if old_ev is not None:  # already split once: the area is both blocks together
+        area = Region(x=area.x, y=area.y, w=area.w, h=old_ev.region.y + old_ev.region.h - area.y)
+    claim = [_refresh_facts(p, pf) if pf else p for p in head.claim]
+    evidence = [_refresh_facts(p, pf) if pf else p for p in head.evidence]
+    if evidence:
+        new = headline_blocks(claim, evidence, area)
+    else:  # claim only: keep the template's own type and area
+        new = [lead.model_copy(update={"block_id": "lead_claim", "paragraphs": claim, "region": area})]
+    i = slide.blocks.index(lead)
+    rest = [b for b in slide.blocks if b is not lead and b is not old_ev]
+    slide.blocks = rest[:i] + new + rest[i:]
+
+
+def _apply_headlines(slides: list[SlideSpec], inputs: BuildInputs, pf: PartFactory) -> None:
+    """A person's headline wins; otherwise the AI headline written for this exact body (P3-4)."""
+    ai = (inputs.ai_writing or {}).get("lead", {})
+    for s in slides:
+        if s.page_role not in ("content", "recap", "appendix") or lead_of(s) is None:
+            continue
+        if s.slide_id in inputs.lead_overrides:
+            set_headline(s, Headline.coerce(inputs.lead_overrides[s.slide_id]), pf)
+            s.needs_review = False
+            continue
+        w = ai.get(s.slide_id)
+        if w and w.get("fp") == body_fingerprint(s) and _facts_known(w, pf):
+            set_headline(s, Headline.coerce({"claim": w["claim"], "evidence": w.get("evidence") or []}), pf)
+            s.needs_review = False
+
+
+def _refresh_parts(parts: list[Part], pf: PartFactory) -> list[Part]:
+    return _refresh_facts(Paragraph(parts=parts), pf).parts
+
+
+def _set_page_insights(slide: SlideSpec, items: list[dict], pf: PartFactory) -> None:
+    """Replace legacy inline findings with the shared P3-5 insight cards."""
+    slide.blocks = [b for b in slide.blocks if not b.block_id.startswith("insight")]
+    cards = []
+    for item in items[:3]:
+        title = _refresh_parts(Paragraph.model_validate(item.get("title") or {"parts": []}).parts, pf)
+        body = _refresh_parts(Paragraph.model_validate(item.get("body_segments") or {"parts": []}).parts, pf)
+        if title and body:
+            cards.append((title, body))
+    if cards:
+        slide.blocks.extend(insight_blocks(cards))
+
+
+def _apply_page_insights(slides: list[SlideSpec], inputs: BuildInputs, pf: PartFactory) -> None:
+    """A person's P3-5 cards win; otherwise use AI cards written for this exact page body."""
+    ai = (inputs.ai_writing or {}).get("insights", {})
+    for s in slides:
+        if s.page_role != "content" or lead_of(s) is None:
+            continue
+        if s.slide_id in inputs.insight_overrides:
+            _set_page_insights(s, inputs.insight_overrides[s.slide_id], pf)
+            continue
+        writing = ai.get(s.slide_id)
+        if writing and writing.get("fp") == body_fingerprint(s) and _facts_known(writing, pf):
+            _set_page_insights(s, writing.get("insights") or [], pf)
+
+
+def _facts_known(writing: dict, pf: PartFactory) -> bool:
+    for key in ("claim", "evidence"):
+        for p in writing.get(key) or []:
+            for part in p.get("parts", []):
+                if part.get("type") == "fact" and part.get("fact_id") not in pf.registry:
+                    return False
+    for item in writing.get("insights") or []:
+        for key in ("title", "body_segments"):
+            for part in (item.get(key) or {}).get("parts", []):
+                if part.get("type") == "fact" and part.get("fact_id") not in pf.registry:
+                    return False
+    return True
 
 
 def _case_lead(chunk: list[CaseMaterial]) -> list[Paragraph]:
@@ -762,7 +901,9 @@ def fingerprint(inputs: BuildInputs) -> str:
         "posts": sorted((p.batch_id or "", p.post_id, p.verification_status) for p in inputs.posts),
         "materials": sorted(json.dumps(m.model_dump(mode="json"), sort_keys=True, ensure_ascii=False) for m in inputs.materials),
         "omitted": inputs.omitted_slots,
-        "leads": {k: [p.model_dump(mode="json") for p in v] for k, v in sorted(inputs.lead_overrides.items())},
+        "leads": {k: ([p.model_dump(mode="json") for p in v] if isinstance(v, list) else v.model_dump(mode="json"))
+                  for k, v in sorted(inputs.lead_overrides.items())},
         **({"synthesis": inputs.synthesis} if inputs.synthesis else {}),  # absent = same hash as before it existed
+        **({"ai_writing": inputs.ai_writing} if inputs.ai_writing else {}),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()

@@ -65,7 +65,7 @@ def test_shows_a_line_per_product_category_not_just_one():
     slide = trend_page(_ctx(facts, categories=["운동화", "트레이닝복"]), related=[])
     chart = next(b for b in slide.blocks if b.block_id == "chart")
     assert {s.entity for s in chart.series} == {"나이키", "운동화", "트레이닝복"}
-    lead = next(b for b in slide.blocks if b.block_id == "lead")
+    lead = next(b for b in slide.blocks if b.block_id == "lead_claim")
     text = lead.paragraphs[0].plain()
     assert "운동화" in text and "트레이닝복" in text
 
