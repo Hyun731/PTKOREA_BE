@@ -33,6 +33,8 @@ class Fakes:
         self.fail_search = None
         self.fail_trends = False
         self.search_name = "경쟁X"  # how the fake articles name the brand
+        self.naver_items: dict = {}  # P2-3 가짜 네이버 검색 결과(종류별), 비어 있으면 결과 없음
+        self.naver_denied: set = set()  # 'API HUB에서 비활성'으로 막을 검색 종류
 
     def _hit(self, name):
         self.calls[name] = self.calls.get(name, 0) + 1
@@ -267,6 +269,16 @@ class Fakes:
             for name, _ in groups
         ]}, usage={"requests": 1}, cost_usd=0.0, cost_is_estimate=False)
 
+    # P2-3 네이버 검색: 기본은 결과 없음(기존 테스트는 Perplexity 경로 그대로). 테스트가 naver_items를 채우면 그것을,
+    # naver_denied에 넣은 종류는 'API HUB에서 비활성'으로 돌려준다.
+    def naver_search(self, kind, query, *, display=100, start=1, sort="date", **kw):
+        self._hit("naver_search")
+        if kind in self.naver_denied:
+            raise ProviderError("PROVIDER_AUTH", f"NAVER API HUB 앱에서 '{kind}' 검색 API가 활성화되어 있지 않습니다", 401)
+        items = self.naver_items.get(kind, []) if start == 1 else []
+        return CallResult(data={"total": len(items), "items": items, "via": "api_hub"}, usage={"requests": 1},
+                          cost_usd=0.0, cost_is_estimate=False)
+
     SHOP_CODE = "50000001"  # 가짜 데이터: 모든 제품군이 패션잡화에만 클릭이 있다
 
     def shopping_keyword_trend(self, category, keywords, start, end, **kw):
@@ -314,7 +326,7 @@ def fakes(monkeypatch):
                               google_trends_search=f.google_trends_search, instagram_post_comments=f.instagram_post_comments,
                               twitter_search_posts=f.twitter_search_posts, threads_search=f.threads_search,
                               shopping_keyword_trend=f.shopping_keyword_trend,
-                              shopping_keyword_breakdown=f.shopping_keyword_breakdown)
+                              shopping_keyword_breakdown=f.shopping_keyword_breakdown, naver_search=f.naver_search)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -1524,6 +1536,8 @@ def test_voc_item_collects_and_classifies_consumer_posts(client, fakes):
     pid, plan = setup_project(client)
     clear_cache()
     it = item(plan, "voc", "브랜드A")
+    # 네이버 검색 API가 막히면(비활성) Perplexity 사이트 검색이 블로그·카페까지 예전처럼 찾는다.
+    fakes.naver_denied = {"blog", "cafearticle", "kin"}
 
     def search(queries, sites=None, **kw):
         fakes._hit("search")

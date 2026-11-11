@@ -11,6 +11,7 @@ import html
 from itertools import zip_longest
 import io
 import json
+from types import SimpleNamespace
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -71,6 +72,7 @@ def _providers():
             twitter_search_posts, youtube_channel, youtube_channel_videos, youtube_video,
         )
         from integrations.naver.client import search_trend, shopping_keyword_breakdown, shopping_keyword_trend
+        from integrations.naver.search import search as naver_search
         from integrations.google_trends.client import search_trend as google_trends_search
         PROVIDERS.update(search=search, fetch_page=fetch_page, fetch_image=fetch_image, structured=structured,
                          instagram_post=instagram_post, instagram_profile=instagram_profile, youtube_video=youtube_video,
@@ -79,7 +81,7 @@ def _providers():
                          google_trends_search=google_trends_search, instagram_post_comments=instagram_post_comments,
                          twitter_search_posts=twitter_search_posts, threads_search=threads_search,
                          shopping_keyword_trend=shopping_keyword_trend,
-                         shopping_keyword_breakdown=shopping_keyword_breakdown)
+                         shopping_keyword_breakdown=shopping_keyword_breakdown, naver_search=naver_search)
     return PROVIDERS
 
 
@@ -877,7 +879,12 @@ CAFE_BLOG_SITES = ("blog.naver.com", "cafe.naver.com", "tistory.com", "cafe.daum
 COMMUNITY_SITES = ("dcinside.com", "fmkorea.com", "theqoo.net", "ruliweb.com", "clien.net", "todayhumor.co.kr",
                    "arca.live", "ppomppu.co.kr")
 VOC_SITE_CHANNEL = {**{s: "cafe_blog" for s in CAFE_BLOG_SITES}, **{s: "community" for s in COMMUNITY_SITES}}
-MAX_VOC_PER_RUN = 20  # per item — keeps one run's AI-classification cost bounded
+MAX_VOC_PER_RUN = 60  # per item (P2-3: 20 → 60, 브랜드당 원문 100건 이상 목표) — AI 분류 비용의 상한
+# P2-3: 네이버 블로그·지식iN(·카페글)은 네이버 검색 API로 먼저 찾는다 — 정확도순 결과에서 기간 안 글만.
+# 날짜순은 최근 글부터라 지난 조사 기간까지 1,000건(검색 API 한도) 안에 닿지 못한다.
+NAVER_VOC_KINDS = (("blog", "cafe_blog", 40), ("cafearticle", "cafe_blog", 20), ("kin", "community", 10))
+NAVER_VOC_PAGES = 2  # 검색어 하나당 정확도순 100건 × 2쪽
+NAVER_VOC_SITES = {"blog": ("blog.naver.com",), "cafearticle": ("cafe.naver.com",)}
 # fetch_page has no login-wall detection of its own (a walled page still answers 200): a best-effort
 # check on the final URL / a very short page behind a login-looking title catches the common cases.
 LOGIN_WALL_MARKERS = re.compile(r"login|로그인|sign.?in|accounts\.google\.com|nid\.naver\.com", re.IGNORECASE)
@@ -938,6 +945,40 @@ def _social_posts(ledger: RunLedger, p: dict, name: str) -> list[dict]:
     return out
 
 
+def _naver_voc_results(ledger: RunLedger, p: dict, names: list[str], item: ResearchItem, out: dict) -> tuple[list[dict], set[str]]:
+    """네이버 검색 API로 찾은 블로그·카페글·지식iN 원문 후보와, 그렇게 이미 다룬 사이트(Perplexity에서 뺄 도메인).
+    한 종류가 비활성(권한 오류)이면 그 종류만 건너뛰고 Perplexity 사이트 검색에 맡긴다."""
+    found: list[dict] = []
+    covered: set[str] = set()
+    for kind, channel, cap in NAVER_VOC_KINDS:
+        rows: list[dict] = []
+        try:
+            for n in names[:2]:
+                for page in range(NAVER_VOC_PAGES):
+                    q = f"{n} 후기"
+                    res = ledger.call("naver", "search", {"kind": kind, "q": q, "start": 1 + page * 100, "sort": "sim"}, 0.0,
+                                      lambda k=kind, qq=q, st=1 + page * 100: p["naver_search"](k, qq, start=st, sort="sim"),
+                                      cache_days=1)
+                    items = res.data["items"]
+                    for it in items:
+                        if not it.get("url"):
+                            continue
+                        if not period.published_in_search_window(it.get("date"), item.period_start, item.period_end):
+                            out["out_of_period"] = out.get("out_of_period", 0) + 1
+                            continue
+                        rows.append({**it, "channel": channel, "kind": kind})
+                    if len(items) < 100:
+                        break
+        except ProviderError as exc:
+            out.setdefault("naver_search", {})[kind] = exc.message
+            continue
+        covered.update(NAVER_VOC_SITES.get(kind, ()))
+        uniq = list({r["url"]: r for r in rows}.values())[:cap]
+        out.setdefault("naver_search", {})[kind] = len(uniq)
+        found += uniq
+    return found, covered
+
+
 def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem, ai_enabled: bool) -> dict:
     """5-1/5-2: 카페·블로그·커뮤니티 공개 글에서 소비자 원문을 모으고 감성·주제·인식 경로·협찬 여부를
     분류한다. 캠페인 사례와 달리 '같은 활동 묶기'는 하지 않는다 — 원문 하나하나가 독립된 증언이다."""
@@ -947,34 +988,41 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
     out: dict = {"created": 0, "pages": 0, "access_unavailable": 0, "channels": {}, "errors": []}
     names = brand.names_for(item.entity)
     queries = [f"{n} 후기" for n in names[:2]]
-    sites = list(CAFE_BLOG_SITES + COMMUNITY_SITES)
+    naver_rows, covered = _naver_voc_results(ledger, p, names, item, out) if settings.provider_configured("naver") \
+        else ([], set())
+    sites = [s_ for s_ in CAFE_BLOG_SITES + COMMUNITY_SITES if s_ not in covered]
     try:
         res = ledger.call("perplexity", "search", {"queries": queries, "sites": sites, "max_results": 20}, 0.005,
                           lambda: p["search"](queries, max_results=20, country="KR", languages=["ko"], sites=sites))
     except ProviderError as exc:
-        out["errors"].append({"code": exc.code, "message": f"검색 실패: {exc.message}"})
-        return out
+        if not naver_rows:
+            out["errors"].append({"code": exc.code, "message": f"검색 실패: {exc.message}"})
+            return out
+        out["errors"].append({"code": exc.code, "message": f"커뮤니티 검색 실패(네이버 결과만 사용): {exc.message}"})
+        res = SimpleNamespace(data={"results": []})
+    web_rows = [{"url": r["url"], "title": r["title"], "snippet": r.get("snippet", ""), "date": _safe_date(r.get("date")),
+                 "channel": _voc_host_channel(r["url"])} for r in res.data["results"]]
 
     existing_urls = {s.original_url for s in db.scalars(select(Source).join(Material, Material.source_id == Source.id)
                                                          .where(Material.project_id == project.id))}
     cards: list[tuple[Source, Material, str]] = []
-    for r in res.data["results"]:
+    for r in naver_rows + web_rows:
         if len(cards) >= MAX_VOC_PER_RUN:
             break
         url = r["url"]
         if url in existing_urls:
             out["skipped_existing"] = out.get("skipped_existing", 0) + 1
             continue
-        channel = _voc_host_channel(url)
+        channel = r["channel"]
         if channel is None:  # a result outside the configured site list
             continue
-        if not period.published_in_search_window(_safe_date(r.get("date")), item.period_start, item.period_end):
+        if not period.published_in_search_window(r.get("date"), item.period_start, item.period_end):
             out["out_of_period"] = out.get("out_of_period", 0) + 1
             continue
         existing_urls.add(url)
         src = Source(id=new_id("SRC"), project_id=project.id, title=html.unescape(r["title"] or url)[:300],
-                     original_url=url, publisher=_host(url), published_at=_safe_date(r.get("date")), fetched_at=utcnow(),
-                     source_type="web", access_status="unknown")
+                     original_url=url, publisher=r.get("author") or _host(url), published_at=r.get("date"),
+                     fetched_at=utcnow(), source_type="web", access_status="unknown")
         db.add(src)
         db.flush()
         m = Material(id=new_id("EV"), project_id=project.id, source_id=src.id, research_item_id=item.id,
