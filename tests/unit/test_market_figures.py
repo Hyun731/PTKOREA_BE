@@ -81,3 +81,6 @@ def test_mk1_prefers_p41_figures_and_names_press_releases_by_title():
     assert len(values) == 2  # the hand-kept 6.2% is not shown twice
     foot = "".join(p.rendered() for b in mk1.blocks if b.block_id == "footnote" for para in b.paragraphs for p in para.parts)
     assert "2026년 6월 한국관광통계 발표" in foot and "2026.07.30" in foot
+    from core.composition.axes import GOV_HOST
+    assert GOV_HOST.search("www.korea.kr".removeprefix("www.")) and GOV_HOST.search("know.tour.go.kr")
+    assert not GOV_HOST.search("newsis.com")

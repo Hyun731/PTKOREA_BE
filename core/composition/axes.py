@@ -103,7 +103,7 @@ def market_figures(ctx: QuantContext, category: str, materials: list[CaseMateria
     return out
 
 
-GOV_HOST = re.compile(r"(\.go\.kr|visitkorea\.or\.kr|kostat|customs|index\.go\.kr)$")
+GOV_HOST = re.compile(r"(\.go\.kr|(^|\.)korea\.kr|visitkorea\.or\.kr|knto\.or\.kr|touraz\.kr|kostat|customs)$")
 
 
 def _source_name(m: CaseMaterial) -> str:
