@@ -14,7 +14,13 @@ from core.decimalx import canonical_decimal
 from core.ingestion.csv_import import content_hash, fact_id_from_hash
 from core.schemas.facts import Fact
 
-SOURCE_LABEL = {"instagram": "Instagram 공개 프로필(ScrapeCreators)", "youtube": "YouTube 채널(ScrapeCreators)"}
+SOURCE_LABEL = {"instagram": "Instagram 공개 프로필(ScrapeCreators)", "youtube": "YouTube 채널(ScrapeCreators)",
+                "tiktok": "TikTok 공개 프로필(ScrapeCreators)", "facebook": "Facebook 공개 페이지(ScrapeCreators)",
+                "x": "X 공개 프로필(ScrapeCreators)", "threads": "Threads 공개 프로필(ScrapeCreators)",
+                "naver_blog": "네이버 검색 API(블로그)"}
+CHANNEL_LABEL = {"instagram": "Instagram", "youtube": "YouTube", "tiktok": "TikTok", "facebook": "Facebook", "x": "X",
+                 "threads": "Threads", "naver_blog": "네이버 블로그"}
+SHORT_LABEL = {"instagram": "IG", "youtube": "YT"}
 
 
 def _canonical_dims(dims: dict) -> str:
@@ -35,7 +41,7 @@ def owned_fact(*, brand_id: str, entity: str, metric: str, value: Decimal, chann
 
 
 def monthly_post_count_fact(*, brand_id: str, entity: str, channel: str, month: str, count: int,
-                            measured_at: date) -> Fact:
+                            measured_at: date, extra_dims: dict | None = None) -> Fact:
     """owned_posts_by_month — one row per (channel, month) in the item period, zero included (a
     counted zero is a real observation; 2-2's gap analysis depends on seeing the zero months,
     not just the months that happened to have a post)."""
@@ -43,7 +49,7 @@ def monthly_post_count_fact(*, brand_id: str, entity: str, channel: str, month: 
 
     y, m = map(int, month.split("-"))
     start, end = date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
-    dims = {"channel": channel, "month": month}
+    dims = {"channel": channel, "month": month, **(extra_dims or {})}
     payload = {"brand": brand_id, "entity": entity, "metric": "owned_posts_by_month", "value": canonical_decimal(Decimal(count)),
               "unit": "count", "dims": _canonical_dims(dims), "period": f"{start}~{end}", "measured_at": measured_at.isoformat(),
               "source": SOURCE_LABEL[channel], "url": None, "method": None, "confidence": "verified",
@@ -51,4 +57,4 @@ def monthly_post_count_fact(*, brand_id: str, entity: str, channel: str, month: 
     h = content_hash(payload)
     return Fact(id=fact_id_from_hash(h), content_hash=h, brand_id=brand_id, entity=entity, metric="owned_posts_by_month",
                value=Decimal(count), unit="count", dims=dims, period_start=start, period_end=end, measured_at=measured_at,
-               source=SOURCE_LABEL[channel], confidence="verified", label=f"{'IG' if channel == 'instagram' else 'YT'} 월별 게시 수")
+               source=SOURCE_LABEL[channel], confidence="verified", label=f"{SHORT_LABEL.get(channel) or CHANNEL_LABEL[channel]} 월별 게시 수")

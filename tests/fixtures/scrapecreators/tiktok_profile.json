@@ -1,0 +1,31 @@
+{
+ "success": true,
+ "credits_remaining": 21899,
+ "credits_charged": 1,
+ "user": {
+  "id": "208464585232822272",
+  "uniqueId": "nike",
+  "nickname": "Nike",
+  "privateAccount": false,
+  "secret": false,
+  "verified": true
+ },
+ "stats": {
+  "followerCount": 9400000,
+  "followingCount": 91,
+  "heart": 50800000,
+  "heartCount": 50800000,
+  "videoCount": 1119,
+  "diggCount": 0,
+  "friendCount": 46
+ },
+ "statsV2": {
+  "followerCount": "9376144",
+  "followingCount": "91",
+  "heart": "50766673",
+  "heartCount": "50766673",
+  "videoCount": "1119",
+  "diggCount": "0",
+  "friendCount": "46"
+ }
+}

@@ -15,6 +15,7 @@ from integrations.base import CallResult, ProviderError, request_json
 
 BASE = "https://api.scrapecreators.com/v1"
 BASE_V2 = "https://api.scrapecreators.com/v2"
+BASE_V3 = "https://api.scrapecreators.com/v3"
 EST_COST_PER_CREDIT = 0.002  # plan price not confirmed: estimate, units recorded as credits
 SHORTS_MAX_SECONDS = 60  # YouTube's own Shorts definition
 
@@ -224,3 +225,155 @@ def youtube_channel_videos(*, channel_id: Optional[str] = None, handle: Optional
                        "length_seconds": length, "is_short": length is not None and length <= SHORTS_MAX_SECONDS})
     return CallResult(data={"videos": videos, "continuation_token": data.get("continuationToken")},
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
+# ------------------------------------------------------------------ P2-6 공식 계정 6채널
+# 아래 파서는 2026-11-11 실제 응답(nike)으로 필드를 확인했다 — tests/fixtures/scrapecreators/*.json이 그 응답을
+# 줄인 것. 값은 모두 수집 시점의 공개 수치다.
+
+def _paid(data: dict) -> int:
+    """응답이 직접 알려 주는 차감 크레딧(credits_charged), 없으면 캐시 여부로 추정."""
+    charged = data.get("credits_charged")
+    return int(charged) if isinstance(charged, (int, float)) and not isinstance(charged, bool) else _credits(data)
+
+
+def _result(data: dict, payload: dict) -> CallResult:
+    n = _paid(data)
+    return CallResult(data=payload, usage={"credits": n}, cost_usd=n * EST_COST_PER_CREDIT)
+
+
+def _ts_date(ts: Any) -> Optional[str]:
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).date().isoformat() if ts else None
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _strip_query(url: Optional[str]) -> Optional[str]:
+    return url.split("?", 1)[0] if url else url
+
+
+def tiktok_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/tiktok/profile — 팔로워·영상 수. 비공개 계정이면 SOURCE_UNAVAILABLE(접근 불가)."""
+    data = _get("/tiktok/profile", {"handle": handle.lstrip("@")}, transport)
+    user = data.get("user") or {}
+    if not user:
+        raise ProviderError("SOURCE_UNAVAILABLE", "TikTok 계정을 찾을 수 없습니다(삭제·이름 변경 가능)")
+    if user.get("privateAccount") or user.get("secret"):
+        raise ProviderError("SOURCE_UNAVAILABLE", "TikTok 비공개 계정이라 볼 수 없습니다")
+    stats = data.get("statsV2") or data.get("stats") or {}
+    return _result(data, {"followers": _int(stats.get("followerCount")), "videos": _int(stats.get("videoCount")),
+                          "name": user.get("nickname") or user.get("uniqueId")})
+
+
+def tiktok_profile_videos(handle: str, *, max_cursor: Optional[str] = None,
+                          transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v3/tiktok/profile/videos — 최신순 한 쪽(약 10개). 고정 게시물(is_top)은 날짜순을 깨므로 표시해 둔다."""
+    params = {"handle": handle.lstrip("@")}
+    if max_cursor:
+        params["max_cursor"] = max_cursor
+    data = _get("/tiktok/profile/videos", params, transport, base=BASE_V3)
+    posts = []
+    for a in data.get("aweme_list") or []:
+        st = a.get("statistics") or {}
+        posts.append({"post_id": a.get("aweme_id"), "url": _strip_query(a.get("share_url")),
+                      "posted_at": _ts_date(a.get("create_time")), "title": (a.get("desc") or "")[:200],
+                      "views": _int(st.get("play_count")), "likes": _int(st.get("digg_count")),
+                      "comments": _int(st.get("comment_count")), "shares": _int(st.get("share_count")),
+                      "saves": _int(st.get("collect_count")), "pinned": bool(a.get("is_top"))})
+    cursor = data.get("max_cursor")
+    return _result(data, {"posts": posts, "cursor": str(cursor) if cursor else None, "has_more": bool(data.get("has_more"))})
+
+
+def facebook_profile(url: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/facebook/profile — 페이지 팔로워(없으면 좋아요 수)."""
+    data = _get("/facebook/profile", {"url": url}, transport)
+    if not data.get("id") and not data.get("name"):
+        raise ProviderError("SOURCE_UNAVAILABLE", "Facebook 페이지를 찾을 수 없습니다(비공개·삭제 가능)")
+    return _result(data, {"followers": _int(data.get("followerCount")) or _int(data.get("likeCount")),
+                          "name": data.get("name")})
+
+
+def facebook_profile_posts(url: str, *, cursor: Optional[str] = None,
+                           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/facebook/profile/posts — 최신순 한 쪽. reactionCount는 좋아요·최고예요 등 반응 합계."""
+    params = {"url": url}
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/facebook/profile/posts", params, transport)
+    posts = []
+    for p in data.get("posts") or []:
+        posted = (p.get("creation_time") or "")[:10] or _ts_date(p.get("publishTime"))
+        posts.append({"post_id": p.get("id"), "url": p.get("url"), "posted_at": posted, "title": (p.get("text") or "")[:200],
+                      "likes": _int(p.get("reactionCount")), "comments": _int(p.get("commentCount")),
+                      "shares": _int(p.get("share_count")), "views": _int(p.get("videoViewCount"))})
+    return _result(data, {"posts": posts, "cursor": data.get("cursor")})
+
+
+def twitter_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/twitter/profile — 팔로워. 보호(비공개) 계정이면 SOURCE_UNAVAILABLE."""
+    data = _get("/twitter/profile", {"handle": handle.lstrip("@")}, transport)
+    legacy = data.get("legacy") or {}
+    if not legacy:
+        raise ProviderError("SOURCE_UNAVAILABLE", "X 계정을 찾을 수 없습니다(삭제·이름 변경 가능)")
+    if legacy.get("protected"):
+        raise ProviderError("SOURCE_UNAVAILABLE", "X 비공개(보호) 계정이라 볼 수 없습니다")
+    return _result(data, {"followers": _int(legacy.get("followers_count")), "name": legacy.get("name")})
+
+
+def twitter_user_tweets(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/twitter/user-tweets — 최신 글이 아니라 인기 글 상위 묶음이다. 게시 빈도를 만들면 안 된다."""
+    data = _get("/twitter/user-tweets", {"handle": handle.lstrip("@")}, transport)
+    posts = []
+    for t in data.get("tweets") or []:
+        lg = t.get("legacy") or {}
+        posts.append({"post_id": t.get("rest_id") or lg.get("id_str"), "url": t.get("url"),
+                      "posted_at": _x_date(lg.get("created_at")), "title": (lg.get("full_text") or "")[:200],
+                      "likes": _int(lg.get("favorite_count")), "comments": _int(lg.get("reply_count")),
+                      "shares": _int(lg.get("retweet_count")), "views": _int((t.get("views") or {}).get("count"))})
+    return _result(data, {"posts": posts})
+
+
+def threads_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    data = _get("/threads/profile", {"handle": handle.lstrip("@")}, transport)
+    if not data.get("username"):
+        raise ProviderError("SOURCE_UNAVAILABLE", "Threads 계정을 찾을 수 없습니다(삭제·이름 변경 가능)")
+    if data.get("text_post_app_is_private"):
+        raise ProviderError("SOURCE_UNAVAILABLE", "Threads 비공개 계정이라 볼 수 없습니다")
+    return _result(data, {"followers": _int(data.get("follower_count")), "name": data.get("username")})
+
+
+def threads_user_posts(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/threads/user/posts — 최근 글 한 묶음(쪽 넘김 없음, 실제로 15개)."""
+    data = _get("/threads/user/posts", {"handle": handle.lstrip("@")}, transport)
+    posts = []
+    for t in data.get("posts") or []:
+        info = t.get("text_post_app_info") or {}
+        hidden = bool(t.get("like_and_view_counts_disabled"))
+        posts.append({"post_id": t.get("code") or t.get("id"), "url": t.get("url"), "posted_at": _ts_date(t.get("taken_at")),
+                      "title": ((t.get("caption") or {}).get("text") or "")[:200],
+                      "likes": None if hidden else _int(t.get("like_count")), "comments": _int(info.get("direct_reply_count")),
+                      "shares": _int(info.get("repost_count"))})
+    return _result(data, {"posts": posts})
+
+
+def youtube_channel_shorts(*, channel_id: Optional[str] = None, handle: Optional[str] = None,
+                           continuation_token: Optional[str] = None,
+                           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/youtube/channel/shorts — 쇼츠 탭 한 쪽(실제로 48개). 채널 영상 목록에는 쇼츠가 일부만 섞여 나와
+    쇼츠 수·조회가 적게 잡혔다(10편 문제)."""
+    params: dict = {}
+    if channel_id:
+        params["channelId"] = channel_id
+    else:
+        params["handle"] = (handle or "").lstrip("@")
+    if continuation_token:
+        params["continuationToken"] = continuation_token
+    data = _get("/youtube/channel/shorts", params, transport)
+    shorts = []
+    for v in data.get("shorts") or []:
+        shorts.append({"id": v.get("id"), "url": v.get("url"), "title": (v.get("title") or "")[:200],
+                       "views": _int(v.get("viewCountInt")), "likes": _int(v.get("likeCountInt")),
+                       "comments": _int(v.get("commentCountInt")),
+                       "published_at": str(v.get("publishDate") or "")[:10] or None})
+    return _result(data, {"shorts": shorts, "continuation_token": data.get("continuationToken")})
