@@ -1,4 +1,4 @@
-"""자사 vs 경쟁사 비교 장표 (P3-1 OW-CMP).
+"""자사 vs 경쟁사 비교 장표 (P3-1 OW-CMP, P3-3 MN1 채널별 언급량 · BL1 블로그 문서 유형).
 
 한 장에는 자사 브랜드 하나와 그 브랜드의 경쟁사만 둔다(원칙 8: 자사 브랜드끼리 비교하지 않는다).
 숫자는 모두 확인된(eligible) Fact 또는 그 Fact에서 계산한 파생값이고, 막대 하나하나가 fact_id를
@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Iterable, Optional
 
 from core.composition.chrome import D, M, N, P, PERIOD, T, footnote_block, insight_blocks, lead_block, text_block, title_block
-from core.composition.quant import QuantContext, _decorate, _measured
+from core.composition.quant import QuantContext, _decorate, _measured, _panel_header
 from core.composition.tokens import region
 from core.metrics.derived import footnote_label
 from core.schemas.facts import DerivedFact, Fact
@@ -94,8 +94,8 @@ def footnote(ctx: QuantContext, fact_ids: list[str], *extra: list[Part]) -> Bloc
 
 
 def sample_note(facts: list, what: str) -> list[Part]:
-    """'댓글 감성 n=24~310 · AI 분류' for derived percent facts (n lives in dims)."""
-    ns = sorted({int(f.dims["n"]) for f in facts if footnote_label(f)})
+    """'댓글 감성 n=24~310 · AI 분류' for AI-classified share facts (sample size n lives in dims)."""
+    ns = sorted({int(f.dims["n"]) for f in facts if footnote_label(f) or "n" in f.dims})
     if not ns:
         return []
     n = f"n={ns[0]}" if len(ns) == 1 else f"n={ns[0]}~{ns[-1]}"
@@ -351,3 +351,167 @@ def _compare_page(ctx: QuantContext, brand: Brand, channels: list[dict], slide_i
     return SlideSpec(slide_id=slide_id, template_id="channel_compare.v1", page_role="content", section_id="owned",
                      title="자사 vs 경쟁사 채널 비교", blocks=_decorate(ctx, blocks), parent_slide_id=parent,
                      needs_review=True, is_data=True)
+
+
+# ---------------------------------------------------------------- 공통: 한 자사 브랜드만
+
+def single_brand(ctx: QuantContext) -> Optional[Brand]:
+    """These pages are per self brand; a context holding several would put them on one page (원칙 8)."""
+    return ctx.project.brands[0] if len(ctx.project.brands) == 1 else None
+
+
+def vs_top(ctx: QuantContext, own_name: str, own, others: list[tuple[str, object]], formatter: str, what: str,
+           title: list[Part]) -> Optional[tuple[list[Part], list[Part]]]:
+    """Numbered insight 'title / 자사 X · 경쟁사 중 가장 높은 Y Z' from the page's own facts."""
+    if own is None or not others:
+        return None
+    comp, comp_f = max(others, key=lambda r: r[1].value)
+    return title, [N(own_name), T(" "), ctx.pf.fact(own, formatter, bold=True), T(f" · 경쟁사 중 가장 {what} "), N(comp),
+                   T(" "), ctx.pf.fact(comp_f, formatter, bold=False)]
+
+
+COMPETITOR_COLORS = ["red", "line_other", "bar_other", "gold"]  # 첫 경쟁사(가장 큰 곳)는 강조색
+
+
+# ---------------------------------------------------------------- MN1 채널별 언급량 비교 (P3-3)
+
+MENTION_CHANNELS = [("blog", "블로그"), ("cafe", "카페"), ("news", "뉴스"), ("kin", "지식iN")]
+MENTION_MIN_CHANNELS = 2  # 채널 하나뿐이면 '채널별' 비교가 아니다
+
+
+def _group_label(group: str, cells: dict, brand: Brand) -> str:
+    if group == "brand":
+        return "브랜드명"
+    kw = next((f.dims.get("keyword") for (e, _), f in cells.items() if e == brand.name and f.dims.get("keyword")), "")
+    rest = kw.replace(brand.name, "").strip()
+    return f"브랜드 + {rest}" if rest else group
+
+
+def mention_page(ctx: QuantContext, exclude: frozenset[str] = frozenset()) -> Optional[SlideSpec]:
+    """MN1: 자사 + 경쟁사 × 블로그·카페·뉴스(·지식iN) 검색 결과 문서 수(누적) 묶음 막대. 검색어 묶음
+    (브랜드명 / 브랜드+제품군)마다 패널 하나, 최대 2개. 자사와 경쟁사 1곳 이상이 2개 채널 이상에 있어야 만든다."""
+    brand = single_brand(ctx)
+    if brand is None:
+        return None
+    entities = _entities(brand, exclude)[:1 + MAX_COMPETITORS]
+    groups: dict[str, dict] = defaultdict(dict)
+    for f in facts_of(ctx, "mention_total", brand.id):
+        if f.entity in entities and f.dims.get("channel") in dict(MENTION_CHANNELS):
+            groups[f.dims.get("keyword_group") or "brand"].setdefault((f.entity, f.dims["channel"]), f)
+    panels = []
+    for group in sorted(groups, key=lambda g: (g != "brand", g)):
+        cells = groups[group]
+        chans = [c for c, _ in MENTION_CHANNELS if (brand.name, c) in cells and
+                 any((e, c) in cells for e in entities if e != brand.name)]
+        ents = [e for e in entities if any((e, c) in cells for c in chans)]
+        if len(chans) >= MENTION_MIN_CHANNELS and len(ents) >= 2:
+            panels.append((group, chans, ents, cells))
+    if not panels:
+        return None
+    panels = panels[:2]
+    body = region("body")
+    gap = 40.0
+    w = (body.w - gap * (len(panels) - 1)) / len(panels)
+    blocks: list[Block] = []
+    fact_ids: list[str] = []
+    labels = dict(MENTION_CHANNELS)
+    for i, (group, chans, ents, cells) in enumerate(panels):
+        x = body.x + i * (w + gap)
+        blocks += _panel_header(f"panel{i}_header", x, body.y, w, [T(_group_label(group, cells, brand)),
+                                                                   T(" · 검색 결과 문서 수")])
+        comps = sorted((e for e in ents if e != brand.name), key=lambda e: -sum(cells[(e, c)].value for c in chans
+                                                                                if (e, c) in cells))
+        colors = dict(zip(comps, COMPETITOR_COLORS))
+        series = [BarSeries(name=e, role="self" if e == brand.name else "other", color=None if e == brand.name else colors[e],
+                            items=[bar_item(ctx, e, labels[c], cells[(e, c)], "count") if (e, c) in cells else None
+                                   for c in chans])
+                  for e in ents]
+        chart = BarChartBlock(block_id=f"panel{i}_chart", region=Region(x=x, y=body.y + 48, w=w, h=body.h - 48),
+                              categories=[labels[c] for c in chans], series=series, orientation="v",
+                              number_format=COUNT_FORMAT, unit="count", label_size=9.5, gap_width=80)
+        blocks.append(chart)
+        fact_ids += [it.fact_id for it in chart.bar_items()]
+    group, chans, ents, cells = panels[0]
+    items = []
+    for c in chans:
+        others = [(e, cells[(e, c)]) for e in ents if e != brand.name and (e, c) in cells]
+        it = vs_top(ctx, brand.name, cells.get((brand.name, c)), others, "count", "많은",
+                    [N(labels[c]), T(" 문서 수")])
+        if it:
+            items.append(it)
+            fact_ids += [p.fact_id for p in it[1] if p.type == "fact"]
+    lead = lead_block([P(N(brand.name), T(" vs 경쟁사 — 블로그·카페·뉴스 검색 결과 문서 수(누적)"))])
+    blocks = [
+        title_block("Search", "채널별 언급량 비교"), lead, *blocks, *insight_blocks(items[:3]),
+        footnote(ctx, fact_ids, [T("네이버 검색 결과 문서 수(누적) — 검색한 사람 수가 아닌 글 수")]),
+    ]
+    return SlideSpec(slide_id="MN1", template_id="mention_compare.v1", page_role="content", section_id="search",
+                     title="채널별 언급량 비교", blocks=_decorate(ctx, blocks), needs_review=True, is_data=True)
+
+
+# ---------------------------------------------------------------- BL1 블로그 문서 유형 (P3-3)
+
+BLOG_TYPES = [("real_use", "실사용", "navy"), ("sponsored", "협찬", "red"), ("shopping_affiliate", "쇼핑·제휴", "gold"),
+              ("promo_template", "홍보 템플릿", "line_other"), ("other", "기타", "bar_other")]
+BLOG_TYPE_HELP = [("실사용", "직접 사서 써 본 후기"), ("협찬", "제품·원고료를 받았다고 밝힌 글"),
+                  ("쇼핑·제휴", "구매 링크·수수료 안내가 중심인 글"), ("홍보 템플릿", "같은 문구가 반복되는 홍보 글"),
+                  ("기타", "정보·뉴스 정리 등")]
+BLOG_MAX_ROWS = 8
+
+
+def blog_type_page(ctx: QuantContext, exclude: frozenset[str] = frozenset(), min_n: int = 20) -> Optional[SlideSpec]:
+    """BL1: 검색어(브랜드, 브랜드+제품군; 자사 먼저, 경쟁사 다음)마다 블로그 상위 글의 유형 비중 누적 막대.
+    표본(n)이 min_n 미만인 검색어는 빼고, 자사 검색어가 하나도 없으면 만들지 않는다."""
+    brand = single_brand(ctx)
+    if brand is None:
+        return None
+    entities = _entities(brand, exclude)
+    by_kw: dict[str, dict] = defaultdict(dict)
+    owner: dict[str, str] = {}
+    for f in facts_of(ctx, "blog_type_share", brand.id):
+        kw = f.dims.get("keyword") or f.entity
+        if f.entity in entities and int(f.dims.get("n", 0)) >= min_n:
+            by_kw[kw].setdefault(f.dims.get("type"), f)
+            owner.setdefault(kw, f.entity)
+    rows = [kw for kw in by_kw if len(by_kw[kw]) >= 2]
+    rows.sort(key=lambda kw: (entities.index(owner[kw]), kw != owner[kw], kw))
+    rows = rows[:BLOG_MAX_ROWS]
+    if not any(owner[kw] == brand.name for kw in rows):
+        return None
+    types = [(t, label, color) for t, label, color in BLOG_TYPES if any(t in by_kw[kw] for kw in rows)]
+    series = [BarSeries(name=label, color=color, items=[bar_item(ctx, owner[kw], kw, by_kw[kw][t], "share")
+                                                        if t in by_kw[kw] else None for kw in rows])
+              for t, label, color in types]
+    body = region("body")
+    chart_w = body.w * 0.70
+    reg = Region(x=body.x, y=body.y, w=chart_w, h=min(body.h, 40 * len(rows) + 40))
+    chart = BarChartBlock(block_id="chart", region=reg, categories=rows, series=series, stacked=True,
+                          number_format='0"%"', unit="percent", label_size=10, gap_width=45)
+    fact_ids = [it.fact_id for it in chart.bar_items()]
+    hx, hw = body.x + chart_w + 24, body.w - chart_w - 24
+    help_paras = [P(N(name, bold=True), T(f" — {desc}")) for name, desc in BLOG_TYPE_HELP
+                  if name in {label for _, label, _ in types}]
+    blocks: list[Block] = [
+        ShapeBlock(block_id="help_bg", region=Region(x=hx, y=body.y, w=hw, h=36 + 22 * len(help_paras)), fill="tint"),
+        text("help_head", Region(x=hx + 12, y=body.y + 6, w=hw - 24, h=20), [T("유형 기준")], color="navy", weight="semibold"),
+        text_block("help", "body", Region(x=hx + 12, y=body.y + 30, w=hw - 24, h=22 * len(help_paras)), help_paras,
+                   spec="card_body", size=9.5, line=16),
+        chart,
+    ]
+    items = []
+    for kw in rows[:3]:
+        parts: list[Part] = []
+        for t, label, _ in BLOG_TYPES[:2]:  # 실사용 · 협찬
+            if t in by_kw[kw]:
+                parts += ([T(" · ")] if parts else []) + [T(f"{label} "), ctx.pf.fact(by_kw[kw][t], "share", bold=t == "real_use")]
+        if parts:
+            items.append(([N(kw)], parts))
+            fact_ids += [p.fact_id for p in parts if p.type == "fact"]
+    shown = [f for kw in rows for f in by_kw[kw].values()]
+    lead = lead_block([P(N(brand.name), T(" 블로그 상위 글은 어떤 글인가 — 실사용 후기·협찬·쇼핑 제휴 비중"))])
+    blocks = [
+        title_block("Customer", "블로그 문서 유형"), lead, *blocks, *insight_blocks(items),
+        footnote(ctx, fact_ids, [T("네이버 블로그 정확도순 상위 글을 AI가 유형별로 분류")], sample_note(shown, "검색어별")),
+    ]
+    return SlideSpec(slide_id="BL1", template_id="blog_type.v1", page_role="content", section_id="voc",
+                     title="블로그 문서 유형", blocks=_decorate(ctx, blocks), needs_review=True, is_data=True)

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Callable, Optional
 
-from core.composition import cases, commerce, customer, overview, owned, quant, synthesis
+from core.composition import cases, commerce, compare, customer, demand, overview, owned, quant, synthesis
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, lead_block, synthetic_badge, text_block, title_block,
 )
@@ -47,7 +47,14 @@ TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2":
                     "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
                     "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
                     "ES": "recap", "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
-TEMPLATE_SECTION.update({"OW-CMP": "owned"})  # P3 비교·차트 장
+TEMPLATE_SECTION.update({
+    "OW-CMP": "owned",
+    "MN1": "search",
+    "BL1": "voc",
+    "VC1": "voc",
+    "PP1": "voc",
+    "SH1": "search_trend",
+})  # P3 비교·차트 장
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
@@ -57,7 +64,14 @@ TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타�
                   "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
                   "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트",
                   "SWOT": "SWOT", "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
-TEMPLATE_LABEL.update({"OW-CMP": "자사 vs 경쟁사 채널 비교"})
+TEMPLATE_LABEL.update({
+    "OW-CMP": "자사 vs 경쟁사 채널 비교",
+    "MN1": "채널별 언급량 비교",
+    "BL1": "블로그 문서 유형",
+    "VC1": "커뮤니티별 부정 비율",
+    "PP1": "페인 포인트",
+    "SH1": "품목별 쇼핑 수요·성수기",
+})
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
 # A slide keeps its content section (what it shows, used by checks) and also gets the chapter it sits in.
@@ -86,19 +100,20 @@ TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2":
                     "2-8c": "competitor", "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
                     "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
-TEMPLATE_CHAPTER.update({"OW-CMP": "company"})
+TEMPLATE_CHAPTER.update({"OW-CMP": "company", "MN1": "competitor", "BL1": "customer", "VC1": "customer",
+                         "PP1": "customer", "SH1": "competitor"})
 # P3 비교·차트 장은 같은 자료를 쓰는 기존 장이 켜져 있으면 함께 켜진다(따로 켜도 된다).
 FOLLOWS = {"OW-CMP": "2-1"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
 PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
-              "2-8c", "2-8d", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
+              "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
               "PROBLEM", "SOLUTION", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
                ("benchmark", "competitor", "C1b", "C2b", "Benchmark", "벤치마크 사례")]
-TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1",
-                  "5-1", "5-2", "5-recap", "A-source"]
+TEMPLATE_ORDER = ["1-1", "1-6", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "3-1", "C1", "C2", "M1",
+                  "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "A-source"]
 FRAME_TEMPLATES = {"cover", "index", "divider", "end"}
 
 
@@ -265,6 +280,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("2-8d"):
             s = quant.target_table(c)
             slot("2-8d", "2-8d", [s] if s else [], "전체·타겟 9M 검색 세트 미확보", part=part)
+        if on("MN1"):
+            s = compare.mention_page(c, frozenset(b.name for b in project.brands))
+            slot("MN1", "MN1", [s] if s else [], "자사·경쟁사 채널별 언급량이 2개 채널 이상 필요", part=part)
+        if on("SH1"):
+            s = demand.shopping_demand_page(c)
+            slot("SH1", "SH1", [s] if s else [], "월별 쇼핑 클릭 지수가 4개 이상인 제품군 없음", part=part)
         if on("3-1"):
             for b in c.project.brands:
                 slot(f"3-1-{b.id}", "3-1", quant.creator_pages(c, b.id), "기간 내 채택된 creator 게시물 없음", b.id,
@@ -331,6 +352,15 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("5-2"):
             s = customer.awareness_channel_page(c.project, voc)
             slot("5-2", "5-2", [s] if s else [], "인식 경로가 드러난 소비자 원문 없음", part=part)
+        if on("BL1"):
+            s = compare.blog_type_page(c, frozenset(b.name for b in project.brands))
+            slot("BL1", "BL1", [s] if s else [], "유형이 분류된 블로그 검색어 표본 20건 이상 없음", part=part)
+        if on("VC1"):
+            s = demand.voc_negative_page(c, voc)
+            slot("VC1", "VC1", [s] if s else [], "출처별 부정 비율과 채택 원문이 부족함", part=part)
+        if on("PP1"):
+            s = demand.pain_point_page(c, voc)
+            slot("PP1", "PP1", [s] if s else [], "원문 수가 있는 페인 포인트 3개 이상 없음", part=part)
         if on("5-recap"):
             s = quant.recap(c)
             slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음", part=part)
