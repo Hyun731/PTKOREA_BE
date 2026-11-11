@@ -45,6 +45,21 @@ class Paragraph(BaseModel):
         return (self.bullet + " " if self.bullet else "") + "".join(p.rendered() for p in self.parts)
 
 
+class Headline(BaseModel):
+    """헤드라인 v2 (P3-4): 주장 한 줄 + 근거 줄(보통 두 줄). 근거가 없으면 주장만 그린다."""
+    claim: list[Paragraph] = Field(default_factory=list)
+    evidence: list[Paragraph] = Field(default_factory=list)
+
+    @classmethod
+    def coerce(cls, value) -> "Headline":
+        """Stored overrides: a list of paragraphs (before P3-4: claim only) or {"claim", "evidence"}."""
+        if isinstance(value, Headline):
+            return value
+        if isinstance(value, list):
+            return cls(claim=[v if isinstance(v, Paragraph) else Paragraph.model_validate(v) for v in value])
+        return cls.model_validate(value)
+
+
 class Region(BaseModel):
     x: float
     y: float
@@ -53,7 +68,7 @@ class Region(BaseModel):
 
 
 TextRole = Literal[
-    "title", "lead", "caption", "takeaway", "footnote", "panel_header", "body",
+    "title", "lead", "lead_evidence", "caption", "takeaway", "footnote", "panel_header", "body",
     "cover_title", "cover_meta", "index_label", "index_body", "divider_title", "divider_sub", "end", "badge",
     "chip", "meta", "page_no", "insight", "cover_kicker", "cover_sub", "divider_desc", "index_group", "index_item",
 ]
