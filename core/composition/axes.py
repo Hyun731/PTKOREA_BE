@@ -86,17 +86,35 @@ def market_figures(ctx: QuantContext, category: str, materials: list[CaseMateria
     linked = {fid for m in accepted for fid in m.metric_fact_ids}
     brand_ids = {b.id for b in ctx.project.brands}
     out: dict[str, list] = defaultdict(list)
-    for f in ctx.metrics.registry.facts.values():
-        if not usable(f) or f.brand_id not in brand_ids:
-            continue
-        ours = f.id in linked or (f.metric in MARKET_METRICS and (
+    facts = [f for f in ctx.metrics.registry.facts.values() if usable(f) and f.brand_id in brand_ids]
+    # A card read by P4-1 has its own figures: its older hand-kept numbers would only repeat them.
+    p41_cards = {f.evidence_id for f in facts if f.metric in MARKET_METRICS and f.evidence_id}
+    seen: set = set()
+    for f in sorted(facts, key=lambda f: (f.metric not in MARKET_METRICS, f.id)):
+        ours = (f.id in linked and f.evidence_id not in p41_cards) or (f.metric in MARKET_METRICS and (
             f.entity == category or f.evidence_id in card_ids or f.source_id in card_ids))
         kind = market_kind(f) if ours else None
-        if kind:
+        key = (kind, f.value, _figure_name(f) if kind == "macro" else f.evidence_id, f.period_end if kind == "macro" else None)
+        if kind and key not in seen:
+            seen.add(key)
             out[kind].append(f)
     for kind in out:
         out[kind].sort(key=lambda f: (f.period_end, f.measured_at, f.id), reverse=True)
     return out
+
+
+GOV_HOST = re.compile(r"(\.go\.kr|visitkorea\.or\.kr|kostat|customs|index\.go\.kr)$")
+
+
+def _source_name(m: CaseMaterial) -> str:
+    """Where a figure was read: a government press release by its own title (P4-1), else the outlet."""
+    host = (m.source.publisher or "").lower()
+    if not host and m.source.url:
+        from urllib.parse import urlparse
+        host = urlparse(m.source.url).netloc.lower()
+    if GOV_HOST.search(host.removeprefix("www.")):
+        return _fit_lines(m.source.title, 300, 8, 1)
+    return _publisher(m)
 
 
 def _figure_name(f) -> str:
@@ -112,7 +130,7 @@ def _sources_of(facts: Iterable, materials: list[CaseMaterial]) -> list[tuple[st
     out: list[tuple[str, Optional[date]]] = []
     for f in facts:
         m = by_key.get(f.evidence_id or "") or by_key.get(f.source_id or "")
-        item = (_publisher(m), m.source.published_at or m.activity_date) if m else (f.source, f.measured_at)
+        item = (_source_name(m), m.source.published_at or m.activity_date) if m else (f.source, f.measured_at)
         if item not in out:
             out.append(item)
     return out
@@ -167,7 +185,7 @@ def _evidence_lines(figures: list, materials: list[CaseMaterial], ctx: QuantCont
     paras: list[Paragraph] = []
     for m in cards:
         for c in [c for c in m.claims if c.review_status == "accepted"][:2]:
-            para = Paragraph(parts=[*_claim_parts(c, ctx.pf), T(" · "), N(_publisher(m))], bullet="▸")
+            para = Paragraph(parts=[*_claim_parts(c, ctx.pf), T(" · "), N(_source_name(m))], bullet="▸")
             if _height(paras + [para], w, "card_body") > h - 30:
                 break
             paras.append(para)
@@ -289,7 +307,7 @@ def policy_pages(materials: list[CaseMaterial], pf, badge: list[Block], category
     built = []
     for m in rows_src:
         issue = [P(N(m.event_name or _clean_title(m.title, m.entity)), bold=True)]
-        org = [P(N(_publisher(m)))]
+        org = [P(N(_source_name(m)))]
         if m.activity_date:
             when = [P(T("시행 "), D(m.activity_date))]
         elif m.source.published_at:

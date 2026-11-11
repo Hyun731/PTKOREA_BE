@@ -26,7 +26,7 @@ from app.config import settings
 from app.jobs import register
 from app.models import PostRow, Asset, Claim, FactRow, Job, Material, OwnedPost, Project, ResearchItem, Source, new_id, utcnow
 from app.services.assets import inspect_upload, normalized_derivative
-from app.services import period, scope
+from app.services import market_figures, period, scope
 from app.services.audit import audit
 from app.services.dedupe import find_duplicate, merge, primaries, usable
 from app.services.inputs import core_project
@@ -178,6 +178,8 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
         queries = [f"{cat} {k} {year}" for k in asked] + [
             f"{cat} 시장 규모 성장률 {year}", f"{cat} 유통 채널 점유율 {year}", f"{cat} 주요 브랜드 경쟁 구도 {year}",
             f"{age} {cat} 이용 조사 {year}".strip()]
+        # P4-1: 정부 통계는 보도자료로 — 같은 추출로 수치(출입국자 수 등)를 Fact 후보로 만든다.
+        queries += market_figures.gov_queries(brand.industry, cat, year)[:1]
         # 피드백 #1(업종별 variation): 업종 특화 서브트렌드 키워드를 한 질의로 묶어 덧붙인다(한도
         # 안에서 밀려나도 핵심 질의 4개는 남도록 맨 뒤에 둔다).
         hints = brand.keyword_hints()
@@ -204,7 +206,7 @@ EXTRACT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["relevant", "relevance_note", "summary", "activity_date", "activity_date_end", "event_name", "same_as",
-                "target_segment", "market_aspect", "primary_brand", "related_brands", "facts", "claims"],
+                "target_segment", "market_aspect", "primary_brand", "related_brands", "facts", "claims", "figures"],
     "properties": {
         "relevant": {"type": "boolean"},
         "summary": {"type": "string"},
@@ -227,6 +229,7 @@ EXTRACT_SCHEMA = {
             "type": "object", "additionalProperties": False, "required": ["kind", "text", "quote"],
             "properties": {"kind": {"type": "string", "enum": ["fact", "interpretation"]},
                            "text": {"type": "string"}, "quote": {"type": "string"}}}},
+        "figures": market_figures.FIGURES_SCHEMA,  # P4-1 시장·정책·업종 KPI 수치
     },
 }
 
@@ -251,6 +254,7 @@ EXTRACT_SYSTEM = """당신은 브랜드 마케팅 진단 보고서를 돕는 리
   대상 그대로가 맞으면 null. 두 자사 브랜드가 함께 등장하는 활동이면 주로 다루는 쪽을 primary_brand로, 나머지를
   related_brands에 적습니다(목록에 없으면 둘 다 null/빈 배열).
 - market_aspect: 조사 대상이 '산업 카테고리 분석'이나 '규제와 정책'일 때만, 이 원문이 주로 다루는 내용 하나를 고릅니다 — "size_growth"(시장 규모·성장률·전망), "channel"(유통 채널 구조·판매 경로 비중), "player"(주요 플레이어·경쟁 구도·점유율), "policy"(정책·제도·규제 변화, ESG·친환경 의무화, 정부 지원 등). 그 외 조사에서는 null.
+""" + market_figures.FIGURES_PROMPT + """
 원문에 없는 내용, 다른 브랜드의 수치, 추정치는 넣지 않습니다. 관련 내용이 없으면 relevant=false와 빈 배열을 돌려줍니다."""
 
 
@@ -574,6 +578,7 @@ def _extract_prompt(db: Session, project: Project, item: ResearchItem, m: Materi
             f"조사 질문: {item.question}\n조사 기간: {item.period_start} ~ {item.period_end}\n"
             + (f"조사 방향: {focus}\n" if focus else "") +
             f"<existing>\n{listing or '(없음)'}\n</existing>\n"
+            + ("수치 추출: 사용\n" if m.section_id in market_figures.FIGURE_SECTIONS else "") +
             f"원문 URL: {src.original_url}\n<page>\n{text[:PAGE_CHARS_FOR_AI]}\n</page>")
     return user, [o.id for o in existing]
 
@@ -640,6 +645,21 @@ def _apply_extraction(db: Session, project: Project, item: ResearchItem, m: Mate
         db.add(Claim(id=new_id("CL"), project_id=project.id, material_id=m.id, kind=c["kind"], parts=parts,
                      evidence_ids=[m.id], fact_ids=refs, author="ai", review_status="pending", quote=c["quote"][:600]))
         out["claims"] += 1
+    if m.section_id in market_figures.FIGURE_SECTIONS:
+        figures, fig_issues = market_figures.validate_figures(data, text)
+        issues += fig_issues
+        seen = set()
+        for fig in figures:
+            fact = market_figures.make_figure_fact(fig, brand_id=item.brand_id, entity=item.entity,
+                                                   measured_at=date.today(), source=src.title, source_id=src.id,
+                                                   evidence_id=m.id, url=src.original_url)
+            if fact.id in seen:
+                continue
+            seen.add(fact.id)
+            db.add(FactRow(project_id=project.id, fact_id=fact.id, origin="auto", material_id=m.id,
+                           research_item_id=item.id, data=json.loads(fact.model_dump_json()),
+                           verification_status="candidate", review_note=f"AI 추출 시장 수치 · 원문: {fig['quote'][:300]}"))
+            out["figures"] = out.get("figures", 0) + 1
     if issues:
         out.setdefault("dropped", []).extend(issues[:10])
     if period.apply(m, item, src) == "out":
