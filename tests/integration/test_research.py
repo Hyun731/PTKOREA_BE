@@ -677,6 +677,67 @@ def test_search_items_auto_collect_via_naver(client, fakes):
     assert next(s for s in sp["plan"] if s["template_id"] == "2-8c")["readiness"] == "ready"
 
 
+def test_search_item_counts_mentions_per_channel_without_calling_it_search_volume(client, fakes):
+    """P2-4: 자사·경쟁사 × 블로그·카페글·뉴스·지식iN의 검색 결과 문서 수(누적) + 최근 3개월 블로그·뉴스 달별 수.
+    카페글이 비활성이면 그 종류만 사유를 남기고 건너뛴다(오류 아님). 블로그는 1,000건 한도에 걸려 일부만 센 달 표시."""
+    from core.ingestion.mentions import recent_months
+
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    assert "naver_mentions" in {c["id"] for c in it["channels"]}
+    months = recent_months(date.today(), 3)
+    newest = date.fromisoformat(f"{months[-1]}-15")
+    fakes.naver_denied = {"cafearticle"}
+    seen = []
+
+    def naver_search(kind, query, *, display=100, start=1, sort="date", **kw):
+        fakes._hit("naver_search")
+        seen.append((kind, query, display, start, sort))
+        if kind in fakes.naver_denied:
+            raise ProviderError("PROVIDER_AUTH", "NAVER API HUB 앱에서 '카페글' 검색 API가 활성화되어 있지 않습니다", 401)
+        total = {"blog": 5000, "news": 40, "kin": 7}[kind] + (1 if " " in query else 0)
+        items = []
+        if display == 100 and sort == "date":
+            if kind == "blog":  # 하루 20건씩 — 1,000건(10쪽)으로는 최근 50일까지만 닿는다
+                items = [{"title": "t", "url": f"https://blog.naver.com/x/{start + i}", "snippet": "",
+                          "date": date.fromordinal(newest.toordinal() + 15 - (start - 1 + i) // 20).isoformat(),
+                          "author": None, "author_url": None} for i in range(100)]
+            elif start == 1:  # 뉴스는 이번 달 1건, 지난달 2건뿐
+                items = [{"title": "t", "url": f"https://n.example/{i}", "snippet": "", "date": d, "author": None,
+                          "author_url": None} for i, d in enumerate([f"{months[-1]}-03", f"{months[-2]}-20", f"{months[-2]}-02"])]
+        return CallResult(data={"total": total, "items": items, "via": "api_hub"}, usage={"requests": 1}, cost_usd=0.0,
+                          cost_is_estimate=False)
+    research.PROVIDERS["naver_search"] = naver_search
+
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded"
+    assert "활성화" in res["mentions"]["unavailable"]["cafe"] and not res["mentions"]["errors"]
+    assert sum(1 for c in seen if c[0] == "cafearticle") == 1  # 비활성 종류는 한 번만 묻는다
+
+    facts = ok(client.get(f"/v1/projects/{pid}/facts"))
+    totals = [f for f in facts if f["metric"] == "mention_total"]
+    entities = {f["entity"] for f in totals}
+    assert {"브랜드A", "경쟁X"} <= entities
+    assert {f["dims"]["channel"] for f in totals} == {"blog", "news", "kin"}
+    assert all(f["verification_status"] == "candidate" for f in totals)
+    blog_a = {f["dims"]["keyword_group"]: f for f in totals if f["entity"] == "브랜드A" and f["dims"]["channel"] == "blog"}
+    assert float(blog_a["brand"]["value"]) == 5000 and blog_a["brand"]["dims"]["keyword"] == "브랜드A"
+    assert float(blog_a["brand+가방"]["value"]) == 5001 and blog_a["brand+가방"]["dims"]["keyword"] == "브랜드A 가방"
+    assert all("검색량" not in (f["label"] or "") for f in totals)
+
+    monthly = {(f["dims"]["channel"], f["dims"]["month"]): f for f in facts
+               if f["metric"] == "mention_monthly" and f["entity"] == "브랜드A"}
+    news = [float(monthly[("news", m)]["value"]) for m in months]
+    assert news == [0, 2, 1] and not any("partial" in monthly[("news", m)]["dims"] for m in months)
+    # 블로그: 최근 50일만 닿았다 — 가장 최근 달은 다 셌고, 그 앞 달은 일부(partial),
+    # 가장 오래된 달은 하나도 닿지 못해 Fact를 만들지 않는다(0으로 남기지 않음)
+    assert "partial" not in monthly[("blog", months[-1])]["dims"] and monthly[("blog", months[1])]["dims"]["partial"] == "1"
+    assert ("blog", months[0]) not in monthly
+    assert any("닿지 못함" in x for x in res["mentions"]["partial_months"])
+
+
 def _set_brand(client, pid, **changes):
     proj = ok(client.get(f"/v1/projects/{pid}"))
     brands = [{**proj["config"]["brands"][0], **changes}, *proj["config"]["brands"][1:]]
