@@ -31,7 +31,7 @@ def _voc(identifier, sentiment, *, title=None):
         id=identifier, brand_id="B1", entity="브랜드A", section_id="voc", title=title or f"{identifier} 원문",
         source=SourceRef(id=f"SRC-{identifier}", title=f"{identifier} 원문", url=f"https://example.com/{identifier}",
                          publisher="커뮤니티", published_at=DAY),
-        review_status="accepted", voc_sentiment=sentiment, voc_topic="품질", voc_awareness="search",
+        review_status="accepted", voc_sentiment=sentiment, voc_topic="quality", voc_awareness="search",
     )
 
 
