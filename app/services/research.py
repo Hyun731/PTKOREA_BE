@@ -72,6 +72,7 @@ def _providers():
             instagram_user_posts, threads_profile, threads_search, threads_user_posts, tiktok_profile, tiktok_profile_videos,
             twitter_profile, twitter_search_posts, twitter_user_tweets, youtube_channel, youtube_channel_shorts,
             youtube_channel_videos, youtube_video, youtube_video_comments, tiktok_video_comments,
+            tiktok_search_keyword, youtube_search,
         )
         from integrations.naver.client import search_trend, shopping_keyword_breakdown, shopping_keyword_trend
         from integrations.naver.search import search as naver_search
@@ -89,7 +90,8 @@ def _providers():
                          facebook_post_comments=facebook_post_comments, tiktok_video_comments=tiktok_video_comments,
                          twitter_profile=twitter_profile, twitter_user_tweets=twitter_user_tweets,
                          threads_profile=threads_profile, threads_user_posts=threads_user_posts,
-                         youtube_channel_shorts=youtube_channel_shorts, youtube_video_comments=youtube_video_comments)
+                         youtube_channel_shorts=youtube_channel_shorts, youtube_video_comments=youtube_video_comments,
+                         tiktok_search_keyword=tiktok_search_keyword, youtube_search=youtube_search)
     return PROVIDERS
 
 
@@ -890,7 +892,16 @@ VOC_SITE_CHANNEL = {**{s: "cafe_blog" for s in CAFE_BLOG_SITES}, **{s: "communit
 MAX_VOC_PER_RUN = 60  # per item (P2-3: 20 → 60, 브랜드당 원문 100건 이상 목표) — AI 분류 비용의 상한
 # P2-3: 네이버 블로그·지식iN(·카페글)은 네이버 검색 API로 먼저 찾는다 — 정확도순 결과에서 기간 안 글만.
 # 날짜순은 최근 글부터라 지난 조사 기간까지 1,000건(검색 API 한도) 안에 닿지 못한다.
-NAVER_VOC_KINDS = (("blog", "cafe_blog", 40), ("cafearticle", "cafe_blog", 20), ("kin", "community", 10))
+# P2-8: 지식iN은 커뮤니티와 섞지 않고 자기 채널(kin)로 센다 — 수집 현황 화면에 따로 보인다.
+NAVER_VOC_KINDS = (("blog", "cafe_blog", 40), ("cafearticle", "cafe_blog", 20), ("kin", "kin", 10))
+NAVER_VOC_CHANNEL_GATE = {"kin": "naver_kin"}  # 조사 계획에서 고른 채널일 때만 부르는 종류
+# P2-8: 틱톡·유튜브 검색 — X·Threads처럼 검색 결과(틱톡 설명, 유튜브 제목 + 상위 댓글)가 곧 본문이다.
+NEW_VOC_CHANNELS = {"naver_kin", "tiktok_search", "youtube_search"}
+TIKTOK_VOC_KEEP = 15  # 검색어 하나의 30개 중 한국어로 브랜드를 말하는 영상만, 최대
+YOUTUBE_VOC_VIDEOS = 5  # 댓글까지 받을 상위 영상 수(조회수순) — 영상마다 댓글 1쪽
+YOUTUBE_VOC_COMMENTS = 20  # 영상 하나에서 본문에 붙이는 댓글 수
+HANGUL = re.compile(r"[가-힣]")
+SOCIAL_VOC_RESERVE = 20  # 한 항목의 원문 상한(MAX_VOC_PER_RUN) 중 SNS 검색 결과 몫으로 남겨 두는 자리
 NAVER_VOC_PAGES = 2  # 검색어 하나당 정확도순 100건 × 2쪽
 NAVER_VOC_SITES = {"blog": ("blog.naver.com",), "cafearticle": ("cafe.naver.com",)}
 # fetch_page has no login-wall detection of its own (a walled page still answers 200): a best-effort
@@ -933,26 +944,99 @@ def _voc_prompt(entity: str, text: str) -> str:
     return f"<brand>{entity}</brand>\n<text>\n{text[:PAGE_CHARS_FOR_AI]}\n</text>"
 
 
-def _social_posts(ledger: RunLedger, p: dict, name: str) -> list[dict]:
+def _voc_channels(item: ResearchItem) -> set[str]:
+    """이 항목에서 고른 소비자 원문 채널. P2-8 이전에 만든 계획(새 채널이 하나도 없는 것)은 지식iN을
+    늘 찾았으므로 그대로 찾게 한다."""
+    chans = set(item.channels or [])
+    if not chans & NEW_VOC_CHANNELS and chans & {"community", "naver_blog"}:
+        chans.add("naver_kin")
+    return chans
+
+
+def _social_posts(ledger: RunLedger, p: dict, name: str, names: Optional[list[str]] = None,
+                  chans: Optional[set[str]] = None, out: Optional[dict] = None,
+                  window: Optional[tuple[date, date]] = None) -> list[dict]:
     """피드백 #5(SNS 네이티브 검색): X·Threads 공개 게시물 키워드 검색 — 검색 결과 자체에 본문이
-    있어 run_web_item처럼 별도 페이지 수집이 필요 없다. 발급키가 없으면 조용히 빈 목록."""
+    있어 run_web_item처럼 별도 페이지 수집이 필요 없다. 발급키가 없으면 조용히 빈 목록.
+    P2-8: 고른 채널이면 틱톡 키워드 검색과 유튜브 검색(+ 상위 영상 댓글)도 같은 길로 더한다."""
     from app.config import settings
     if not settings.provider_configured("scrapecreators"):
         return []
-    out: list[dict] = []
+    chans = chans or set()
+    names = [k for k in dict.fromkeys(_key(n) for n in (names or [name])) if len(k) >= 2]  # mentions()가 읽는 꼴
+    out = out if out is not None else {}
+    posts: list[dict] = []
     try:
         tw = ledger.call("scrapecreators", "twitter_search", {"q": name}, 0.002,
                          lambda: p["twitter_search_posts"](name), cache_days=1)
-        out += [{**post, "channel": "x_search"} for post in tw.data["posts"] if post.get("url") and post.get("text")]
+        posts += [{**post, "channel": "x_search"} for post in tw.data["posts"] if post.get("url") and post.get("text")]
     except ProviderError:
         pass
     try:
         th = ledger.call("scrapecreators", "threads_search", {"q": name}, 0.002,
                          lambda: p["threads_search"](name), cache_days=1)
-        out += [{**post, "channel": "threads_search"} for post in th.data["posts"] if post.get("url") and post.get("text")]
+        posts += [{**post, "channel": "threads_search"} for post in th.data["posts"] if post.get("url") and post.get("text")]
     except ProviderError:
         pass
-    return out
+    if "tiktok_search" in chans:
+        posts += _tiktok_voc_posts(ledger, p, name, names, out)
+    if "youtube_search" in chans:
+        posts += _youtube_voc_posts(ledger, p, name, names, out, window)
+    return posts
+
+
+def _tiktok_voc_posts(ledger: RunLedger, p: dict, name: str, names: list[str], out: dict) -> list[dict]:
+    """틱톡 키워드 검색: 한국 지역으로 물어도 해외 영상이 섞여 오므로, 설명에 한글이 있고 브랜드
+    이름이 나오는 영상만 남긴다(나머지는 skipped.foreign / skipped.unrelated로 센다)."""
+    q = f"{name} 후기"
+    try:
+        res = ledger.call("scrapecreators", "tiktok_search", {"q": q, "region": "KR"}, 0.002,
+                          lambda: p["tiktok_search_keyword"](q, region="KR"), cache_days=1)
+    except ProviderError as exc:
+        out.setdefault("search_errors", {})["tiktok_search"] = exc.message
+        return []
+    kept: list[dict] = []
+    skipped = out.setdefault("skipped", {})
+    for post in res.data["posts"]:
+        if not HANGUL.search(post["text"]):
+            skipped["foreign"] = skipped.get("foreign", 0) + 1
+            continue
+        if not mentions(post["text"], names):
+            skipped["unrelated"] = skipped.get("unrelated", 0) + 1
+            continue
+        kept.append({**post, "channel": "tiktok_search"})
+    return kept[:TIKTOK_VOC_KEEP]
+
+
+def _youtube_voc_posts(ledger: RunLedger, p: dict, name: str, names: list[str], out: dict,
+                       window: Optional[tuple[date, date]] = None) -> list[dict]:
+    """유튜브 검색: 제목에 브랜드가 나오고 조사 기간 안에 올라온 영상 중 조회수 상위 몇 편의 댓글을
+    받아, 제목 + 댓글을 원문 하나로 쓴다. 게시일이 오지 않는 쇼츠는 기간을 확인할 수 없어 빼고,
+    댓글이 없는 영상도 소비자 목소리가 없으니 뺀다."""
+    q = f"{name} 후기"
+    try:
+        res = ledger.call("scrapecreators", "youtube_search", {"q": q}, 0.002,
+                          lambda: p["youtube_search"](q), cache_days=1)
+    except ProviderError as exc:
+        out.setdefault("search_errors", {})["youtube_search"] = exc.message
+        return []
+    videos = [v for v in res.data["videos"] if mentions(v["title"], names) and v.get("posted_at")
+              and (window is None or period.published_in_search_window(_safe_date(v["posted_at"]), *window))]
+    videos.sort(key=lambda v: -(v.get("views") or 0))
+    posts: list[dict] = []
+    for v in videos[:YOUTUBE_VOC_VIDEOS]:
+        try:
+            cm = ledger.call("scrapecreators", "youtube_video_comments", {"url": v["url"], "cursor": None}, 0.002,
+                             lambda u=v["url"]: p["youtube_video_comments"](u), cache_days=1)
+        except ProviderError:
+            continue
+        lines = [c["text"].replace("\n", " ")[:300] for c in cm.data["comments"][:YOUTUBE_VOC_COMMENTS]]
+        if not lines:
+            continue
+        text = f"영상 제목: {v['title']}\n시청자 댓글:\n" + "\n".join(f"- {t}" for t in lines)
+        posts.append({"url": v["url"], "text": text, "title": v["title"], "posted_at": v.get("posted_at"),
+                      "author": v.get("author"), "channel": "youtube_search"})
+    return posts
 
 
 def _naver_voc_results(ledger: RunLedger, p: dict, names: list[str], item: ResearchItem, out: dict) -> tuple[list[dict], set[str]]:
@@ -960,7 +1044,10 @@ def _naver_voc_results(ledger: RunLedger, p: dict, names: list[str], item: Resea
     한 종류가 비활성(권한 오류)이면 그 종류만 건너뛰고 Perplexity 사이트 검색에 맡긴다."""
     found: list[dict] = []
     covered: set[str] = set()
+    chans = _voc_channels(item)
     for kind, channel, cap in NAVER_VOC_KINDS:
+        if kind in NAVER_VOC_CHANNEL_GATE and NAVER_VOC_CHANNEL_GATE[kind] not in chans:
+            continue
         rows: list[dict] = []
         try:
             for n in names[:2]:
@@ -990,6 +1077,14 @@ def _naver_voc_results(ledger: RunLedger, p: dict, names: list[str], item: Resea
     return found, covered
 
 
+def _round_robin(rows: list[dict], key: Callable[[dict], str]) -> list[dict]:
+    """종류별 순서는 그대로 두고 종류끼리 번갈아 — 상한이 한 종류로만 차지 않게."""
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        buckets.setdefault(key(r), []).append(r)
+    return [r for row in zip_longest(*buckets.values()) for r in row if r is not None]
+
+
 def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem, ai_enabled: bool) -> dict:
     """5-1/5-2: 카페·블로그·커뮤니티 공개 글에서 소비자 원문을 모으고 감성·주제·인식 경로·협찬 여부를
     분류한다. 캠페인 사례와 달리 '같은 활동 묶기'는 하지 않는다 — 원문 하나하나가 독립된 증언이다."""
@@ -1014,11 +1109,20 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
     web_rows = [{"url": r["url"], "title": r["title"], "snippet": r.get("snippet", ""), "date": _safe_date(r.get("date")),
                  "channel": _voc_host_channel(r["url"])} for r in res.data["results"]]
 
+    # 피드백 #5·P2-8: X·Threads·틱톡·유튜브 검색은 본문이 검색 결과에 이미 있다. 먼저 받아 두고 자리를
+    # 남겨 둔다 — 블로그 결과만으로 상한이 차서 SNS 원문이 한 건도 안 들어가던 문제(P2-8 실측).
+    social = _round_robin(_social_posts(ledger, p, names[0] if names else item.entity, names or [item.entity],
+                                        _voc_channels(item), out, (item.period_start, item.period_end)),
+                          lambda r: r["channel"])
+    web_cap = MAX_VOC_PER_RUN - min(len(social), SOCIAL_VOC_RESERVE)
+    # 블로그·카페·지식iN·커뮤니티도 한 종류가 상한을 다 쓰지 않게 종류별로 번갈아 담는다.
+    mixed = _round_robin(naver_rows + web_rows, lambda r: r.get("kind") or r["channel"] or "")
+
     existing_urls = {s.original_url for s in db.scalars(select(Source).join(Material, Material.source_id == Source.id)
                                                          .where(Material.project_id == project.id))}
     cards: list[tuple[Source, Material, str]] = []
-    for r in naver_rows + web_rows:
-        if len(cards) >= MAX_VOC_PER_RUN:
+    for r in mixed:
+        if len(cards) >= web_cap:
             break
         url = r["url"]
         if url in existing_urls:
@@ -1042,12 +1146,12 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
                      comment="", order=0)
         db.add(m)
         cards.append((src, m, channel))
-    db.commit()  # 커밋해 쓰기 잠금을 풀어준다 — 바로 이어지는 _social_posts()의 ledger.call(별도 커넥션)과 부딪히지 않도록
+    db.commit()
 
-    # 피드백 #5: X·Threads 네이티브 검색 — 본문이 검색 결과에 이미 있어 fetch() 없이 바로 쓴다.
+    # SNS 검색 결과는 fetch() 없이 바로 쓴다.
     from integrations.fetch.page import Page
     prefetched: dict[str, Page] = {}
-    for post in _social_posts(ledger, p, names[0] if names else item.entity):
+    for post in social:
         if len(cards) >= MAX_VOC_PER_RUN:
             break
         url = post["url"]
@@ -1058,7 +1162,7 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             out["out_of_period"] = out.get("out_of_period", 0) + 1
             continue
         existing_urls.add(url)
-        title = post["text"][:80]
+        title = (post.get("title") or post["text"])[:80]
         src = Source(id=new_id("SRC"), project_id=project.id, title=title, original_url=url,
                      publisher=post.get("author") or _host(url), published_at=_safe_date(post.get("posted_at")),
                      fetched_at=utcnow(), source_type="social", access_status="unknown")
@@ -1113,7 +1217,7 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         src, m, user = job
         try:
             return ledger.call("anthropic", "voc_classify", {"url": src.original_url, "hash": src.content_hash}, 0.01,
-                               lambda: p["structured"](VOC_SYSTEM, user, VOC_SCHEMA, max_tokens=500)), None
+                               lambda: p["structured"](VOC_SYSTEM, user, VOC_SCHEMA, max_tokens=800)), None
         except ProviderError as exc:
             return None, exc
 

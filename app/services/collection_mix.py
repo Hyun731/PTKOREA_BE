@@ -30,7 +30,12 @@ REVIEW_MIN = 30
 REVIEW_PLATFORMS_MIN = 2
 REVIEW_SHARE_MIN = 0.5  # 리뷰 필수 업종: 소비자 원문 중 리뷰 비중 최소치
 CHANNEL_LABEL = {"press": "언론", "owned": "공식 채널", "influencer": "SNS·인플루언서",
-                 "cafe_blog": "카페·블로그", "community": "커뮤니티", "review": "리뷰"}
+                 "cafe_blog": "카페·블로그", "community": "커뮤니티", "kin": "지식iN", "sns_search": "SNS 검색",
+                 "review": "리뷰"}
+# P2-8: 소비자 원문 중 지식iN과 SNS 검색(X·Threads·TikTok·YouTube 댓글)은 최소 건수 없이 건수만 보인다.
+EXTRA_VOC_HOSTS = {"kin.naver.com": "kin", "x.com": "sns_search", "twitter.com": "sns_search",
+                   "threads.com": "sns_search", "threads.net": "sns_search", "tiktok.com": "sns_search",
+                   "youtube.com": "sns_search", "youtu.be": "sns_search"}
 
 
 def _press(materials: list[Material], brand_id: str) -> int:
@@ -69,21 +74,23 @@ def _voc(db: Session, project_id: str, brand_id: str, entity: str) -> dict:
     rows = db.execute(select(Material, Source).join(Source, Source.id == Material.source_id).where(
         Material.project_id == project_id, Material.brand_id == brand_id, Material.entity == entity,
         Material.section_id == "voc", Material.duplicate_of.is_(None))).all()
-    counts = {"cafe_blog": 0, "community": 0}
+    counts = {"cafe_blog": 0, "community": 0, "kin": 0, "sns_search": 0}
     sites: dict[str, set[str]] = {"cafe_blog": set(), "community": set()}
     for _, s in rows:
         host = _host(s.original_url or "")
-        channel = next((c for site, c in VOC_SITE_CHANNEL.items() if host == site or host.endswith(f".{site}")), None)
+        channel = next((c for site, c in {**VOC_SITE_CHANNEL, **EXTRA_VOC_HOSTS}.items()
+                        if host == site or host.endswith(f".{site}")), None)
         if channel:
             counts[channel] += 1
-            sites[channel].add(host)
+            sites.setdefault(channel, set()).add(host)
     cafe_blog = {"count": counts["cafe_blog"], "min": VOC_MIN, "enough": counts["cafe_blog"] >= VOC_MIN,
                 "action": "조사 계획에서 소비자 원문 항목을 다시 모으세요"}
     community = {"count": counts["community"], "min": VOC_MIN, "sites": len(sites["community"]),
                 "sites_min": COMMUNITY_SITES_MIN,
                 "enough": counts["community"] >= VOC_MIN and len(sites["community"]) >= COMMUNITY_SITES_MIN,
                 "action": "조사 계획에서 소비자 원문 항목을 다시 모으세요"}
-    return {"cafe_blog": cafe_blog, "community": community}
+    return {"cafe_blog": cafe_blog, "community": community, "kin": {"count": counts["kin"]},
+            "sns_search": {"count": counts["sns_search"]}}
 
 
 def _review(snapshots: list[ReviewSnapshot], brand_id: str, entity: str) -> dict:
@@ -118,12 +125,14 @@ def compute(db: Session, project: Project) -> list[dict]:
         review = {**_review(snapshots, b.id, b.name), "label": CHANNEL_LABEL["review"]}
         channels = {"press": press, "owned": owned, "influencer": influencer,
                    "cafe_blog": {**voc["cafe_blog"], "label": CHANNEL_LABEL["cafe_blog"]},
-                   "community": {**voc["community"], "label": CHANNEL_LABEL["community"]}, "review": review}
+                   "community": {**voc["community"], "label": CHANNEL_LABEL["community"]},
+                   "kin": {**voc["kin"], "label": CHANNEL_LABEL["kin"]},
+                   "sns_search": {**voc["sns_search"], "label": CHANNEL_LABEL["sns_search"]}, "review": review}
         total = sum(c["count"] for c in channels.values())
         press_ratio = round(press["count"] / total, 3) if total else 0.0
         # 리뷰 필수 업종: 소비자 원문(카페·블로그+커뮤니티+리뷰) 중 리뷰 비중이 낮으면 커뮤니티만으로
         # 채운 것 — 업종 KPI(3-10)와 같은 기준의 REQUIRED_REVIEW_INDUSTRIES를 그대로 쓴다.
-        consumer_total = channels["cafe_blog"]["count"] + channels["community"]["count"] + review["count"]
+        consumer_total = sum(channels[c]["count"] for c in ("cafe_blog", "community", "kin", "sns_search")) + review["count"]
         review_share = round(review["count"] / consumer_total, 3) if consumer_total else 0.0
         review_required = b.industry in REQUIRED_REVIEW_INDUSTRIES
         out.append({
