@@ -62,3 +62,37 @@ def window_sum_fact(*, brand_id: str, entity: str, window_label: str, total: Dec
     return Fact(id=fact_id_from_hash(h), content_hash=h, brand_id=brand_id, entity=entity, metric="search_group_sum",
                value=total, unit="index", dims=dims, period_start=period_start, period_end=period_end,
                measured_at=measured_at, source=SOURCE_LABEL, confidence="verified")
+
+
+# 네이버 데이터랩 검색어트렌드 연령 코드 → (최소, 최대) 나이. 11은 60세 이상.
+NAVER_AGE_BANDS: dict[str, tuple[int, int]] = {
+    "1": (0, 12), "2": (13, 18), "3": (19, 24), "4": (25, 29), "5": (30, 34), "6": (35, 39),
+    "7": (40, 44), "8": (45, 49), "9": (50, 54), "10": (55, 59), "11": (60, 200),
+}
+MAX_COMBO_KEYWORDS = 20  # DataLab: keywords per group
+
+
+def naver_target_filter(age_min: Optional[int], age_max: Optional[int], gender: str) -> Optional[dict]:
+    """Brand.target → DataLab filter {"ages": [...], "gender": "f"|"m"}; None when the target narrows nothing
+    (no age range and all genders) — then there is no '키 타겟' set to compare with '전체'.
+    Every age band that overlaps the range is included (25~34 → 25-29, 30-34)."""
+    out: dict = {}
+    if age_min is not None or age_max is not None:
+        lo, hi = age_min if age_min is not None else 0, age_max if age_max is not None else 200
+        ages = [code for code, (a, b) in NAVER_AGE_BANDS.items() if a <= hi and b >= lo]
+        if ages and len(ages) < len(NAVER_AGE_BANDS):
+            out["ages"] = ages
+    if gender in ("female", "male"):
+        out["gender"] = "f" if gender == "female" else "m"
+    return out or None
+
+
+def combo_keywords(names: list[str], category: str) -> list[str]:
+    """'브랜드+카테고리' search terms for one entity: each name with and without a space
+    ('샘소나이트 캐리어', '샘소나이트캐리어'), de-duplicated, at most 20 (DataLab limit)."""
+    out: list[str] = []
+    for n in names:
+        for kw in (f"{n} {category}", f"{n}{category}"):
+            if kw not in out:
+                out.append(kw)
+    return out[:MAX_COMBO_KEYWORDS]
