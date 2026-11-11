@@ -28,7 +28,8 @@ class Project(Base):
     config: Mapped[dict] = mapped_column(JSON)  # core.schemas.project.Project dump
     version: Mapped[int] = mapped_column(Integer, default=1)
     omitted_slots: Mapped[dict] = mapped_column(JSON, default=dict)  # slot_id -> {reason, by, at}
-    lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [Paragraph]
+    lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> Headline
+    insight_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [{title, body_segments}]
     synthesis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Phase 3-1 전: 더 안 씀, SynthesisRun으로 대체
     owner: Mapped[str] = mapped_column(String(120), default="dev")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -334,7 +335,7 @@ class SlideWriting(Base):
     kind: Mapped[str] = mapped_column(String(20))  # lead | insights
     body_fp: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20), default="ok")  # ok | failed (rules not met after rewrites)
-    data: Mapped[dict] = mapped_column(JSON, default=dict)  # lead: {"claim": [Paragraph], "evidence": [Paragraph]}
+    data: Mapped[dict] = mapped_column(JSON, default=dict)  # lead: {claim, evidence}; insights: {insights: [{title, body_segments}]}
     errors: Mapped[list] = mapped_column(JSON, default=list)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     model: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)

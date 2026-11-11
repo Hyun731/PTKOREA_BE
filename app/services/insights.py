@@ -1,4 +1,4 @@
-"""AI headlines (PRD 10, W01, W02, W04; DEVELOPMENT_PLAN T09; IMPROVEMENT_PLAN P3-4 헤드라인 v2).
+"""AI page writing (PRD 10, W01, W02, W04; IMPROVEMENT_PLAN P3-4/P3-5).
 
 A headline is a claim (one line, one accent keyword) and up to two evidence lines ("- …"), each carrying one
 or two numbers or a quoted phrase. The model only sees what the slide body shows: its displayed facts (as
@@ -6,8 +6,8 @@ numbered refs), its Finding's allowed expression and the page's visible text. It
 can only appear as a fact ref, so the server formats every number. Each answer is checked with the same rules
 as QC; up to 2 rewrites, then the rule headline stays.
 
-Two ways in: `write_slides` runs when a deck is built and keeps one headline per page (SlideWriting, reused
-while the page body is unchanged); `run_insights` makes proposals a person accepts one by one.
+`write_slides` runs when a deck is built and keeps one headline plus three insight cards per page (SlideWriting,
+reused while the page body is unchanged); `run_insights` makes headline proposals a person accepts one by one.
 """
 from __future__ import annotations
 
@@ -39,7 +39,16 @@ LEAD_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["claim", "evidence"],
     "properties": {"claim": SEGMENTS, "evidence": {"type": "array", "items": SEGMENTS}},
 }
+PAGE_INSIGHT_ITEM_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["title", "body_segments"],
+    "properties": {"title": SEGMENTS, "body_segments": SEGMENTS},
+}
+PAGE_INSIGHTS_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["insights"],
+    "properties": {"insights": {"type": "array", "minItems": 3, "maxItems": 3, "items": PAGE_INSIGHT_ITEM_SCHEMA}},
+}
 MAX_EVIDENCE = 2
+PAGE_INSIGHT_COUNT = 3
 WRITERS = 6  # pages written at once when a deck is built
 
 SYSTEM = """당신은 브랜드 마케팅 진단 보고서의 장표 헤드라인을 쓰는 편집자입니다.
@@ -60,6 +69,19 @@ SYSTEM = """당신은 브랜드 마케팅 진단 보고서의 장표 헤드라�
 - 자사 브랜드끼리 비교하지 않습니다. 한 헤드라인에는 자사 브랜드를 하나만 씁니다(경쟁사와의 비교는 괜찮습니다).
 - 금지어: """ + ", ".join(FORBIDDEN_WORDS + OVERCLAIMS) + """
 segments를 이어 붙이면 한 문장이 되도록 띄어쓰기를 포함해 나눕니다. evidence 줄 앞의 '-'는 쓰지 않습니다(서버가 붙임)."""
+
+PAGE_INSIGHTS_SYSTEM = """당신은 브랜드 마케팅 진단 보고서의 장표 하단 인사이트 3개를 쓰는 편집자입니다.
+각 인사이트는 제목(title)과 설명(body_segments) 한 줄씩이며, 세 카드는 서로 다른 관찰을 말합니다.
+규칙:
+- 한국어, 쉬운 말. 제목은 12자 안팎의 짧은 판단으로, 설명은 40자 안팎으로 씁니다.
+- 설명마다 장표 본문에 보이는 수치 1~2개 또는 원문 인용('…') 하나를 반드시 근거로 넣습니다.
+  수치를 쓰려면 segments에 {"text": "", "fact_ref": 번호} 조각을 넣습니다. 숫자를 직접 쓰지 않습니다.
+- 설명은 다음 운영에서 무엇을 확인하거나 우선할지 알 수 있게 관찰의 의미를 덧붙이되, 판매·매출·광고비·실제 검색량의
+  인과 단정, 의도 추측, 근거 없는 전략 제언은 쓰지 않습니다.
+- 장표 본문에 실제로 보이는 사실과 제공된 '허용 표현'의 범위 안에서만 씁니다.
+- 자사 브랜드끼리 비교하지 않습니다. 한 인사이트에는 자사 브랜드를 하나만 씁니다.
+- 금지어: """ + ", ".join(FORBIDDEN_WORDS + OVERCLAIMS) + """
+segments를 이어 붙이면 한 문장이 되도록 띄어쓰기를 포함해 나눕니다."""
 
 # Indirection so tests can stub the model call.
 STRUCTURED: list[Callable] = []
@@ -93,6 +115,8 @@ def _body_context(slide: SlideSpec) -> tuple[list[dict], str]:
                       "metric": b.metric, "formatter": b.formatter})
     lines = []
     for blk in slide.blocks:
+        if blk.block_id.startswith("insight"):
+            continue
         if isinstance(blk, TextBlock) and blk.role not in ("lead", "lead_evidence", "insight", "badge", "footnote",
                                                              "chip", "page_no", "title"):
             lines += [p.plain() for p in blk.paragraphs if p.parts]
@@ -235,6 +259,68 @@ def _user_prompt(slide: SlideSpec, facts: list[dict], body: str, allowed: list[s
             + f"\n장표 본문:\n{body}")
 
 
+def _page_insights_prompt(slide: SlideSpec, facts: list[dict], body: str, allowed: list[str], self_brands: list[str]) -> str:
+    return (f"장표: {slide.title} ({slide.template_id})\n허용 표현: {', '.join(allowed) or '중립 설명(평가·단정 없이 보이는 내용 요약)'}\n"
+            f"자사 브랜드: {', '.join(self_brands)}\n"
+            f"쓸 수 있는 수치(번호: 표시값 · 대상 · 지표):\n"
+            + "\n".join(f"{f['ref']}: {f['display']} · {f['entity']} · {f['metric']}" for f in facts)
+            + f"\n장표 본문:\n{body}")
+
+
+def _insight_column_width() -> float:
+    reg = region("insights")
+    return (reg.w + 10) / 3 - 10 - 21
+
+
+def page_insights_from(data: dict, facts: list[dict], pf: PartFactory,
+                       names: Iterable[str] = ()) -> tuple[list[dict], list[str]]:
+    """Model answer -> P3-5 insight cards and conversion errors."""
+    names = list(names)
+    cards: list[dict] = []
+    errors: list[str] = []
+    for index, item in enumerate(data.get("insights") or [], start=1):
+        title, title_errors = _to_parts(item.get("title") or [], facts, pf, claim=False, names=names)
+        body, body_errors = _to_parts(item.get("body_segments") or [], facts, pf, claim=False, names=names)
+        errors += [f"인사이트 {index}: {error}" for error in [*title_errors, *body_errors]]
+        cards.append({"title": Paragraph(parts=title), "body_segments": Paragraph(parts=body)})
+    return cards, errors
+
+
+def check_page_insights(cards: list[dict], self_brands: Iterable[str] = ()) -> list[str]:
+    """P3-5 cards share the headline safeguards and each carry displayed evidence."""
+    if len(cards) != PAGE_INSIGHT_COUNT:
+        return [f"인사이트는 {PAGE_INSIGHT_COUNT}개여야 합니다"]
+    errors: list[str] = []
+    title_spec = type_spec("insight_title")
+    body_spec = type_spec("insight_body")
+    width = _insight_column_width()
+    all_text: list[str] = []
+    for index, card in enumerate(cards, start=1):
+        title = card["title"].parts
+        body = card["body_segments"].parts
+        if not "".join(part.rendered() for part in title).strip():
+            errors.append(f"인사이트 {index}: 빈 제목")
+        if not "".join(part.rendered() for part in body).strip():
+            errors.append(f"인사이트 {index}: 빈 설명")
+        errors += [f"인사이트 {index} 제목: {error}" for error in _plain_errors(title)]
+        errors += [f"인사이트 {index} 설명: {error}" for error in _plain_errors(body)]
+        if line_count(paragraph_runs(Paragraph(parts=title), title_spec.get("weight")), width, title_spec["size"]) > 1:
+            errors.append(f"인사이트 {index}: 제목이 한 줄을 넘습니다 — 줄이세요")
+        if line_count(paragraph_runs(Paragraph(parts=body), body_spec.get("weight")), width, body_spec["size"]) > body_spec["max_lines"]:
+            errors.append(f"인사이트 {index}: 설명이 {body_spec['max_lines']}줄을 넘습니다 — 줄이세요")
+        facts = sum(1 for part in body if part.type == "fact")
+        if facts > 2:
+            errors.append(f"인사이트 {index}: 숫자가 2개를 넘습니다")
+        text = "".join(part.rendered() for part in body)
+        if facts == 0 and not QUOTED.search(text):
+            errors.append(f"인사이트 {index}: 수치(fact_ref)나 원문 인용('…')이 없습니다")
+        all_text.append("".join(part.rendered() for part in [*title, *body]))
+    names = self_brands_in(" ".join(all_text), self_brands)
+    if len(names) > 1:
+        errors.append(f"자사 브랜드끼리 비교: {', '.join(sorted(names))} — 자사 브랜드는 하나만 쓰세요")
+    return errors
+
+
 def propose(slide: SlideSpec, allowed: list[str], pf: PartFactory, ledger: RunLedger, fp: str,
             self_brands: list[str], endpoint: str = "lead") -> dict:
     """One headline for one page: up to 3 answers, each checked like QC. Returns
@@ -257,9 +343,35 @@ def propose(slide: SlideSpec, allowed: list[str], pf: PartFactory, ledger: RunLe
     return {"head": None if errors else head, "errors": errors, "attempts": attempts, "model": model}
 
 
+def page_insights(slide: SlideSpec, allowed: list[str], pf: PartFactory, ledger: RunLedger, fp: str,
+                  self_brands: list[str], endpoint: str = "page_insights") -> dict:
+    """Three evidence-backed cards for one content page, retried under the same prose constraints as leads."""
+    facts, body = _body_context(slide)
+    names = digit_names(slide, self_brands)
+    user = _page_insights_prompt(slide, facts, body, allowed, self_brands)
+    attempts, errors, cards, model, feedback = 0, [], [], None, ""
+    while attempts < 3:
+        attempts += 1
+        res = ledger.call("anthropic", endpoint, {"slide": slide.slide_id, "fp": fp, "attempt": attempts, "fb": feedback,
+                                                    "v": 1}, 0.05,
+                          lambda: _structured()(PAGE_INSIGHTS_SYSTEM, user + feedback, PAGE_INSIGHTS_SCHEMA, max_tokens=2400))
+        model = res.usage.get("model")
+        cards, conversion_errors = page_insights_from(res.data, facts, pf, names)
+        errors = conversion_errors + check_page_insights(cards, self_brands)
+        if not errors:
+            break
+        feedback = "\n\n이전 답의 문제: " + "; ".join(errors) + " — 고쳐서 다시 쓰세요."
+    return {"insights": cards if not errors else [], "errors": errors, "attempts": attempts, "model": model}
+
+
 def _dump(head: Headline) -> dict:
     return {"claim": [json.loads(p.model_dump_json()) for p in head.claim],
             "evidence": [json.loads(p.model_dump_json()) for p in head.evidence]}
+
+
+def dump_page_insights(cards: list[dict]) -> dict:
+    return {"insights": [{"title": json.loads(card["title"].model_dump_json()),
+                          "body_segments": json.loads(card["body_segments"].model_dump_json())} for card in cards]}
 
 
 def _allowed(slide: SlideSpec, findings: dict) -> list[str]:
@@ -318,6 +430,56 @@ def write_headlines(db: Session, project: Project, result, ledger: RunLedger,
     return {"written": written, "failed": failed, "kept": len(stored)}
 
 
+def write_page_insights(db: Session, project: Project, result, ledger: RunLedger,
+                        progress: Optional[Callable[[int], None]] = None) -> dict:
+    """Build-time P3-5 cards for every content page; a person's saved cards always win."""
+    overrides = project.insight_overrides or {}
+    stored = {w.slide_id: w for w in db.scalars(select(SlideWriting).where(SlideWriting.project_id == project.id,
+                                                                          SlideWriting.kind == "insights"))}
+    todo: list[tuple[SlideSpec, str]] = []
+    for slide in result.deck.slides:
+        if slide.page_role != "content" or lead_of(slide) is None or slide.slide_id in overrides:
+            continue
+        fp = body_fingerprint(slide)
+        if slide.slide_id in stored and stored[slide.slide_id].body_fp == fp:
+            continue
+        todo.append((slide, fp))
+    if not todo:
+        return {"written": 0, "failed": 0, "kept": len(stored)}
+    pf = PartFactory(result.metrics.registry)
+    findings = {f.id: f for f in result.findings}
+    brands = sorted(self_brand_names(project.config))
+    db.commit()  # the ledger writes in its own sessions (SQLite: one writer)
+    _structured()  # resolve the model function once, before the workers share it
+
+    def one(item):
+        slide, fp = item
+        try:
+            return slide, fp, page_insights(slide, _allowed(slide, findings), pf, ledger, fp, brands), None
+        except ProviderError as exc:
+            return slide, fp, None, exc
+
+    written = failed = done = 0
+    with ThreadPoolExecutor(max_workers=WRITERS) as pool:
+        for slide, fp, out, exc in pool.map(one, todo):
+            done += 1
+            if progress:
+                progress(int(done / len(todo) * 100))
+            if exc is not None:
+                failed += 1
+                continue
+            row = stored.get(slide.slide_id) or SlideWriting(id=new_id("SW"), project_id=project.id,
+                                                              slide_id=slide.slide_id, kind="insights")
+            row.body_fp, row.attempts, row.model, row.errors = fp, out["attempts"], out["model"], out["errors"]
+            row.status = "ok" if out["insights"] else "failed"
+            row.data = dump_page_insights(out["insights"]) if out["insights"] else {}
+            db.add(row)
+            written += bool(out["insights"])
+            failed += not out["insights"]
+    db.commit()
+    return {"written": written, "failed": failed, "kept": len(stored)}
+
+
 def write_slides(db: Session, project: Project, job_id: Optional[str] = None,
                  progress: Optional[Callable[[int], None]] = None) -> dict:
     """Everything the AI writes into a deck at build time. Never fails the build: errors are reported."""
@@ -325,7 +487,8 @@ def write_slides(db: Session, project: Project, job_id: Optional[str] = None,
         return {"skipped": "AI 키 없음"}
     result = build_deck(load_inputs(db, project))
     ledger = RunLedger(db, project.id, job_id)
-    out = {"lead": write_headlines(db, project, result, ledger, progress)}
+    out = {"lead": write_headlines(db, project, result, ledger, progress),
+           "insights": write_page_insights(db, project, result, ledger, progress)}
     return out
 
 

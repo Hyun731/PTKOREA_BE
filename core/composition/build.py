@@ -15,8 +15,8 @@ from typing import Callable, Optional, Union
 
 from core.composition import cases, commerce, compare, customer, demand, overview, owned, quant, synthesis
 from core.composition.chrome import (
-    D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, headline_blocks, lead_block, synthetic_badge, text_block,
-    title_block,
+    D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, headline_blocks, insight_blocks, lead_block, synthetic_badge,
+    text_block, title_block,
 )
 from core.composition.tokens import region
 from core.metrics.derived import DerivedInputs, derive, measured_on
@@ -128,6 +128,8 @@ class BuildInputs:
     omitted_slots: dict[str, str] = field(default_factory=dict)  # slot_id -> reason
     # A person's headline per slide: Headline (claim + evidence) or, saved before P3-4, a claim-only list.
     lead_overrides: dict[str, Union[list[Paragraph], Headline]] = field(default_factory=dict)
+    # A person's numbered insights per slide. An empty list intentionally hides the generated cards.
+    insight_overrides: dict[str, list[dict]] = field(default_factory=dict)
     # AI writing made at deck build time (P3-4~), {kind: {slide_id: {"fp": body fingerprint, ...}}}; applied
     # only while the slide body still has the fingerprint it was written for.
     ai_writing: dict = field(default_factory=dict)
@@ -403,6 +405,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     ordered = _assemble(project, [s for _, _, s in sorted(built, key=lambda x: (x[0], x[1]))], enabled,
                         inputs.generated_on or date.today(), synthetic)
     _apply_headlines(ordered, inputs, pf)
+    _apply_page_insights(ordered, inputs, pf)
     for s in ordered:
         s.bindings = _bindings(s, metrics, pf)
         s.notes = _notes(s, metrics)
@@ -494,7 +497,7 @@ def body_fingerprint(slide: SlideSpec) -> str:
     """Hash of what a page's body shows — everything but its headline, insights and frame (P3-4). AI writing
     is kept for a page only while this stays the same, so a sentence never outlives the numbers it cites."""
     body = [b.model_dump(mode="json", exclude={"region"}) for b in slide.blocks
-            if not b.block_id.startswith("chrome_") and getattr(b, "role", None) not in HEAD_ROLES]
+            if not b.block_id.startswith(("chrome_", "insight")) and getattr(b, "role", None) not in HEAD_ROLES]
     payload = {"id": slide.slide_id, "template": slide.template_id, "title": slide.title, "body": body}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
@@ -539,10 +542,46 @@ def _apply_headlines(slides: list[SlideSpec], inputs: BuildInputs, pf: PartFacto
             s.needs_review = False
 
 
+def _refresh_parts(parts: list[Part], pf: PartFactory) -> list[Part]:
+    return _refresh_facts(Paragraph(parts=parts), pf).parts
+
+
+def _set_page_insights(slide: SlideSpec, items: list[dict], pf: PartFactory) -> None:
+    """Replace legacy inline findings with the shared P3-5 insight cards."""
+    slide.blocks = [b for b in slide.blocks if not b.block_id.startswith("insight")]
+    cards = []
+    for item in items[:3]:
+        title = _refresh_parts(Paragraph.model_validate(item.get("title") or {"parts": []}).parts, pf)
+        body = _refresh_parts(Paragraph.model_validate(item.get("body_segments") or {"parts": []}).parts, pf)
+        if title and body:
+            cards.append((title, body))
+    if cards:
+        slide.blocks.extend(insight_blocks(cards))
+
+
+def _apply_page_insights(slides: list[SlideSpec], inputs: BuildInputs, pf: PartFactory) -> None:
+    """A person's P3-5 cards win; otherwise use AI cards written for this exact page body."""
+    ai = (inputs.ai_writing or {}).get("insights", {})
+    for s in slides:
+        if s.page_role != "content" or lead_of(s) is None:
+            continue
+        if s.slide_id in inputs.insight_overrides:
+            _set_page_insights(s, inputs.insight_overrides[s.slide_id], pf)
+            continue
+        writing = ai.get(s.slide_id)
+        if writing and writing.get("fp") == body_fingerprint(s) and _facts_known(writing, pf):
+            _set_page_insights(s, writing.get("insights") or [], pf)
+
+
 def _facts_known(writing: dict, pf: PartFactory) -> bool:
     for key in ("claim", "evidence"):
         for p in writing.get(key) or []:
             for part in p.get("parts", []):
+                if part.get("type") == "fact" and part.get("fact_id") not in pf.registry:
+                    return False
+    for item in writing.get("insights") or []:
+        for key in ("title", "body_segments"):
+            for part in (item.get(key) or {}).get("parts", []):
                 if part.get("type") == "fact" and part.get("fact_id") not in pf.registry:
                     return False
     return True

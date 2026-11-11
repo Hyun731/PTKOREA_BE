@@ -197,6 +197,13 @@ class Fakes:
                            {"kind": "interpretation", "text": "방문객 {{1}} 규모의 체험형 접점", "quote": "행사 기간 방문객은 12000명으로 집계됐다."},
                            {"kind": "fact", "text": "3월 팝업 개최", "quote": "경쟁X는 2026년 3월 성수동에서 팝업스토어를 열었다."}],
             }, usage={"input_tokens": 1000, "output_tokens": 200, "model": "fake"}, cost_usd=0.008, cost_is_estimate=False)
+        if set(props) == {"insights"}:  # P3-5: all three cards cite a displayed fact
+            card = lambda title, body: {"title": [{"text": title, "fact_ref": None, "accent": False}],
+                                        "body_segments": [{"text": body, "fact_ref": None, "accent": False},
+                                                          {"text": "", "fact_ref": 1, "accent": False}]}
+            return CallResult(data={"insights": [card("수치 확인", "본문 수치 "), card("격차 점검", "비교 수치 "),
+                                                   card("운영 우선", "다음 확인 값 ")]},
+                              usage={"model": "fake"}, cost_usd=0.003, cost_is_estimate=False)
         # headline (P3-4): first answer breaks the digit rule and has no evidence line, the rewrite is valid
         n = self.calls["structured"]
         if "이전 답의 문제" not in user:
@@ -1189,9 +1196,8 @@ def test_lead_proposal_rewrite_then_accept(client, fakes):
     ok(client.delete(f"/v1/projects/{pid}/lead-overrides/2-8a"))
 
 
-def test_deck_build_writes_claim_and_evidence_headlines_once_per_page_body(client, fakes):
-    """P3-4: 덱을 만들 때 AI가 장마다 주장 + 근거 헤드라인을 쓴다. 규칙 위반은 다시 쓰고, 본문이 같으면
-    다음 생성에서 다시 부르지 않으며, 사람이 고친 헤드라인은 건드리지 않는다."""
+def test_deck_build_writes_claim_evidence_and_page_insights_once_per_page_body(client, fakes):
+    """P3-4/5: deck builds cache evidence-backed headlines and three page insights per unchanged body."""
     from app.models import SlideWriting
 
     pid, _ = setup_project(client)
@@ -1201,25 +1207,43 @@ def test_deck_build_writes_claim_and_evidence_headlines_once_per_page_body(clien
     out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
     job = ok(client.get(f"/v1/jobs/{out['job']['id']}"))
     assert job["state"] == "succeeded" and job["result"]["writing"]["lead"]["written"] > 0
+    assert job["result"]["writing"]["insights"]["written"] > 0
     deck = ok(client.get(f"/v1/projects/{pid}/decks"))[0]
     slide = next(s for s in ok(client.get(f"/v1/decks/{deck['id']}"))["spec"]["slides"] if s["slide_id"] == "2-8a")
     ev = next(b for b in slide["blocks"] if b.get("role") == "lead_evidence")
     assert ev["block_id"] == "lead_evidence" and any(p["type"] == "fact" for para in ev["paragraphs"] for p in para["parts"])
     claim = next(b for b in slide["blocks"] if b.get("role") == "lead")
     assert any(p.get("color") == "accent" for para in claim["paragraphs"] for p in para["parts"])
+    cards = [b for b in slide["blocks"] if b.get("role") == "insight" and b["block_id"].endswith("_body")]
+    assert len(cards) == 3 and all(any(p["type"] == "fact" for p in b["paragraphs"][0]["parts"]) for b in cards)
+    fact = next(part for part in cards[0]["paragraphs"][0]["parts"] if part["type"] == "fact")
+    override = {"insights": [
+        {"title": {"parts": [{"type": "text", "text": title}]},
+         "body_segments": {"parts": [{"type": "text", "text": body}, fact]}}
+        for title, body in [("사람 확인", "직접 고친 값 "), ("격차 확인", "비교할 값 "), ("다음 확인", "운영할 값 ")]
+    ]}
+    saved = ok(client.put(f"/v1/projects/{pid}/insight-overrides/2-8a", json=override))
+    assert saved["slide_id"] == "2-8a" and len(saved["insights"]) == 3
+    assert "2-8a" not in ok(client.delete(f"/v1/projects/{pid}/insight-overrides/2-8a"))["insight_overrides"]
     with SessionLocal() as db:
-        row = db.scalars(select(SlideWriting).where(SlideWriting.project_id == pid, SlideWriting.slide_id == "2-8a")).one()
-        assert row.status == "ok" and row.attempts == 2  # the first answer broke the rules
+        rows = {row.kind: row for row in db.scalars(select(SlideWriting).where(
+            SlideWriting.project_id == pid, SlideWriting.slide_id == "2-8a"))}
+        assert rows["lead"].status == "ok" and rows["lead"].attempts == 2  # the first answer broke the rules
+        assert rows["insights"].status == "ok" and len(rows["insights"].data["insights"]) == 3
     qc = ok(client.get(f"/v1/projects/{pid}/slide-plan"))["qc"]
     assert not [i for i in qc["issues"] if i["severity"] == "block" and i["slide_id"] == "2-8a"]
 
     def lead_calls():
         return sum(1 for r in ledger_rows(pid) if r.endpoint == "lead")
 
-    before = lead_calls()
+    def insight_calls():
+        return sum(1 for r in ledger_rows(pid) if r.endpoint == "page_insights")
+
+    before, before_insights = lead_calls(), insight_calls()
     out = ok(client.post(f"/v1/projects/{pid}/deck-builds", json={"confirm_pending": True}), 202)
     job = ok(client.get(f"/v1/jobs/{out['job']['id']}"))
     assert job["result"]["writing"]["lead"]["written"] == 0 and lead_calls() == before
+    assert job["result"]["writing"]["insights"]["written"] == 0 and insight_calls() == before_insights
 
 
 def test_same_activity_from_two_outlets_becomes_one_card(client, fakes):
