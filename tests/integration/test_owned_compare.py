@@ -53,8 +53,10 @@ def test_competitor_owned_numbers_wait_for_confirmation_then_fill_the_compare_pa
         ok(client.patch(f"/v1/facts/{fid}/review", params={"project_id": pid}, json={"action": "confirm"}))
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     assert next(s for s in sp["plan"] if s["template_id"] == "OW-CMP")["readiness"] == "ready"
+    inventory = next(s for s in sp["plan"] if s["template_id"] == "2-1")
+    assert inventory["readiness"] == "thin" and "자사 vs 경쟁사 채널 비교" in inventory["reason"]
     pages = [p["slide_id"] for p in sp["pages"]]
-    assert pages.index("OW-CMP") == pages.index("2-1") + 1
+    assert "OW-CMP" in pages and "2-1" not in pages
     blocking = [i for i in sp["qc"]["issues"] if i["severity"] == "block" and str(i.get("slide_id")).startswith("OW-CMP")]
     assert blocking == [], blocking
 
@@ -65,8 +67,7 @@ def test_competitor_owned_numbers_wait_for_confirmation_then_fill_the_compare_pa
     page = next(s for s in spec["slides"] if s["slide_id"] == "OW-CMP")
     bound = {(b["entity"], b["metric"]) for b in page["bindings"]}
     assert ("경쟁X", "owned_followers") in bound and ("브랜드A", "owned_followers") in bound
-    # 2-1 stays self-only
-    assert "경쟁X" not in str(next(s for s in spec["slides"] if s["slide_id"] == "2-1"))
+    assert not any(s["slide_id"] == "2-1" for s in spec["slides"])
 
 
 def test_without_competitor_accounts_the_page_asks_for_them_in_settings(client):

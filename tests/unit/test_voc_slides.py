@@ -23,14 +23,14 @@ def test_voc_summary_renders_quotes_by_sentiment_and_top_complaints():
         _voc("2", "negative", "shipping", "other"),
         _voc("3", "negative", "shipping", "other"),
         _voc("4", "negative", "price", "other"),
-    ]
+    ] + [_voc(str(i), "positive", "quality", "search") for i in range(5, 21)]
     cfg = project.model_copy(update={"enabled_slides": ["5-1"]})
     result = build_deck(BuildInputs(project=cfg, facts=[], materials=materials, generated_on=date(2026, 10, 12)))
     slide = next(s for s in result.deck.slides if s.slide_id == "5-1")
     qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
     blocking = [i for i in qc.issues if i.severity == "block" and i.slide_id == "5-1"]
     assert blocking == [], blocking
-    assert slide.source_ids and len(slide.source_ids) == 4
+    assert slide.source_ids and len(slide.source_ids) == 8
 
 
 def test_voc_summary_absent_without_classified_materials():
@@ -59,14 +59,25 @@ def test_awareness_channel_page_ranks_by_share():
         _voc("1", "positive", "price", "referral"),
         _voc("2", "neutral", "quality", "referral"),
         _voc("3", "negative", "design", "search"),
-    ]
+    ] + [_voc(str(i), "positive", "quality", "referral") for i in range(4, 21)]
     cfg = project.model_copy(update={"enabled_slides": ["5-2"]})
     result = build_deck(BuildInputs(project=cfg, facts=[], materials=materials, generated_on=date(2026, 10, 12)))
     slide = next(s for s in result.deck.slides if s.slide_id == "5-2")
     qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
     blocking = [i for i in qc.issues if i.severity == "block" and i.slide_id == "5-2"]
     assert blocking == [], blocking
-    assert len(slide.source_ids) == 3
+    assert len(slide.source_ids) == 20
+
+
+def test_voc_pages_with_fewer_than_twenty_sources_are_thin():
+    project, _, _ = load_fixture()
+    materials = [_voc(str(i), "negative", "shipping", "other") for i in range(1, 20)]
+    cfg = project.model_copy(update={"enabled_slides": ["5-1", "5-2"]})
+    result = build_deck(BuildInputs(project=cfg, facts=[], materials=materials, generated_on=date(2026, 10, 12)))
+    assert not {"5-1", "5-2"} & {slide.slide_id for slide in result.deck.slides}
+    slots = {slot.slot_id: slot for slot in result.deck.plan}
+    assert slots["5-1"].readiness == slots["5-2"].readiness == "thin"
+    assert result.deck.counts()["thin"] == 2
 
 
 def test_a_competitor_s_voc_never_fills_the_self_brand_s_slide():

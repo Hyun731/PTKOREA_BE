@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -31,10 +31,13 @@ class RulesConfig:
     # P2-2 쇼핑인사이트 성수기: 월 클릭 지수가 기간 평균의 이 배수 이상인 달
     shop_peak_lift: Decimal = Decimal("1.2")
     shop_peak_min_months: int = 9  # 데이터가 있는 달이 이보다 적은 드문 키워드는 성수기를 말하지 않는다
+    line_chart_min_points: int = 4
+    density_rules: dict[str, dict] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "RulesConfig":
         raw = json.loads((path or DEFAULT_PATH).read_text(encoding="utf-8"))
+        density = raw.get("min_density", {})
         return cls(
             version=raw["version"],
             ad_like_view_threshold=Decimal(raw["ad_like_view_threshold"]),
@@ -53,4 +56,6 @@ class RulesConfig:
             derived_min_n=int(raw.get("derived", {}).get("min_n", 20)),
             shop_peak_lift=Decimal(raw.get("shopping", {}).get("peak_lift", "1.2")),
             shop_peak_min_months=int(raw.get("shopping", {}).get("peak_min_months", 9)),
+            line_chart_min_points=int(density.get("line_chart_points", 4)),
+            density_rules=density.get("templates", {}),
         )

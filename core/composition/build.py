@@ -194,9 +194,47 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     built: list[tuple[int, int, SlideSpec]] = []  # (page order rank, call order, slide)
     multi = len(project.brands) > 1
 
+    def _slide_fact_ids(slides: list[SlideSpec]) -> set[str]:
+        found: set[str] = set()
+
+        def walk(value) -> None:
+            if isinstance(value, dict):
+                if value.get("fact_id"):
+                    found.add(value["fact_id"])
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        for slide in slides:
+            walk(slide.model_dump())
+        return found
+
+    def _thin_reason(template: str, slides: list[SlideSpec], density: Optional[dict[str, int]]) -> Optional[str]:
+        rule = cfg.density_rules.get(template, {})
+        measure = rule.get("measure")
+        minimum = int(rule.get("min", 0))
+        actual: Optional[int] = None
+        if measure == "channels":
+            actual = len({metrics.registry.facts[fid].dims.get("channel") for fid in _slide_fact_ids(slides)
+                          if fid in metrics.registry.facts and metrics.registry.facts[fid].dims.get("channel")})
+        elif measure and density:
+            actual = density.get(measure)
+        if minimum and actual is not None and actual < minimum:
+            return f"자료가 적어 {rule.get('merge_into', '관련 분석')} 장에 합쳤습니다"
+
+        for slide in slides:
+            for block in slide.blocks:
+                if isinstance(block, LineChartBlock) and any(
+                        sum(point.value is not None for point in series.points) < cfg.line_chart_min_points
+                        for series in block.series):
+                    return f"자료가 적어 {rule.get('merge_into', '관련 분석')} 장에 합쳤습니다"
+        return None
+
     def slot(slot_id: str, template: str, slides: list[SlideSpec], missing_reason: str, brand_id: Optional[str] = None,
              label: Optional[str] = None, chapter: Optional[str] = None, key: Optional[str] = None,
-             part: Optional[str] = None):
+             part: Optional[str] = None, density: Optional[dict[str, int]] = None):
         """`part`: the self brand whose section this slot sits in (several self brands only)."""
         base = slot_id
         if part:
@@ -218,7 +256,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                                  brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="omitted",
                                  reason=reason))
             return
-        if slides:
+        thin = _thin_reason(template, slides, density) if slides else None
+        if thin:
+            plan.append(SlotPlan(slot_id=slot_id, section_id=TEMPLATE_SECTION[template], template_id=template,
+                                 brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="thin",
+                                 reason=thin))
+        elif slides:
             plan.append(SlotPlan(slot_id=slot_id, section_id=TEMPLATE_SECTION[template], template_id=template,
                                  brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="ready",
                                  slide_ids=[s.slide_id for s in slides]))
@@ -330,9 +373,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                      chapter=chapter, key=detail_id, part=part)
         if not multi and on("M1"):
             # Several self brands: handled once per distinct category, below (Phase 3-2).
-            market = [m for m in mats if m.section_id == "market"]
+            category = c.project.brands[0].categories[0] if c.project.brands[0].categories else c.project.brands[0].name
+            market = [m for m in mats if m.section_id == "market" and m.entity == category]
+            evidence_n = sum(m.review_status == "accepted" and any(c.review_status == "accepted" for c in m.claims)
+                             for m in market)
             slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
-                 "채택된 시장·타겟 근거 없음", part=part)
+                 "채택된 시장·타겟 근거 없음", part=part, density={"evidence": evidence_n})
         self_name = c.project.brands[0].name if c.project.brands else None
         self_id = c.project.brands[0].id if c.project.brands else None
         if on("M2"):
@@ -353,18 +399,26 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             slot("CM2", "CM2", commerce.competitor_review_page(reviews),
                  "채택된 경쟁사 리뷰 스냅샷 없음", part=part)
         voc = [m for m in mats if m.section_id == "voc" and m.entity == self_name]
+        usable_voc = [m for m in voc if m.review_status == "accepted" and not m.voc_sponsored and m.voc_sentiment]
+        awareness_voc = [m for m in usable_voc if m.voc_awareness]
         if on("5-1"):
             s = customer.voc_summary_page(c.project, voc)
-            slot("5-1", "5-1", [s] if s else [], "채택된 소비자 원문 없음(긍정·부정 분류 필요)", part=part)
+            slot("5-1", "5-1", [s] if s else [], "채택된 소비자 원문 없음(긍정·부정 분류 필요)", part=part,
+                 density={"sources": len(usable_voc)})
         if on("5-2"):
             s = customer.awareness_channel_page(c.project, voc)
-            slot("5-2", "5-2", [s] if s else [], "인식 경로가 드러난 소비자 원문 없음", part=part)
+            slot("5-2", "5-2", [s] if s else [], "인식 경로가 드러난 소비자 원문 없음", part=part,
+                 density={"sources": len(awareness_voc)})
         if on("BL1"):
             s = compare.blog_type_page(c, frozenset(b.name for b in project.brands))
             slot("BL1", "BL1", [s] if s else [], "유형이 분류된 블로그 검색어 표본 20건 이상 없음", part=part)
         if on("VC1"):
             s = demand.voc_negative_page(c, voc)
-            slot("VC1", "VC1", [s] if s else [], "출처별 부정 비율과 채택 원문이 부족함", part=part)
+            voc_n = max((int(f.dims.get("n", 0)) for f in metrics.registry.facts.values()
+                         if f.brand_id == self_id and f.entity == self_name and f.metric == "voc_negative_rate"),
+                        default=0)
+            slot("VC1", "VC1", [s] if s else [], "출처별 부정 비율과 채택 원문이 부족함", part=part,
+                 density={"sources": voc_n})
         if on("PP1"):
             s = demand.pain_point_page(c, voc)
             slot("PP1", "PP1", [s] if s else [], "원문 수가 있는 페인 포인트 3개 이상 없음", part=part)
@@ -381,7 +435,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                 ("SOLUTION", "problem", synthesis.solution_page),
             ):
                 data = synth.get(type_key)
-                if data and (s := page_fn(data)):
+                if data and (s := page_fn(data, pf)):
                     slot(key, key, [s], "", part=part)
 
     if not multi:
@@ -464,10 +518,13 @@ def _market_by_category(brands: list[Brand], materials: list[CaseMaterial], enab
     shared_n = 0
     for cat, owning in owners.items():
         cat_mats = [m for m in market if m.entity == cat]
+        evidence_n = sum(m.review_status == "accepted" and any(c.review_status == "accepted" for c in m.claims)
+                         for m in cat_mats)
         pages = cases.market_pages(cat_mats, pf, badge if _uses_synthetic(cat_mats, metrics) else [])
         label = f"시장·타겟 근거 · {cat}" if len(owners) > 1 else None
         if len(owning) == 1:
-            slot("M1", "M1", pages, "채택된 시장·타겟 근거 없음", label=label, part=owning[0].id, key="M1")
+            slot("M1", "M1", pages, "채택된 시장·타겟 근거 없음", label=label, part=owning[0].id, key="M1",
+                 density={"evidence": evidence_n})
             continue
         slot_id = "M1" if shared_n == 0 else f"M1-{shared_n}"
         shared_n += 1
@@ -476,7 +533,8 @@ def _market_by_category(brands: list[Brand], materials: list[CaseMaterial], enab
                 s.slide_id = slot_id if s.slide_id == "M1" else s.slide_id.replace("M1", slot_id, 1)
                 if s.parent_slide_id:
                     s.parent_slide_id = slot_id
-        slot(slot_id, "M1", pages, "채택된 시장·타겟 근거 없음", label=label, key="M1")
+        slot(slot_id, "M1", pages, "채택된 시장·타겟 근거 없음", label=label, key="M1",
+             density={"evidence": evidence_n})
 
 
 def _refresh_facts(p: Paragraph, pf: PartFactory) -> Paragraph:
