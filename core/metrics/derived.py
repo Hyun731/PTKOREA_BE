@@ -158,6 +158,44 @@ def comment_facts(inp: DerivedInputs) -> list[Fact]:
     return out
 
 
+def pain_point_facts(inp: DerivedInputs) -> list[Fact]:
+    """댓글과 채택 VOC의 AI 불만 표현을 브랜드별 상위 8개 건수 Fact로 합친다."""
+    counts: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    locators: dict[tuple[str, str, str], list[str]] = defaultdict(list)
+
+    def add(brand_id: str, entity: str, labels: Iterable[str], locator: Optional[str]) -> None:
+        if not brand_id or not entity:
+            return
+        for raw in labels:
+            label = " ".join(str(raw).strip().split()).strip(" .,-·/")[:40]
+            if not label:
+                continue
+            counts[(brand_id, entity)][label] += 1
+            if locator and locator not in locators[(brand_id, entity, label)]:
+                locators[(brand_id, entity, label)].append(locator)
+
+    for material in inp.materials:
+        if (material.section_id == "voc" and material.review_status == "accepted" and not material.voc_sponsored
+                and material.brand_id and material.entity):
+            add(material.brand_id, material.entity, material.voc_pain_points, material.source.url or material.id)
+    for post in inp.owned_posts:
+        if post.comment_sentiment:
+            add(post.brand_id, post.entity, post.comment_sentiment.pain_points, post.url or post.id)
+
+    out: list[Fact] = []
+    for (brand_id, entity), grouped in sorted(counts.items()):
+        n = sum(grouped.values())
+        if n < inp.min_n:
+            continue
+        for label, count in sorted(grouped.items(), key=lambda item: (-item[1], item[0]))[:8]:
+            out.append(_fact(inp, brand_id=brand_id, entity=entity, metric="pain_point_count",
+                             value=Decimal(count), unit="count", dims={"pain_point": label, "n": n},
+                             method="공식 계정 댓글과 채택 소비자 원문의 AI 불만 표현 집계",
+                             label=f"{entity} 페인 포인트 · {label}",
+                             locator=locators[(brand_id, entity, label)][:3]))
+    return out
+
+
 def review_facts(inp: DerivedInputs) -> list[Fact]:
     """채택한 커머스 리뷰 스냅샷의 리뷰 수와 평점(5점 만점으로 환산)."""
     out: list[Fact] = []
@@ -179,7 +217,7 @@ def review_facts(inp: DerivedInputs) -> list[Fact]:
 
 def derive(inp: DerivedInputs) -> list[Fact]:
     """Every derived Fact for this build, in a stable order."""
-    return voc_facts(inp) + comment_facts(inp) + review_facts(inp)
+    return voc_facts(inp) + comment_facts(inp) + pain_point_facts(inp) + review_facts(inp)
 
 
 def footnote_label(fact: Fact) -> Optional[str]:

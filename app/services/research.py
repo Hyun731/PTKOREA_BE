@@ -68,10 +68,10 @@ def _providers():
         from integrations.perplexity.client import search
         from integrations.apify.client import hashtag_posts
         from integrations.scrapecreators.client import (
-            facebook_profile, facebook_profile_posts, instagram_post, instagram_post_comments, instagram_profile,
+            facebook_post_comments, facebook_profile, facebook_profile_posts, instagram_post, instagram_post_comments, instagram_profile,
             instagram_user_posts, threads_profile, threads_search, threads_user_posts, tiktok_profile, tiktok_profile_videos,
             twitter_profile, twitter_search_posts, twitter_user_tweets, youtube_channel, youtube_channel_shorts,
-            youtube_channel_videos, youtube_video,
+            youtube_channel_videos, youtube_video, youtube_video_comments, tiktok_video_comments,
         )
         from integrations.naver.client import search_trend, shopping_keyword_breakdown, shopping_keyword_trend
         from integrations.naver.search import search as naver_search
@@ -86,9 +86,10 @@ def _providers():
                          shopping_keyword_breakdown=shopping_keyword_breakdown, naver_search=naver_search,
                          tiktok_profile=tiktok_profile, tiktok_profile_videos=tiktok_profile_videos,
                          facebook_profile=facebook_profile, facebook_profile_posts=facebook_profile_posts,
+                         facebook_post_comments=facebook_post_comments, tiktok_video_comments=tiktok_video_comments,
                          twitter_profile=twitter_profile, twitter_user_tweets=twitter_user_tweets,
                          threads_profile=threads_profile, threads_user_posts=threads_user_posts,
-                         youtube_channel_shorts=youtube_channel_shorts)
+                         youtube_channel_shorts=youtube_channel_shorts, youtube_video_comments=youtube_video_comments)
     return PROVIDERS
 
 
@@ -905,14 +906,16 @@ VOC_SYSTEM = """당신은 소비자가 쓴 블로그·카페·커뮤니티 원�
 - topic: 글의 핵심 주제 하나 — price(가격)·quality(품질)·design(디자인)·shipping(배송)·cs(AS)·other(기타).
 - awareness: <brand>를 처음 알거나 확인한 경로가 원문에 나와 있으면 — ad(광고)·referral(지인 추천)·
   influencer(인플루언서·SNS)·store(매장 방문)·search(검색). 나와 있지 않으면 other.
-- sponsored: 체험단·협찬·제품 제공·광고비 수령 등 대가를 받고 쓴 글이라는 표시가 있으면 true."""
+- sponsored: 체험단·협찬·제품 제공·광고비 수령 등 대가를 받고 쓴 글이라는 표시가 있으면 true.
+- pain_points: 원문에 실제로 나온 불만을 1~3개의 짧고 재사용 가능한 명사구로 정리합니다. 불만이 없으면 빈 배열입니다."""
 VOC_SCHEMA = {"type": "object", "additionalProperties": False,
-             "required": ["relevant", "headline", "sentiment", "topic", "awareness", "sponsored"],
+             "required": ["relevant", "headline", "sentiment", "topic", "awareness", "sponsored", "pain_points"],
              "properties": {"relevant": {"type": "boolean"}, "headline": {"type": "string"},
                             "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]},
                             "topic": {"type": "string", "enum": list(VOC_TOPICS)},
                             "awareness": {"type": "string", "enum": list(VOC_AWARENESS)},
-                            "sponsored": {"type": "boolean"}}}
+                            "sponsored": {"type": "boolean"},
+                            "pain_points": {"type": "array", "maxItems": 3, "items": {"type": "string"}}}}
 
 
 def _voc_host_channel(url: str) -> Optional[str]:
@@ -1130,6 +1133,7 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         m.voc_topic = d.get("topic") if d.get("topic") in VOC_TOPICS else None
         m.voc_awareness = d.get("awareness") if d.get("awareness") in VOC_AWARENESS else None
         m.voc_sponsored = bool(d.get("sponsored"))
+        m.voc_pain_points = _clean_pain_points(d.get("pain_points"))
     db.commit()
     return out
 
@@ -1137,19 +1141,37 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
 # ------------------------------------------------------------------ owned (2-1 채널 인벤토리)
 
 MAX_OWNED_PAGES = 40  # per channel per item — paging starts at today, so it must reach back past period_start
+COMMENT_TOP_POSTS = 20
+COMMENT_ENDPOINTS = {
+    "instagram": "instagram_post_comments",
+    "youtube": "youtube_video_comments",
+    "tiktok": "tiktok_video_comments",
+    "facebook": "facebook_post_comments",
+}
 
 
 # 피드백 #2(자사 SNS 정량 데이터 — 댓글 감성 분석). 표본(최대 1페이지)만 본다 — 전수 조사 아님.
-COMMENT_SENTIMENT_SYSTEM = """당신은 SNS 댓글의 감성을 분류하는 보조입니다. <comments>는 번호가 매겨진
-댓글 목록입니다. 각 댓글을 긍정/부정/중립(positive/negative/neutral) 중 하나로 분류합니다. 광고·스팸·
-의미 없는 이모지만 있는 댓글도 중립으로 둡니다."""
+COMMENT_SENTIMENT_SYSTEM = """당신은 SNS 댓글의 감성과 불만 요인을 분류하는 보조입니다. <comments>는 번호가
+매겨진 댓글 목록입니다. 각 댓글을 긍정/부정/중립(positive/negative/neutral) 중 하나로 분류합니다. 광고·스팸·
+의미 없는 이모지만 있는 댓글도 중립으로 둡니다. 실제 불만이 있으면 pain_points에 1~3개의 짧은 명사구를
+넣습니다. 같은 묶음 안의 비슷한 불만은 같은 표현을 사용하고, 불만이 없으면 빈 배열을 반환합니다."""
 COMMENT_SENTIMENT_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["comments"],
     "properties": {"comments": {"type": "array", "items": {
-        "type": "object", "additionalProperties": False, "required": ["index", "sentiment"],
+        "type": "object", "additionalProperties": False, "required": ["index", "sentiment", "pain_points"],
         "properties": {"index": {"type": "integer"},
-                       "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]}}}}},
+                       "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]},
+                       "pain_points": {"type": "array", "maxItems": 3, "items": {"type": "string"}}}}}},
 }
+
+
+def _clean_pain_points(values) -> list[str]:
+    out: list[str] = []
+    for value in values or []:
+        label = re.sub(r"\s+", " ", str(value)).strip(" .,-·/")[:40]
+        if label and label not in out:
+            out.append(label)
+    return out[:8]
 
 
 def classify_comment_sentiment(comments: list[dict], ledger: RunLedger) -> Optional[dict]:
@@ -1165,12 +1187,52 @@ def classify_comment_sentiment(comments: list[dict], ledger: RunLedger) -> Optio
     except ProviderError:
         return None
     counts = {"positive": 0, "negative": 0, "neutral": 0}
+    pain_points: list[str] = []
     for row in res.data.get("comments") or []:
         idx, sentiment = row.get("index"), row.get("sentiment")
         if sentiment in counts and isinstance(idx, int) and 0 <= idx < len(comments):
             counts[sentiment] += 1
+            pain_points.extend(_clean_pain_points(row.get("pain_points")))
     sample = sum(counts.values())
-    return {**counts, "sample_size": sample} if sample else None
+    return {**counts, "sample_size": sample, "pain_points": _clean_pain_points(pain_points)} if sample else None
+
+
+def _collect_comment_posts(o: "_Owned", channel: str, posts: list[dict], *, date_key: str = "posted_at",
+                           asset_top: int = 0) -> None:
+    """반응 상위 게시물의 댓글 한 페이지를 분류하고, 이미지가 없어도 근거 게시물로 보관한다."""
+    endpoint = COMMENT_ENDPOINTS[channel]
+    existing = set(o.db.scalars(select(OwnedPost.post_id).where(
+        OwnedPost.project_id == o.project.id, OwnedPost.channel == channel,
+        OwnedPost.brand_id == o.item.brand_id, OwnedPost.entity == o.entity)))
+    candidates = [post for post in posts if post.get("post_id") or post.get("id")]
+    candidates = [post for post in candidates if post.get("url") and (post.get("post_id") or post.get("id")) not in existing
+                  and (post.get("comments") or 0) > 0]
+    candidates.sort(key=lambda post: (post.get("likes") or post.get("views") or 0,
+                                      post.get("comments") or 0), reverse=True)
+    for rank, post in enumerate(candidates[:COMMENT_TOP_POSTS]):
+        post_id = post.get("post_id") or post.get("id")
+        asset = None
+        if rank < asset_top and post.get("image_url"):
+            try:
+                image = o.p["fetch_image"](post["image_url"])
+                asset = _save_owned_asset(o.db, o.project.id, image, f"{o.entity} Instagram 게시물")
+            except ProviderError as exc:
+                o.out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
+        o.db.commit()
+        sentiment = None
+        try:
+            response = o.call(endpoint, {"url": post["url"]}, lambda ep=endpoint, url=post["url"]: o.p[ep](url))
+            sentiment = classify_comment_sentiment(response.data["comments"], o.ledger)
+        except ProviderError as exc:
+            o.out.setdefault("notes", []).append(f"{channel} 댓글: {exc.message}")
+        o.db.add(OwnedPost(id=new_id("OP"), project_id=o.project.id, brand_id=o.item.brand_id, entity=o.entity,
+                           channel=channel, post_id=post_id, url=post.get("url"),
+                           posted_at=_safe_date(post.get(date_key)), likes=post.get("likes"),
+                           comments=post.get("comments"), views=post.get("views"),
+                           comment_sentiment=sentiment, asset_id=asset.id if asset else None,
+                           research_item_id=o.item.id))
+        o.db.commit()
+        o.out["facts"] += 1
 
 
 def _month_list(start: date, end: date) -> list[str]:
@@ -1289,7 +1351,7 @@ class _Owned:
 
 
 def _owned_instagram(o: _Owned, prof, extra: dict) -> None:
-    db, item, p, entity = o.db, o.item, o.p, o.entity
+    p = o.p
     handle = _handle_of(prof.url)
     followers = None
     try:
@@ -1309,37 +1371,7 @@ def _owned_instagram(o: _Owned, prof, extra: dict) -> None:
     comments = [po["comments"] for po in posts if po.get("comments") is not None]
     if comments:
         o.fact("owned_comments_median", median(comments), "instagram", "Instagram 중앙값 댓글", extra)
-    # 2-4 브랜드별 상위 게시물: 기간 내 좋아요 상위 3개만 이미지까지 받는다(전수 다운로드 안 함).
-    existing_posts = set(db.scalars(select(OwnedPost.post_id).where(
-        OwnedPost.project_id == o.project.id, OwnedPost.channel == "instagram", OwnedPost.brand_id == item.brand_id,
-        OwnedPost.entity == entity)))
-    top3 = sorted((po for po in posts if po["likes"] is not None and po.get("image_url")
-                  and po["post_id"] not in existing_posts), key=lambda po: po["likes"], reverse=True)[:3]
-    for po in top3:
-        try:
-            img_data = p["fetch_image"](po["image_url"])
-        except ProviderError as exc:
-            o.out["errors"].append({"code": exc.code, "message": f"IG 이미지: {exc.message}"})
-            continue
-        asset = _save_owned_asset(db, o.project.id, img_data, f"{entity} Instagram 게시물")
-        # 커밋해 쓰기 잠금을 풀어준다 — 바로 이어지는 댓글 수집(ledger.call, 별도 커넥션)이
-        # 아직 커밋 안 된 Asset(또는 그 전의 owned_* Fact)과 "database is locked"로 부딪힌다.
-        db.commit()
-        sentiment = None
-        if po.get("url"):
-            try:
-                comments_res = o.call("instagram_post_comments", {"url": po["url"]},
-                                      lambda: p["instagram_post_comments"](po["url"]))
-                sentiment = classify_comment_sentiment(comments_res.data["comments"], o.ledger)
-            except ProviderError:
-                pass  # 댓글을 못 가져와도(비공개 등) 게시물 자체는 그대로 저장
-        db.add(OwnedPost(id=new_id("OP"), project_id=o.project.id, brand_id=item.brand_id, entity=entity,
-                         channel="instagram", post_id=po["post_id"], url=po["url"], posted_at=_safe_date(po["posted_at"]),
-                         likes=po["likes"], comments=po["comments"], views=po.get("views"),
-                         comment_sentiment=sentiment, asset_id=asset.id if asset else None,
-                         research_item_id=item.id))
-        db.commit()  # 다음 게시물 차례의 댓글 수집(별도 커넥션)과 부딪히지 않도록 바로 커밋
-        o.out["facts"] += 1  # counted toward "created" too, so a run with only new top posts isn't reported empty
+    _collect_comment_posts(o, "instagram", posts, asset_top=3)
     o.monthly("instagram", posts, extra=extra)
     o.out["channels"].append({"channel": "instagram", "handle": handle, "posts_in_period": len(posts)})
 
@@ -1376,6 +1408,7 @@ def _owned_youtube(o: _Owned, prof, extra: dict) -> None:
         if views:
             o.fact("owned_views_avg", round(sum(views) / len(views), 1), "youtube", f"YouTube {fmt_label} 평균 조회",
                    {**extra, "format": fmt})
+    _collect_comment_posts(o, "youtube", groups["video"] + shorts, date_key="published_at")
     o.monthly("youtube", groups["video"] + shorts, key="published_at", extra=extra)
     o.out["channels"].append({"channel": "youtube", **yt_ref, "videos_in_period": len(groups["video"]),
                               "shorts_in_period": len(shorts)})
@@ -1394,6 +1427,7 @@ def _owned_tiktok(o: _Owned, prof, extra: dict) -> None:
         o.fact("owned_followers", res.data["followers"], "tiktok", "TikTok 팔로워", extra)
     o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "tiktok", "TikTok 월평균 게시물", extra)
     o.reactions("tiktok", "TikTok", posts, extra)
+    _collect_comment_posts(o, "tiktok", posts)
     o.monthly("tiktok", posts, extra=extra)
     o.out["channels"].append({"channel": "tiktok", "handle": handle, "posts_in_period": len(posts)})
 
@@ -1411,6 +1445,7 @@ def _owned_facebook(o: _Owned, prof, extra: dict) -> None:
         o.fact("owned_followers", res.data["followers"], "facebook", "Facebook 팔로워", extra)
     o.fact("owned_posts_monthly", round(len(posts) / o.months, 2), "facebook", "Facebook 월평균 게시물", extra)
     o.reactions("facebook", "Facebook", posts, extra)  # 좋아요 = 반응(좋아요·최고예요 등) 합계
+    _collect_comment_posts(o, "facebook", posts)
     o.monthly("facebook", posts, extra=extra)
     o.out["channels"].append({"channel": "facebook", "url": url, "posts_in_period": len(posts)})
 

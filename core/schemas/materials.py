@@ -72,6 +72,7 @@ class CommentSentiment(BaseModel):
     negative: int = 0
     neutral: int = 0
     sample_size: int = 0
+    pain_points: list[str] = Field(default_factory=list)
 
 
 class OwnedPostRef(BaseModel):
@@ -119,6 +120,7 @@ class CaseMaterial(BaseModel):
     voc_topic: Optional[Literal["price", "quality", "design", "shipping", "cs", "other"]] = None
     voc_awareness: Optional[Literal["ad", "referral", "influencer", "store", "search", "other"]] = None
     voc_sponsored: bool = False
+    voc_pain_points: list[str] = Field(default_factory=list)
     # Phase 3-2 산업 카테고리 분석 — section_id="market" 카드에만 채워짐.
     market_aspect: Optional[Literal["size_growth", "channel", "player", "policy"]] = None
     # Phase 3-3 사례 귀속 정리 — section_id="campaign" 카드에만 채워짐. 함께 등장하는 다른 자사
