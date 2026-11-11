@@ -1473,6 +1473,101 @@ def run_search_item(db: Session, ledger: RunLedger, project: Project, item: Rese
     return out
 
 
+# ------------------------------------------------------------------ mentions (P2-4, 네이버 검색 API 문서 수)
+
+MENTION_KINDS = ("blog", "cafearticle", "news", "kin")
+MENTION_MONTHLY_KINDS = ("blog", "news")  # 작성일이 있는 종류만 달별로 센다
+MENTION_MONTHS = 3  # 최근 다 끝난 달 수
+MENTION_MAX_PAGES = 10  # 날짜순 100건 × 10쪽 = 검색 API가 넘겨 주는 1,000건 한도
+
+
+def run_mentions(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
+    """언급량: 자사 + 경쟁사마다 네이버 블로그·카페글·뉴스·지식iN 검색 결과 문서 수(누적, total)를 브랜드명과
+    조합어(브랜드 + 제품군)로, 그리고 최근 MENTION_MONTHS달의 블로그·뉴스 달별 문서 수를 확인 전 Fact로 남긴다.
+    검색량이 아니다 — 장표에는 '검색 결과 문서 수(누적)'로 쓴다. 한 종류가 비활성(권한 오류)이면 그 종류만
+    건너뛰고 사유를 남긴다(오류로 치지 않는다)."""
+    from core.ingestion.mentions import (
+        CHANNEL_OF_KIND, count_by_month, mention_monthly_fact, mention_total_fact, month_bounds, recent_months,
+    )
+
+    p = _providers()
+    core = core_project(project)
+    brand = core.brand(item.brand_id)
+    cats = [c for c in dict.fromkeys(brand.categories) if c and c != brand.name][:SEARCH_MAX_CATEGORIES]
+    today = date.today()
+    months = recent_months(today, MENTION_MONTHS)
+    first_day = month_bounds(months[0])[0]
+    out: dict = {"facts": 0, "totals": {}, "unavailable": {}, "partial_months": [], "errors": []}
+    blocked: set[str] = set()
+    facts = []
+
+    def call(kind: str, q: str, *, display: int, start: int = 1, sort: str = "sim"):
+        return ledger.call("naver", "search", {"kind": kind, "q": q, "display": display, "start": start, "sort": sort}, 0.0,
+                           lambda: p["naver_search"](kind, q, display=display, start=start, sort=sort), cache_days=1)
+
+    def guarded(kind: str, fn):
+        if kind in blocked:
+            return None
+        try:
+            return fn()
+        except ProviderError as exc:
+            if exc.code == "PROVIDER_AUTH":
+                blocked.add(kind)
+                out["unavailable"][CHANNEL_OF_KIND[kind]] = exc.message
+            else:
+                out["errors"].append({"code": exc.code, "message": f"언급량 {kind}: {exc.message}"})
+            return None
+
+    for e in brand.entity_set:
+        name = brand.names_for(e)[0]
+        for kind in MENTION_KINDS:
+            channel = CHANNEL_OF_KIND[kind]
+            for cat in [None, *cats]:
+                q = f"{name} {cat}" if cat else name
+                res = guarded(kind, lambda k=kind, qq=q: call(k, qq, display=1))
+                if res is None:
+                    continue
+                total = int(res.data.get("total") or 0)
+                out["totals"].setdefault(e, {})[f"{channel}:{q}"] = total
+                facts.append(mention_total_fact(brand_id=item.brand_id, entity=e, channel=channel, keyword=q, total=total,
+                                                measured_at=today, category=cat))
+            if kind not in MENTION_MONTHLY_KINDS or kind in blocked:
+                continue
+            # 날짜순(최신 먼저)으로 첫 달 1일 이전 글이 나올 때까지 넘긴다. 1,000건 한도에 걸리면(reached=False)
+            # 다 세지 못한 달은 partial
+            days: list[date] = []
+            reached = False
+            res = None
+            for page in range(MENTION_MAX_PAGES):
+                res = guarded(kind, lambda k=kind, st=1 + page * 100: call(k, name, display=100, start=st, sort="date"))
+                if res is None:
+                    break
+                items = res.data.get("items") or []
+                days += [d for it in items if (d := _safe_date(it.get("date")))]
+                if len(items) < 100 or (days and min(days) < first_day):
+                    reached = True
+                    break
+            if res is None and not days:
+                continue
+            for mo, (count, partial) in count_by_month(days, months, reached_start=reached).items():
+                if partial:
+                    out["partial_months"].append(f"{e} {channel} {mo}")
+                facts.append(mention_monthly_fact(brand_id=item.brand_id, entity=e, channel=channel, keyword=name, month=mo,
+                                                  count=count, partial=partial, measured_at=today))
+
+    existing = set(db.scalars(select(FactRow.fact_id).where(FactRow.project_id == project.id)))
+    for f in facts:
+        if f.id in existing:
+            continue
+        db.add(FactRow(project_id=project.id, fact_id=f.id, origin="auto", research_item_id=item.id,
+                       data=json.loads(f.model_dump_json()), verification_status="candidate",
+                       review_note="네이버 검색 API 검색 결과 문서 수 자동 수집(검색량 아님)"))
+        existing.add(f.id)
+        out["facts"] += 1
+    db.commit()
+    return out
+
+
 # ------------------------------------------------------------------ shopping insight (P2-2, 네이버 데이터랩)
 
 SHOP_MAX_KEYWORDS = 5  # 쇼핑인사이트 키워드 추이: 요청당 최대 5개 = 한 스케일
@@ -1657,7 +1752,13 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                 elif item.section_id == "search":
                     if not settings.provider_configured("naver"):
                         raise ProviderError("PROVIDER_AUTH", "네이버 데이터랩 키(NAVER_API_HUB_CLIENT_ID/SECRET)가 없습니다")
-                    r = run_search_item(s, ledger, project, item)
+                    chans = set(item.channels or [])
+                    r = run_search_item(s, ledger, project, item) if "search_naver" in chans or not chans else \
+                        {"facts": 0, "errors": []}
+                    if "naver_mentions" in chans:  # P2-4 언급량(검색 결과 문서 수)
+                        men = run_mentions(s, ledger, project, item)
+                        r = {**r, "facts": r.get("facts", 0) + men["facts"], "mentions": men,
+                             "errors": [*r.get("errors", []), *men["errors"]]}
                     made = r.get("facts", 0)
                 elif item.section_id == "owned":
                     if not settings.provider_configured("scrapecreators"):
