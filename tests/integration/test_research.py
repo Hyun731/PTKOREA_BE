@@ -634,6 +634,56 @@ def test_search_items_auto_collect_via_naver(client, fakes):
     assert next(s for s in sp["plan"] if s["template_id"] == "2-8c")["readiness"] == "ready"
 
 
+def _set_brand(client, pid, **changes):
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    brands = [{**proj["config"]["brands"][0], **changes}, *proj["config"]["brands"][1:]]
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"], "changes": {"brands": brands}}))
+    return ok(client.get(f"/v1/projects/{pid}/research-plan"))
+
+
+def test_search_without_target_or_categories_collects_only_what_it_can(client, fakes):
+    clear_cache()  # 같은 데이터랩 요청은 하루 캐시 — 앞 테스트의 응답을 받지 않게
+    pid, _ = setup_project(client)
+    plan = _set_brand(client, pid, target=None, categories=[])
+    it = item(plan, "search")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert [x["label"] for x in res["sets"]] == ["브랜드명"] and fakes.calls["search_trend"] == 1
+    gaps = {s["template_id"]: s for s in ok(client.get(f"/v1/projects/{pid}/slide-plan"))["plan"]
+            if s["readiness"] == "needs_input"}
+    # 확인 전 지수가 있으니 2-8a는 '채택 대기', 2-8c·2-8d는 설정이 비어 '설정 필요'와 고칠 곳
+    assert gaps["2-8a"]["cause"] == "adopt" and "검색 지수" in gaps["2-8a"]["action"]
+    assert gaps["2-8c"]["cause"] == "setup" and "카테고리" in gaps["2-8c"]["action"]
+    assert gaps["2-8d"]["cause"] == "setup" and "키 타겟" in gaps["2-8d"]["action"]
+
+
+def test_search_keeps_going_when_one_set_fails_but_stops_on_auth(client, fakes):
+    clear_cache()
+    pid, plan = setup_project(client)
+    it = item(plan, "search")
+    real = fakes.search_trend
+
+    def flaky(groups, start, end, **kw):
+        if any(" " in k for _, kws in groups for k in kws):  # 조합어 세트만 실패
+            raise ProviderError("PROVIDER_ERROR", "Naver 오류 (500)", 500)
+        return real(groups, start, end, **kw)
+    research.PROVIDERS["naver_search_trend"] = flaky
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert [x["label"] for x in res["sets"]] == ["브랜드명", "키 타겟 · 브랜드명"]
+    assert any(e["message"].startswith("조합어 +가방") for e in res["errors"])
+
+    clear_cache()
+
+    def denied(groups, start, end, **kw):
+        raise ProviderError("PROVIDER_AUTH", "NAVER API HUB 앱에 '검색어트렌드' API가 선택되어 있지 않습니다", 401)
+    research.PROVIDERS["naver_search_trend"] = denied
+    calls_before = fakes.calls.get("search_trend", 0)
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert len(res["errors"]) == 1 and fakes.calls.get("search_trend", 0) == calls_before  # 첫 세트에서 멈춤
+
+
 def test_search_items_need_naver_key(client, fakes, monkeypatch):
     monkeypatch.delenv("NAVER_CLIENT_ID", raising=False)
     monkeypatch.delenv("NAVER_CLIENT_SECRET", raising=False)
