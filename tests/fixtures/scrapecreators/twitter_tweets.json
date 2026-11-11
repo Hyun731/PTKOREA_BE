@@ -1,0 +1,49 @@
+{
+ "success": true,
+ "credits_remaining": 21894,
+ "credits_charged": 1,
+ "tweets": [
+  {
+   "__typename": "Tweet",
+   "rest_id": "2115643233477025910",
+   "url": "https://x.com/Nike/status/2115643233477025910",
+   "views": {
+    "count": "93169",
+    "state": "EnabledWithCount"
+   },
+   "legacy": {
+    "created_at": "Thu Oct 29 03:13:48 +0000 2026",
+    "favorite_count": 478,
+    "retweet_count": 142,
+    "reply_count": 52,
+    "quote_count": 9,
+    "bookmark_count": 66,
+    "full_text": "How refreshing. A 57-year thirst has been quenched. https://t.co/jObf3KHU3U",
+    "id_str": "2115643233477025910",
+    "lang": "en",
+    "user_id_str": "415859364"
+   }
+  },
+  {
+   "__typename": "Tweet",
+   "rest_id": "2109382322516799677",
+   "url": "https://x.com/Nike/status/2109382322516799677",
+   "views": {
+    "count": "338594",
+    "state": "EnabledWithCount"
+   },
+   "legacy": {
+    "created_at": "Sun Oct 11 20:35:10 +0000 2026",
+    "favorite_count": 6446,
+    "retweet_count": 534,
+    "reply_count": 123,
+    "quote_count": 65,
+    "bookmark_count": 150,
+    "full_text": "Zheng Qinwen claims her first WTA 1000 title in Beijing. A winner’s name, etched on home soil. https://t.co/DPiXA2D7oq",
+    "id_str": "2109382322516799677",
+    "lang": "en",
+    "user_id_str": "415859364"
+   }
+  }
+ ]
+}

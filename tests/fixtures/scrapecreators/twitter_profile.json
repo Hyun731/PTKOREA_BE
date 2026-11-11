@@ -1,0 +1,22 @@
+{
+ "success": true,
+ "credits_remaining": 21895,
+ "credits_charged": 1,
+ "__typename": "User",
+ "id": "VXNlcjo0MTU4NTkzNjQ=",
+ "rest_id": "415859364",
+ "is_blue_verified": true,
+ "core": {
+  "created_at": "Fri Nov 18 22:31:18 +0000 2011",
+  "name": "Nike",
+  "screen_name": "Nike"
+ },
+ "legacy": {
+  "followers_count": 9491387,
+  "friends_count": 91,
+  "statuses_count": 41235,
+  "screen_name": "Nike",
+  "name": "Nike",
+  "description": "Just Do It."
+ }
+}
