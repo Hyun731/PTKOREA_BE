@@ -35,6 +35,10 @@ SECTIONS = [
      "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색) + X·Threads 공개 게시물(ScrapeCreators 키워드 검색) — "
              "AI 감성·주제·인식 경로 분류",
      "default_window": "24M"},
+    # P4-3: 장표에 바로 들어가지 않는 조사 항목의 자료 카드(자료 확인 화면에서 항목별로 본다)
+    {"id": "issue", "label": "이슈·포지셔닝·트렌드", "templates": [],
+     "data": "웹 기사·공식 자료(Perplexity)와 네이버 뉴스 — 신규·리스크 소식, 경쟁사 포지셔닝·메시지, 콘텐츠·매체 트렌드",
+     "default_window": "항목별(최근 6~12개월)"},
     {"id": "recap", "label": "Recap", "templates": ["5-recap"], "data": "본문 Finding 요약", "default_window": "-"},
     {"id": "appendix", "label": "출처 표", "templates": ["A-source"], "data": "사용 자료 출처", "default_window": "-"},
 ]
@@ -76,6 +80,8 @@ CHANNELS = {
     "shopping_insight": {"label": "네이버 쇼핑인사이트 (제품군별 클릭 추이·성수기·연령·성별)", "support": "auto",
                          "provider": "naver"},
     "web": {"label": "웹 기사·공식 자료", "support": "auto", "provider": "perplexity"},
+    # P4-3: 이슈·소식 항목은 네이버 뉴스 검색 API로도 찾는다(검색 API 키, 최신순).
+    "naver_news": {"label": "네이버 뉴스", "support": "auto", "provider": "naver"},
     "instagram": {"label": "Instagram 공개 게시물", "support": "auto", "provider": "scrapecreators"},
     "youtube": {"label": "YouTube 공개 영상", "support": "auto", "provider": "scrapecreators"},
     "tiktok": {"label": "TikTok", "support": "manual_only", "provider": None},
