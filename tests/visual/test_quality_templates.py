@@ -58,10 +58,15 @@ def test_p27_trend_panels_up_to_four_series_with_gap(result):
 
 
 def test_p29_grouped_target_table(result):
-    t = next(b for b in slide(result[0], "2-8d").blocks if isinstance(b, TableBlock))
-    first_col = [row.cells[0] for row in t.rows]
-    assert any(c.merge_down > 0 for c in first_col)  # brand group rows
-    assert sum(1 for row in t.rows if row.cells[3].fill == "highlight") == 3  # brand-name rows
+    # 자사 브랜드마다 따로(P2-1): 한 장에 세 브랜드를 묶으면 발견 문장이 자사 브랜드끼리 비교가 된다.
+    r, _ = result
+    for bid in ("B1", "B2", "B3"):
+        s = slide(r, f"2-8d-{bid}")
+        assert s.chapter == f"competitor:{bid}"
+        t = next(b for b in s.blocks if isinstance(b, TableBlock))
+        assert sum(1 for row in t.rows if row.cells[3].fill == "highlight") == 1  # 그 브랜드의 브랜드명 행
+    t1 = next(b for b in slide(r, "2-8d-B1").blocks if isinstance(b, TableBlock))
+    assert len(t1.rows) > 1 and t1.rows[0].cells[0].merge_down == len(t1.rows) - 1  # 브랜드명 + 조합어 행을 한 그룹으로
 
 
 def test_p40_image_plus_table(result):
@@ -94,13 +99,18 @@ def test_p54_p68_case_cards(result, tmp_path):
     assert slide(one, "C1c-p2-B1").template_id == "case_card_3col.v1"
 
 
-def test_p89_recap_three_pillars_no_new_facts(result):
+def test_p89_recap_per_brand_pillars_no_new_facts(result):
+    # Recap도 자사 브랜드마다 따로 — 그 브랜드의 발견만 기둥으로, 새 수치 없이.
     r, _ = result
-    s = slide(r, "5-recap")
-    heads = [b for b in s.blocks if isinstance(b, TextBlock) and b.block_id.endswith("_head")]
-    assert len(heads) == 3
-    finding_facts = {fid for f in r.findings for fid in f.fact_ids}
-    assert {b.fact_id for b in s.bindings} <= finding_facts
+    for bid in ("B1", "B2", "B3"):
+        s = slide(r, f"5-recap-{bid}")
+        assert s.chapter == f"summary:{bid}"
+        heads = [b for b in s.blocks if isinstance(b, TextBlock) and b.block_id.endswith("_head")]
+        assert 1 <= len(heads) <= 3
+        own = {fid for f in r.findings if f.brand_id == bid for fid in f.fact_ids}
+        assert {b.fact_id for b in s.bindings} <= own
+    qc = run_qc(r.deck, r.metrics.registry, lambda a: r.assets.get(a))
+    assert not [i for i in qc.issues if i.code == "SELF_BRAND_COMPARISON"]
 
 
 def test_p104_source_table_links(result, tmp_path):

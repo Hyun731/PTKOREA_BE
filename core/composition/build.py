@@ -70,11 +70,13 @@ CHAPTERS: dict[str, tuple[str, str, str, str]] = {
 }
 CHAPTER_ORDER = list(CHAPTERS)
 # With several self brands each one gets its own 자사·경쟁사·소비자·요약 parts ("company:B1"), so one
-# brand's cases never get lost among another's. Pages that set the brands side by side (v6 p26~p29,
-# channel tables, recap) stay shared: they open the deck as 브랜드 비교, the recap stays in 종합. "exec"
+# brand's cases never get lost among another's. Pages that set each brand's own competition set in
+# separate panels (v6 p26~p28, channel tables) stay shared: they open the deck as 브랜드 비교. "exec"
 # (Executive Summary) is also per self brand — Phase 3-1: 자사 브랜드가 여럿이면 브랜드마다 따로 쓴다.
+# 2-8d(키 타겟 점유)와 Recap은 발견 사항을 문장으로 나열하므로 브랜드마다 따로 만든다(P2-1): 한 장에
+# 모으면 자사 브랜드들의 발견이 한 문단에 나란히 놓여 자사 브랜드끼리 비교가 된다(QC SELF_BRAND_COMPARISON).
 BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
-SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "2-8d", "5-recap", "M1"}
+SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "M1"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
                     "M2": "competitor", "TR1": "competitor", "CM1": "company", "CM2": "competitor",
