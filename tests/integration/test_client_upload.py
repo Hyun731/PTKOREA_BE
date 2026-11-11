@@ -99,6 +99,8 @@ def test_upload_accept_then_chart_and_calculations(client):
                               "source_file": ("트래커 원문.pdf", pdf, "application/pdf")}), 201)
     assert b["kind"] == "client" and b["valid_rows"] == 4 and len(b["errors"]) == 2 and b["has_source_file"]
     assert client.get(f"/v1/imports/{b['id']}/source.pdf").content == pdf
+    errs = client.get(f"/v1/imports/{b['id']}/errors.csv").content.decode("utf-8-sig").splitlines()
+    assert errs[0] == "줄,열,고칠 내용" and errs[1].startswith("6,대상,")
 
     data = ok(client.get(f"/v1/projects/{pid}/client-data"))
     assert data["charts"] == []  # 채택 전에는 차트에 나오지 않는다(자동 채택 금지)

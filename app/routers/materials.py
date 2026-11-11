@@ -257,9 +257,14 @@ def batch_errors(batch_id: str, db: Session = Depends(get_db)):
         raise not_found("CSV 배치")
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["file", "row_no", "column", "code", "message"])
-    for e in b.errors:
-        w.writerow([e["file"], e["row_no"], e.get("column") or "", e["code"], e["message"]])
+    if b.kind == "client":  # 보유 자료는 기획자가 직접 고치는 양식이라 쉬운 말로(줄 번호는 엑셀 줄과 같음)
+        w.writerow(["줄", "열", "고칠 내용"])
+        for e in b.errors:
+            w.writerow([e["row_no"], e.get("column") or "", e["message"]])
+    else:
+        w.writerow(["file", "row_no", "column", "code", "message"])
+        for e in b.errors:
+            w.writerow([e["file"], e["row_no"], e.get("column") or "", e["code"], e["message"]])
     return Response("﻿" + buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="errors-{b.id}.csv"'})
 
