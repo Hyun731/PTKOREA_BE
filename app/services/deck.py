@@ -102,6 +102,20 @@ def _ensure_synthesis(db: Session, project: Project) -> dict:
         return {"error": exc.code}
 
 
+def _ensure_diagnosis(db: Session, project: Project, job: Job) -> dict:
+    """P5-1: 자사 브랜드마다 진단을 쓴다 — 채택 자료가 그대로면 예전 진단을 쓰고, AI를 못 부르면 건너뛴다."""
+    from app.services import diagnosis
+    from integrations.base import ProviderError
+
+    if not diagnosis.ai_ready():
+        return {"skipped": "provider_not_configured"}
+    try:
+        return diagnosis.ensure(db, project, job.id)
+    except ProviderError as exc:
+        db.rollback()
+        return {"error": exc.code}
+
+
 @register("deck_build")
 def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     project = db.get(Project, job.project_id)
@@ -109,6 +123,7 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     _recollect_missing(db, project, progress)
     writing = _write_slides(db, project, job, progress)
     synthesis = _ensure_synthesis(db, project)
+    diagnosis = _ensure_diagnosis(db, project, job)
     inputs = load_inputs(db, project)
     inputs.deck_id, inputs.deck_version = deck.id, deck.version
     inputs.generated_on = deck.created_at.astimezone(SEOUL).date()
@@ -138,7 +153,8 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     deck.status = "ready"  # only after the real-render preview exists (or is known unavailable)
     db.commit()
     return {"deck_id": deck.id, "deck_version": deck.version, "qc_blocks": qc.blocks, "qc_warns": qc.warns,
-            "render_status": deck.render_status, "writing": writing, "synthesis": synthesis}
+            "render_status": deck.render_status, "writing": writing, "synthesis": synthesis,
+            "diagnosis": diagnosis}
 
 
 def next_deck_version(db: Session, project_id: str) -> int:
