@@ -1,0 +1,88 @@
+{
+ "success": true,
+ "credits_remaining": 21898,
+ "credits_charged": 1,
+ "max_cursor": 1793126508000,
+ "has_more": 1,
+ "status_code": 0,
+ "aweme_list": [
+  {
+   "aweme_id": "7706598443791158541",
+   "desc": "Designed for the King. Engineered for the future of the Game. \nLeBron XXIV \nNovember 17",
+   "create_time": 1794332314,
+   "share_url": "https://www.tiktok.com/@nike/photo/7706598443791158541?_r=1&u_code=f016e0b86g2f68&preview_pb=0&sharer_language=en&_d=f016cd89h4fkj1&share_item_id=7706598443791158541&source=h5_m",
+   "is_top": 0,
+   "is_ads": false,
+   "content_type": "multi_photo",
+   "statistics": {
+    "aweme_id": "7706598443791158541",
+    "comment_count": 13,
+    "digg_count": 301,
+    "download_count": 2,
+    "play_count": 14910,
+    "share_count": 6,
+    "forward_count": 0,
+    "lose_count": 0,
+    "lose_comment_count": 0,
+    "whatsapp_share_count": 1,
+    "collect_count": 8,
+    "repost_count": 0
+   },
+   "video": {
+    "duration": 0
+   }
+  },
+  {
+   "aweme_id": "7704703644104428813",
+   "desc": "NikeSKIMS is serving up something hot.",
+   "create_time": 1793891120,
+   "share_url": "https://www.tiktok.com/@nike/video/7704703644104428813?_r=1&u_code=f016e0b86g2f68&preview_pb=0&sharer_language=en&_d=f016cd89h4fkj1&share_item_id=7704703644104428813&source=h5_m",
+   "is_top": 0,
+   "is_ads": false,
+   "content_type": "video",
+   "statistics": {
+    "aweme_id": "7704703644104428813",
+    "comment_count": 71,
+    "digg_count": 2759,
+    "download_count": 25,
+    "play_count": 149519,
+    "share_count": 86,
+    "forward_count": 0,
+    "lose_count": 0,
+    "lose_comment_count": 0,
+    "whatsapp_share_count": 2,
+    "collect_count": 110,
+    "repost_count": 0
+   },
+   "video": {
+    "duration": 7019
+   }
+  },
+  {
+   "aweme_id": "7704087452918615310",
+   "desc": "Every finisher. Every name. Every time.\n\nCongratulations runners, you earned it.\n\n#marathon #nikerunning #nytimes #newyork #fyp",
+   "create_time": 1793747666,
+   "share_url": "https://www.tiktok.com/@nike/video/7704087452918615310?_r=1&u_code=f016e0b86g2f68&preview_pb=0&sharer_language=en&_d=f016cd89h4fkj1&share_item_id=7704087452918615310&source=h5_m",
+   "is_top": 0,
+   "is_ads": false,
+   "content_type": "video",
+   "statistics": {
+    "aweme_id": "7704087452918615310",
+    "comment_count": 42,
+    "digg_count": 1049,
+    "download_count": 15,
+    "play_count": 48771,
+    "share_count": 41,
+    "forward_count": 0,
+    "lose_count": 0,
+    "lose_comment_count": 0,
+    "whatsapp_share_count": 0,
+    "collect_count": 51,
+    "repost_count": 0
+   },
+   "video": {
+    "duration": 22290
+   }
+  }
+ ]
+}
