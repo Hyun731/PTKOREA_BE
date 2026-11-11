@@ -23,6 +23,7 @@ from app.storage import get_storage
 from core.composition.build import build_deck
 from core.quality.qc import run_qc, self_brand_names
 from core.schemas.project import Project as CoreProject
+from core.schemas.slidespec import Paragraph
 
 router = APIRouter()
 
@@ -455,6 +456,52 @@ def clear_lead(project_id: str, slide_id: str, db: Session = Depends(get_db), wh
     audit(db, project_id, "slide", slide_id, "lead_reset", actor=who)
     db.commit()
     return {"lead_overrides": list(p.lead_overrides)}
+
+
+class InsightOverrideItem(BaseModel):
+    title: Paragraph
+    body_segments: Paragraph
+
+
+class InsightOverrideIn(BaseModel):
+    insights: list[InsightOverrideItem] = Field(default_factory=list, max_length=3)
+
+
+@router.put("/projects/{project_id}/insight-overrides/{slide_id}")
+def set_insight_override(project_id: str, slide_id: str, body: InsightOverrideIn, db: Session = Depends(get_db),
+                         who: str = Depends(actor)):
+    """Save three human-edited P3-5 cards, or an empty list to hide the generated cards on this page."""
+    from app.services.insights import check_page_insights
+
+    p = get_project(db, project_id)
+    result = build_deck(load_inputs(db, p))
+    slide = next((s for s in result.deck.slides if s.slide_id == slide_id and s.page_role == "content"), None)
+    if slide is None:
+        raise not_found("본문 장표")
+    items = [{"title": item.title, "body_segments": item.body_segments} for item in body.insights]
+    if items:
+        errors = check_page_insights(items, self_brand_names(p.config))
+        known = {binding.fact_id for binding in slide.bindings}
+        unknown = {part.fact_id for item in items for paragraph in (item["title"], item["body_segments"])
+                   for part in paragraph.parts if part.type == "fact" and part.fact_id not in known}
+        if unknown:
+            errors.append(f"본문에 없는 수치: {', '.join(sorted(unknown))}")
+        if errors:
+            raise ApiError(422, "INVALID_INSIGHTS", "인사이트 문구 규칙에 맞지 않습니다", "; ".join(errors))
+    p.insight_overrides = {**(p.insight_overrides or {}), slide_id: [item.model_dump(mode="json") for item in body.insights]}
+    audit(db, project_id, "slide", slide_id, "insight_override", after={"count": len(items)}, actor=who)
+    db.commit()
+    return {"slide_id": slide_id, "insights": p.insight_overrides[slide_id]}
+
+
+@router.delete("/projects/{project_id}/insight-overrides/{slide_id}")
+def clear_insight_override(project_id: str, slide_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """Return a page to the cached/generated P3-5 cards."""
+    p = get_project(db, project_id)
+    p.insight_overrides = {key: value for key, value in (p.insight_overrides or {}).items() if key != slide_id}
+    audit(db, project_id, "slide", slide_id, "insight_reset", actor=who)
+    db.commit()
+    return {"insight_overrides": list(p.insight_overrides)}
 
 
 # ------------------------------------------------------------------ P4 case commentary (경쟁사 사례 카드 해설)

@@ -136,6 +136,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
         if queries:
             trend_related[ri.brand_id] = queries
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
-                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, ai_writing=ai_writing, synthesis=synthesis,
+                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads,
+                       insight_overrides=project.insight_overrides or {}, ai_writing=ai_writing, synthesis=synthesis,
                        trend_related=trend_related, reviews=reviews, generated_on=date.today(),
                        deck_id=project.id)
