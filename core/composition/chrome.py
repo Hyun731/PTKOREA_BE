@@ -112,8 +112,8 @@ def headline_blocks(claim: list[Paragraph], evidence: list[Paragraph], area: Opt
     ev = type_spec("lead_evidence")
     size, line = ev["size"], ev["line"]
     n = min(len(evidence), ev["max_lines"])
-    if n * line * 96 / 72 > ev_reg.h + 4:  # a shorter area (case detail): smaller evidence type
-        line = round((ev_reg.h + 4) * 72 / 96 / n, 1)
+    if n * line * 96 / 72 > ev_reg.h:  # a shorter area: smaller evidence type, never past the area
+        line = int(ev_reg.h * 72 / 96 / n * 10) / 10
         size = min(size, round(line / 1.32, 1))
     lines = [p.model_copy(update={"bullet": EVIDENCE_BULLET}) for p in evidence[:ev["max_lines"]]]
     return [text_block("lead_claim", "lead", claim_reg, claim, spec="lead_claim", color="navy", editable=True),

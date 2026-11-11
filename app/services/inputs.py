@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Asset, Claim, FactRow, ImportBatch, Material, OwnedPost, PostRow, Project, ResearchItem, ReviewKeyword,
-    ReviewSnapshot, Source, SynthesisRun,
+    ReviewSnapshot, SlideWriting, Source, SynthesisRun,
 )
 from app.storage import get_storage
 from core.composition.build import BuildInputs
@@ -17,7 +17,7 @@ from core.schemas.materials import (
     AssetRef, CaseMaterial, ClaimRef, OwnedPostRef, ReviewKeywordRef, ReviewSnapshotRef, SourceRef,
 )
 from core.schemas.project import Project as CoreProject
-from core.schemas.slidespec import Crop, Paragraph, Part
+from core.schemas.slidespec import Crop, Headline, Part
 
 
 def core_project(p: Project) -> CoreProject:
@@ -39,6 +39,15 @@ def asset_ref(a: Asset) -> AssetRef:
 def claim_ref(c: Claim) -> ClaimRef:
     return ClaimRef(id=c.id, kind=c.kind, parts=[Part(**p) for p in c.parts], evidence_ids=c.evidence_ids,
                     fact_ids=c.fact_ids, review_status=c.review_status, author=c.author, quote=c.quote)
+
+
+def slide_writings(db: Session, project_id: str) -> dict:
+    """AI writing made at build time, {kind: {slide_id: {"fp": body fingerprint, **data}}} (P3-4~)."""
+    out: dict[str, dict] = {}
+    for w in db.scalars(select(SlideWriting).where(SlideWriting.project_id == project_id, SlideWriting.status == "ok")
+                        .order_by(SlideWriting.slide_id, SlideWriting.kind)):
+        out.setdefault(w.kind, {})[w.slide_id] = {"fp": w.body_fp, **(w.data or {})}
+    return out
 
 
 def load_inputs(db: Session, project: Project) -> BuildInputs:
@@ -112,7 +121,10 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
                                        review_status=k.review_status) for k in kws_by_snap.get(s.id, [])]))
 
     omitted = {k: v["reason"] for k, v in (project.omitted_slots or {}).items()}
-    leads = {k: [Paragraph.model_validate(p) for p in v] for k, v in (project.lead_overrides or {}).items()}
+    # Saved before P3-4: a list of claim paragraphs (kept as a list so older decks keep their fingerprint).
+    leads = {k: (Headline.coerce(v).claim if isinstance(v, list) else Headline.coerce(v))
+             for k, v in (project.lead_overrides or {}).items()}
+    ai_writing = slide_writings(db, project.id)
     synthesis: dict[str, dict] = {}
     for run in db.scalars(select(SynthesisRun).where(SynthesisRun.project_id == project.id, SynthesisRun.active.is_(True))):
         synthesis[run.brand_id] = run.data
@@ -124,6 +136,6 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
         if queries:
             trend_related[ri.brand_id] = queries
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
-                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, synthesis=synthesis,
+                       owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads, ai_writing=ai_writing, synthesis=synthesis,
                        trend_related=trend_related, reviews=reviews, generated_on=date.today(),
                        deck_id=project.id)
