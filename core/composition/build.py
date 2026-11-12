@@ -876,7 +876,7 @@ def _assemble(project: Project, pages: list[SlideSpec], enabled: set[str], gener
     labels = {ch: chapter_label(project, ch) for ch in sections_present}
     content: list[SlideSpec] = []
     for section in sections_present:
-        if "divider" in enabled and section not in ("appendix", "exec"):
+        if "divider" in enabled and section.partition(":")[0] not in ("appendix", "exec"):  # exec is per brand ("exec:SO")
             content.append(_divider(section, shown[section], labels[section], pages_by_section[section]))
         content += pages_by_section[section]
     out: list[SlideSpec] = []
