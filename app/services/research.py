@@ -34,6 +34,7 @@ from app.services.ledger import RunLedger
 from app.storage import get_storage
 from core.industry_profiles import axis_queries as industry_axis_queries, profile_for
 from core.ingestion.manual import make_manual_fact
+from core.rules.config import RulesConfig
 from core.schemas.materials import MARKET_ASPECTS, TARGET_SEGMENTS
 from integrations.base import CallResult, ProviderError
 from integrations.google_trends.client import MAX_KEYWORDS as TRENDS_MAX_KEYWORDS
@@ -713,7 +714,7 @@ def discover_instagram(db: Session, ledger: RunLedger, project: Project, item: R
     handles, stems = _official_handles(project, item.brand_id, item.entity)
     seen: set[str] = set()
     kept = []
-    skipped = {"out_of_period": 0, "official": 0, "duplicate": 0}
+    skipped = {"out_of_period": 0, "official": 0, "duplicate": 0, "small": 0, "foreign": 0}
     for post in res.data["posts"]:
         url = post["url"].rstrip("/") + "/"
         if url in seen or url in exclude or url.rstrip("/") in exclude:
@@ -729,7 +730,7 @@ def discover_instagram(db: Session, ledger: RunLedger, project: Project, item: R
             skipped["official"] += 1
             continue
         score = (post.get("likes") or 0) + 3 * (post.get("comments") or 0) + (post.get("views") or 0) / 50
-        kept.append((score, url, who))
+        kept.append((score, url, who, post.get("caption") or ""))
     kept.sort(reverse=True)
     room = max(0, MAX_POSTS_PER_RUN - len(exclude))
     chosen, per_creator = [], {}
@@ -742,11 +743,35 @@ def discover_instagram(db: Session, ledger: RunLedger, project: Project, item: R
         who_ = known.get(u.rstrip("/") + "/")
         if who_:
             per_creator[who_] = per_creator.get(who_, 0) + 1
-    for _, url, who in kept:  # a spread of creators, not one prolific account's whole feed
+    rules = RulesConfig.load()
+    profiles: dict[str, dict] = {}
+
+    def profile(handle: str) -> dict:
+        """팔로워·바이오 — 필터를 지난 게시물은 수집 단계에서 같은 캐시를 다시 쓴다."""
+        if handle not in profiles:
+            try:
+                res_ = ledger.call("scrapecreators", "instagram_profile", {"handle": handle}, 0.002,
+                                   lambda: p["instagram_profile"](handle), cache_days=7)
+                profiles[handle] = dict(res_.data)
+            except ProviderError:
+                profiles[handle] = {}
+        return profiles[handle]
+
+    check = settings.provider_configured("scrapecreators") and (rules.creator_min_followers > 0 or rules.creator_require_korean)
+    for _, url, who, caption in kept:  # a spread of creators, not one prolific account's whole feed
         if len(chosen) >= min(DISCOVER_KEEP, room):
             break
         if per_creator.get(who, 0) >= DISCOVER_PER_CREATOR:
             continue
+        if check and who:  # P2-10: 소규모·해외 계정은 3-1 표에 넣지 않는다(건수는 skipped에)
+            prof = profile(who)
+            followers = prof.get("followers")
+            if followers is not None and followers < rules.creator_min_followers:
+                skipped["small"] += 1
+                continue
+            if rules.creator_require_korean and not (HANGUL.search(caption) or HANGUL.search(prof.get("bio") or "")):
+                skipped["foreign"] += 1
+                continue
         per_creator[who] = per_creator.get(who, 0) + 1
         chosen.append(url)
     out["discovered"] = {"hashtags": tags, "found": len(res.data["posts"]), "in_period_creator": len(kept),
