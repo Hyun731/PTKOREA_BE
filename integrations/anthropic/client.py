@@ -24,6 +24,15 @@ def model_id() -> str:
     return m
 
 
+# 선별·분류처럼 판단이 단순한 호출은 저가 모델로 — ANTHROPIC_MODEL_LIGHT(기본 Haiku 5.5).
+DEFAULT_LIGHT_MODEL = "claude-haiku-5-5"
+
+
+def light_model_id() -> str:
+    model_id()  # same key check
+    return os.environ.get("ANTHROPIC_MODEL_LIGHT") or DEFAULT_LIGHT_MODEL
+
+
 def _client():
     import anthropic
     return anthropic.Anthropic(max_retries=2, timeout=120.0)
@@ -79,11 +88,13 @@ def user_content(user: str, images: Optional[list[bytes]] = None) -> Any:
 
 
 def structured(system: str, user: str, schema: dict, *, max_tokens: int = 8000, effort: str = "medium",
-               client: Optional[Any] = None, images: Optional[list[bytes]] = None) -> CallResult:
-    """images: 글과 함께 볼 이미지(광고 소재 등) — 순서대로 붙고, 글에서 '이미지 n'으로 가리킨다."""
+               client: Optional[Any] = None, images: Optional[list[bytes]] = None, light: bool = False) -> CallResult:
+    """images: 글과 함께 볼 이미지(광고 소재 등) — 순서대로 붙고, 글에서 '이미지 n'으로 가리킨다.
+    light: 관련성 선별·분류처럼 단순한 판단은 저가 모델로(서버 거절 대체(fallbacks)는 지원하지 않아 빼고 보낸다)."""
     import anthropic
-    model = model_id()
+    model = light_model_id() if light else model_id()
     c = client or _client()
+    extra = {} if light else {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
     try:
         resp = c.beta.messages.create(
             model=model,
@@ -91,8 +102,7 @@ def structured(system: str, user: str, schema: dict, *, max_tokens: int = 8000, 
             system=system,
             messages=[{"role": "user", "content": user_content(user, images)}],
             output_config={"effort": effort, "format": {"type": "json_schema", "schema": api_schema(schema)}},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
+            **extra,
         )
     except anthropic.AuthenticationError:
         raise ProviderError("PROVIDER_AUTH", "Anthropic 키 인증 실패")

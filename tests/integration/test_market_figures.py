@@ -6,7 +6,7 @@ from app.models import ProviderCache
 from app.services import research
 from integrations.base import CallResult
 from integrations.fetch.page import Page
-from tests.integration.test_research import fakes, item, ok, setup_project  # noqa: F401 (fixture)
+from tests.integration.test_research import fakes, item, ok, open_pending, setup_project  # noqa: F401 (fixture)
 
 @pytest.fixture(autouse=True)
 def _fresh_cache():
@@ -55,7 +55,10 @@ def test_market_item_turns_quoted_figures_into_candidate_facts(client, fakes):
         db.commit()
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [market_it["id"]]}), 202)["job"]
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][market_it["id"]]
-    assert res["figures"] == 3 and any("원문 인용 불일치" in d for d in res["dropped"])
+    assert res["status"] == "succeeded"
+    card = next(m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["extraction_status"] == "pending")
+    opened = ok(client.post(f"/v1/materials/{card['id']}/extract"))  # 사람이 자료를 열어 요약·추출
+    assert len(opened["facts"]) == 3 and any("원문 인용 불일치" in d for d in opened["extraction"]["dropped"])
     assert seen_users and all("수치 추출: 사용" in u for u in seen_users)
 
     mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market"}))
@@ -89,4 +92,5 @@ def test_campaign_items_do_not_extract_market_figures(client, fakes):
         db.query(ProviderCache).delete()
         db.commit()
     ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
     assert users and not any("수치 추출: 사용" in u for u in users)

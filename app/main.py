@@ -17,6 +17,7 @@ from app.services import deck as _deck_handlers  # noqa: F401  (registers job ha
 from app.services import insights as _insight_handlers  # noqa: F401
 from app.services import case_commentary as _case_commentary_handlers  # noqa: F401
 from app.services import research as _research_handlers  # noqa: F401
+from app.services import lazy_extract as _lazy_extract_handlers  # noqa: F401
 
 logging.basicConfig(level=logging.INFO)
 
