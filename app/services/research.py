@@ -458,9 +458,15 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         out["errors"].append({"code": "LIMIT", "message": f"실행당 검색 질의 한도({MAX_QUERIES_PER_RUN})에 도달했습니다"})
         return out
     results = _search_windows(ledger, p, item, queries)
-    if item.section_id == "issue":  # P4-3: 최신 기사는 네이버 뉴스가 더 잘 찾는다
-        seen = {r["url"] for r in results}
-        results += [r for r in _naver_news_results(ledger, p, item, queries, out) if r["url"] not in seen]
+    if item.section_id == "issue":  # P4-3: 소식·이슈는 뉴스가 먼저 — 웹 검색 결과와 번갈아 둔다(페이지 한도 안에 둘 다)
+        news = _naver_news_results(ledger, p, item, queries, out)
+        mixed, seen = [], set()
+        for pair in zip_longest(news, results):
+            for r in pair:
+                if r and r["url"] not in seen:
+                    seen.add(r["url"])
+                    mixed.append(r)
+        results = mixed
     # Generic words in a query ("이벤트 프로모션 2026") pull in other brands' promotions. A result that never
     # names the subject would only use up a card slot before the AI rejects it: drop it here, and look
     # at results naming it in the title before those naming it only in the snippet.
