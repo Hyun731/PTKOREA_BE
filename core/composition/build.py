@@ -145,6 +145,8 @@ class BuildInputs:
     ai_writing: dict = field(default_factory=dict)
     # {brand_id: {"insight": {...}, "swot": {...}, "problem": {...}}} — active SynthesisRun per self brand.
     synthesis: dict = field(default_factory=dict)
+    # P5-1 브랜드 진단 {brand_id: Diagnosis dict} — 자사 브랜드마다 활성 버전(core.schemas.diagnosis).
+    diagnosis: dict = field(default_factory=dict)
     # {brand_id: [query, ...]} — Phase 3-4 Google Trends 연관 검색어, 그 브랜드의 최신 search_trend 수집 결과.
     trend_related: dict[str, list[str]] = field(default_factory=dict)
     # Phase 2 커머스 리뷰(CM1/CM2) — 채택 여부와 무관하게 전부 싣고, composition이 accepted만 골라 쓴다.
@@ -1014,5 +1016,6 @@ def fingerprint(inputs: BuildInputs) -> str:
                   for k, v in sorted(inputs.lead_overrides.items())},
         **({"synthesis": inputs.synthesis} if inputs.synthesis else {}),  # absent = same hash as before it existed
         **({"ai_writing": inputs.ai_writing} if inputs.ai_writing else {}),
+        **({"diagnosis": inputs.diagnosis} if inputs.diagnosis else {}),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
