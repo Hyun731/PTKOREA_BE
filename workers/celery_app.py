@@ -14,5 +14,5 @@ app.conf.worker_prefetch_multiplier = 1
 @app.task(name="ptk.run_job", bind=True, max_retries=0)
 def run_job_task(self, job_id: str):
     from app.jobs import run_job
-    from app.services import deck, insights, research  # noqa: F401  (registers handlers)
+    from app.services import deck, insights, lazy_extract, research  # noqa: F401  (registers handlers)
     run_job(job_id)

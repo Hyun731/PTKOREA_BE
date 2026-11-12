@@ -337,7 +337,7 @@ def material_out(db: Session, m: Material, detail: bool = False) -> dict:
         "review_status": m.review_status, "review_reason": m.review_reason, "reviewed_by": m.reviewed_by,
         "reviewed_at": m.reviewed_at, "activity_date": m.activity_date, "activity_date_end": m.activity_date_end,
         "research_item_id": m.research_item_id, "selected_asset_id": m.selected_asset_id, "order": m.order,
-        "featured": m.featured,
+        "featured": m.featured, "extraction_status": m.extraction_status,
         "source": {"id": src.id, "title": src.title, "url": src.original_url, "publisher": src.publisher,
                    "published_at": src.published_at, "fetched_at": src.fetched_at, "access_status": src.access_status,
                    "source_type": src.source_type},
@@ -427,7 +427,34 @@ def list_materials(project_id: str, brand_id: Optional[str] = None, section_id: 
         q = q.where(Material.section_id == section_id)
     if status:
         q = q.where(Material.review_status == status)
+    # 선별에서 걸러진 자료(관련 없음)는 목록에 보이지 않는다 — 조사 결과에는 건수만 남는다.
+    from app.services.research import SCREENED_PREFIX
+    q = q.where(~(Material.review_reason.is_not(None) & Material.review_reason.like(f"{SCREENED_PREFIX}%")))
     return [material_out(db, m) for m in db.scalars(q.order_by(Material.order, Material.created_at))]
+
+
+@router.post("/materials/{material_id}/extract")
+def extract_on_open(material_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """자료를 열었을 때: 아직 요약·추출 전이면 그때 한 번 만든다(다시 열면 저장된 결과를 그대로 보여 준다)."""
+    from app.services.lazy_extract import PENDING
+    from app.services.ledger import RunLedger
+    from app.services.research import extract_material
+    from integrations.base import ProviderError
+    m = get_material(db, material_id)
+    if m.extraction_status != PENDING:
+        return material_out(db, m, detail=True)
+    _ai_ready()
+    p = get_project(db, m.project_id)
+    try:
+        out = extract_material(db, RunLedger(db, p.id, None), p, m)
+    except ProviderError as exc:
+        db.rollback()
+        raise ApiError(502, exc.code, f"요약을 만들지 못했습니다: {exc.message}", "잠시 뒤 다시 열어 주세요")
+    m.version += 1
+    audit(db, p.id, "material", m.id, "extract", after={"errors": out["errors"]}, actor=who)
+    db.commit()
+    # 걸러진(목록에서 숨는) 자료여도 방금 연 화면에는 결과를 돌려준다 — 다음 목록에서 빠진다.
+    return {**material_out(db, m, detail=True), "extraction": {"errors": out["errors"], "dropped": out.get("dropped", [])}}
 
 
 @router.get("/materials/{material_id}")
@@ -609,7 +636,15 @@ def accept_all_materials(project_id: str, db: Session = Depends(get_db), who: st
     out = adopt.accept_all(db, p, who)
     audit(db, p.id, "materials", p.id, "accept_all", after={"accepted": out["ids"]}, actor=who)
     db.commit()
-    return {"accepted": out["accepted"], "left": out["left"]}
+    # 채택한 자료 중 아직 요약·추출 전인 것은 서버 작업으로 만든다(장표에 문장·수치가 들어가도록).
+    from app.jobs import create_job, dispatch
+    from app.services.lazy_extract import pending_accepted
+    job_id = None
+    if pending_accepted(db, p.id):
+        job, _ = create_job(db, p.id, p.version, "material_extract", {})
+        dispatch(job.id)
+        job_id = job.id
+    return {"accepted": out["accepted"], "left": out["left"], "extract_job_id": job_id}
 
 
 @router.post("/projects/{project_id}/materials/period-check")
