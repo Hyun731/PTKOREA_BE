@@ -1,5 +1,7 @@
 """Phase 3-2 산업 카테고리 분석(M1): 카테고리가 같으면 브랜드 비교 장처럼 한 번만, 다르면 브랜드마다 따로."""
-from core.composition.build import _market_by_category
+from datetime import date
+
+from core.composition.build import BuildInputs, _market_by_category, build_deck
 from core.composition.chrome import PartFactory
 from core.metrics.registry import FactRegistry
 from core.schemas.materials import CaseMaterial, ClaimRef, SourceRef
@@ -24,8 +26,8 @@ def _market_material(idx: int, category: str) -> CaseMaterial:
 def _run(brands, materials):
     calls = []
 
-    def fake_slot(slot_id, template, slides, reason, label=None, part=None, key=None):
-        calls.append({"slot_id": slot_id, "label": label, "part": part, "slides": slides})
+    def fake_slot(slot_id, template, slides, reason, label=None, part=None, key=None, density=None):
+        calls.append({"slot_id": slot_id, "label": label, "part": part, "slides": slides, "density": density})
 
     _market_by_category(brands, materials, {"M1"}, fake_slot, PartFactory(FactRegistry()), [], None)
     return calls
@@ -60,3 +62,33 @@ def test_market_slide_not_enabled_is_skipped():
     _market_by_category(brands, [_market_material(1, "러기지")], set(),
                         lambda *a, **k: calls.append(1), PartFactory(FactRegistry()), [], None)
     assert calls == []
+
+
+def test_market_page_requires_three_matching_evidence_items():
+    project = Project.model_validate({
+        "name": "p", "client": "c", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "enabled_slides": ["M1"],
+        "brands": [{"id": "B1", "name": "자사1", "competitors": ["경쟁1"], "categories": ["러기지"]}],
+    })
+    result = build_deck(BuildInputs(project=project, facts=[],
+                                    materials=[_market_material(1, "러기지"), _market_material(2, "러기지")],
+                                    generated_on=date(2026, 10, 12)))
+    slot = next(s for s in result.deck.plan if s.template_id == "M1")
+    assert slot.readiness == "thin" and not result.deck.slides
+
+    result = build_deck(BuildInputs(project=project, facts=[],
+                                    materials=[_market_material(i, "러기지") for i in range(1, 4)],
+                                    generated_on=date(2026, 10, 12)))
+    assert next(s for s in result.deck.plan if s.template_id == "M1").readiness == "ready"
+
+
+def test_market_page_rejects_evidence_from_another_category():
+    project = Project.model_validate({
+        "name": "p", "client": "c", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "enabled_slides": ["M1"],
+        "brands": [{"id": "B1", "name": "자사1", "competitors": ["경쟁1"], "categories": ["러기지"]}],
+    })
+    result = build_deck(BuildInputs(project=project, facts=[],
+                                    materials=[_market_material(i, "뷰티") for i in range(1, 4)],
+                                    generated_on=date(2026, 10, 12)))
+    assert next(s for s in result.deck.plan if s.template_id == "M1").readiness == "needs_input"

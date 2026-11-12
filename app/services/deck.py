@@ -88,12 +88,27 @@ def _write_slides(db: Session, project: Project, job: Job, progress: Callable[[i
         return {"error": exc.code}
 
 
+def _ensure_synthesis(db: Session, project: Project) -> dict:
+    """P3-7: generate the default insight pages once per body fingerprint; AI failure never blocks a deck."""
+    from app.config import settings
+    from app.services import synthesis
+    from integrations.base import ProviderError
+
+    if not settings.provider_configured("anthropic"):
+        return {"skipped": "provider_not_configured"}
+    try:
+        return synthesis.ensure_default(db, project)
+    except ProviderError as exc:
+        return {"error": exc.code}
+
+
 @register("deck_build")
 def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     project = db.get(Project, job.project_id)
     deck = db.get(Deck, job.params["deck_id"])
     _recollect_missing(db, project, progress)
     writing = _write_slides(db, project, job, progress)
+    synthesis = _ensure_synthesis(db, project)
     inputs = load_inputs(db, project)
     inputs.deck_id, inputs.deck_version = deck.id, deck.version
     inputs.generated_on = deck.created_at.astimezone(SEOUL).date()
@@ -123,7 +138,7 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     deck.status = "ready"  # only after the real-render preview exists (or is known unavailable)
     db.commit()
     return {"deck_id": deck.id, "deck_version": deck.version, "qc_blocks": qc.blocks, "qc_warns": qc.warns,
-            "render_status": deck.render_status, "writing": writing}
+            "render_status": deck.render_status, "writing": writing, "synthesis": synthesis}
 
 
 def next_deck_version(db: Session, project_id: str) -> int:

@@ -99,7 +99,8 @@ def test_candidate_facts_never_reach_the_page():
 
 
 def test_follows_2_1_and_sits_right_after_it():
-    facts = [*_owned("브랜드A", 10461, "7.78", 224), *_owned("경쟁X", 19116, "13.22", 136)]
+    facts = [*_owned("브랜드A", 10461, "7.78", 224), *_owned("경쟁X", 19116, "13.22", 136),
+             _fact("owned_followers", 9500, "youtube", "브랜드A")]
     result = _build(_project(("2-1",)), facts)
     ids = [s.slide_id for s in result.deck.slides]
     assert ids.index("OW-CMP") == ids.index("2-1") + 1

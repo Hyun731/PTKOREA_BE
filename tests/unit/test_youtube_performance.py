@@ -25,12 +25,13 @@ def test_youtube_performance_renders_monthly_trend_and_caption():
         _fact("owned_posts_by_month", 2, month="2026-07"),
         _fact("owned_posts_by_month", 0, month="2026-08"),
         _fact("owned_posts_by_month", 3, month="2026-09"),
+        _fact("owned_posts_by_month", 1, month="2026-10"),
     ]
     cfg = project.model_copy(update={"enabled_slides": ["2-5"]})
     result = build_deck(BuildInputs(project=cfg, facts=facts, generated_on=date(2026, 10, 12)))
     slide = next(s for s in result.deck.slides if s.slide_id == "2-5")
     chart = next(b for b in slide.blocks if isinstance(b, LineChartBlock))
-    assert [p.value for p in chart.series[0].points] == [2.0, 0.0, 3.0]
+    assert [p.value for p in chart.series[0].points] == [2.0, 0.0, 3.0, 1.0]
 
     qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
     blocking = [i for i in qc.issues if i.severity == "block" and i.slide_id == "2-5"]
@@ -44,3 +45,14 @@ def test_youtube_performance_absent_without_data():
     assert not any(s.slide_id == "2-5" for s in result.deck.slides)
     slot = next(p for p in result.deck.plan if p.slot_id == "2-5")
     assert slot.readiness == "needs_input"
+
+
+def test_three_month_youtube_trend_is_merged_as_thin():
+    project, _, _ = load_fixture()
+    facts = [_fact("owned_posts_by_month", value, month=month)
+             for month, value in (("2026-07", 2), ("2026-08", 0), ("2026-09", 3))]
+    cfg = project.model_copy(update={"enabled_slides": ["2-5"]})
+    result = build_deck(BuildInputs(project=cfg, facts=facts, generated_on=date(2026, 10, 12)))
+    assert not any(s.slide_id == "2-5" for s in result.deck.slides)
+    slot = next(p for p in result.deck.plan if p.slot_id == "2-5")
+    assert slot.readiness == "thin" and "채널 인벤토리" in slot.reason

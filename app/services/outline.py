@@ -100,6 +100,8 @@ def outline(db: Session, project: Project) -> dict:
         "pages": len(result.deck.slides),
         "missing": [{"slot_id": s.slot_id, "label": s.label, "reason": s.reason, "cause": s.cause, "action": s.action,
                      "item_ids": s.item_ids} for s in plan if s.readiness == "needs_input"],
+        "thin": [{"slot_id": s.slot_id, "label": s.label, "reason": s.reason}
+                 for s in plan if s.readiness == "thin"],
         "omitted": [{"slot_id": s.slot_id, "label": s.label, "reason": s.reason} for s in plan if s.readiness == "omitted"],
         "fingerprint": result.deck.input_fingerprint,
     }

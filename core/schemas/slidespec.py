@@ -286,7 +286,7 @@ class SlotPlan(BaseModel):
     template_id: str
     brand_id: Optional[str] = None
     label: str
-    readiness: Literal["ready", "needs_input", "omitted"]
+    readiness: Literal["ready", "thin", "needs_input", "omitted"]
     reason: Optional[str] = None
     required: bool = True
     slide_ids: list[str] = Field(default_factory=list)
@@ -310,6 +310,7 @@ class DeckSpec(BaseModel):
         return {
             "planned": len(self.plan),
             "generated": sum(1 for s in self.plan if s.readiness == "ready"),
+            "thin": sum(1 for s in self.plan if s.readiness == "thin"),
             "omitted": sum(1 for s in self.plan if s.readiness == "omitted"),
             "needs_input": sum(1 for s in self.plan if s.readiness == "needs_input"),
             "pages": len(self.slides),

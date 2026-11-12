@@ -18,12 +18,13 @@ def _monthly_fact(month, count, brand_id="B1", entity="브랜드A"):
 
 def test_operating_gap_shows_brand_with_zero_month():
     project, _, _ = load_fixture()
-    facts = [_monthly_fact("2026-01", 3), _monthly_fact("2026-02", 0), _monthly_fact("2026-03", 2)]
+    facts = [_monthly_fact("2026-01", 3), _monthly_fact("2026-02", 0), _monthly_fact("2026-03", 2),
+             _monthly_fact("2026-04", 1)]
     cfg = project.model_copy(update={"enabled_slides": ["2-2"]})
     result = build_deck(BuildInputs(project=cfg, facts=facts, materials=[], generated_on=date(2026, 10, 12)))
     slide = next(s for s in result.deck.slides if s.slide_id == "2-2")
     chart = next(b for b in slide.blocks if isinstance(b, LineChartBlock))
-    assert [p.value for p in chart.series[0].points] == [3.0, 0.0, 2.0]
+    assert [p.value for p in chart.series[0].points] == [3.0, 0.0, 2.0, 1.0]
 
     qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
     blocking = [i for i in qc.issues if i.severity == "block" and i.slide_id == "2-2"]
@@ -40,12 +41,23 @@ def test_operating_gap_absent_when_no_zero_month():
     assert slot.readiness == "needs_input"
 
 
+def test_three_month_operating_gap_is_merged_as_thin():
+    project, _, _ = load_fixture()
+    facts = [_monthly_fact("2026-01", 3), _monthly_fact("2026-02", 0), _monthly_fact("2026-03", 2)]
+    cfg = project.model_copy(update={"enabled_slides": ["2-2"]})
+    result = build_deck(BuildInputs(project=cfg, facts=facts, generated_on=date(2026, 10, 12)))
+    assert not any(s.slide_id == "2-2" for s in result.deck.slides)
+    slot = next(p for p in result.deck.plan if p.slot_id == "2-2")
+    assert slot.readiness == "thin" and "채널 인벤토리" in slot.reason
+
+
 def test_panels_start_under_the_two_tier_headline():
     """P3-4: 헤드라인 근거 줄(55~130) 아래에서 패널이 시작한다 — 근거 줄과 겹치지 않음."""
     from core.composition.tokens import region
 
     project, _, _ = load_fixture()
-    facts = [_monthly_fact("2026-01", 3), _monthly_fact("2026-02", 0), _monthly_fact("2026-03", 2)]
+    facts = [_monthly_fact("2026-01", 3), _monthly_fact("2026-02", 0), _monthly_fact("2026-03", 2),
+             _monthly_fact("2026-04", 1)]
     cfg = project.model_copy(update={"enabled_slides": ["2-2"]})
     slide = next(s for s in build_deck(BuildInputs(project=cfg, facts=facts, generated_on=date(2026, 10, 12))).deck.slides
                  if s.slide_id == "2-2")

@@ -104,11 +104,12 @@ def write_outputs(result: BuildResult, qc: QCReport, out_dir: Path, *, imports: 
             w.writerow([e["file"], e["row_no"], e["column"] or "", e["code"], e["message"]])
 
     omitted = [s.model_dump() for s in result.deck.plan if s.readiness == "omitted"]
+    thin = [s.model_dump() for s in result.deck.plan if s.readiness == "thin"]
     missing = [s.model_dump() for s in result.deck.plan if s.readiness == "needs_input"]
     ok = qc.blocks == 0
     status = "blocked" if not ok else ("completed_with_warnings" if (rejected or qc.warns) else "completed")
     report = {
-        "ok": ok, "status": status, "qc": qc.to_dict(), "omitted": omitted, "missing": missing,
+        "ok": ok, "status": status, "qc": qc.to_dict(), "omitted": omitted, "thin": thin, "missing": missing,
         "rejected_rows": rejected, "counts": result.deck.counts(),
         "metric_issues": [i.__dict__ for i in result.metrics.issues],
         "usage": usage or {"api_calls": 0}, "versions": {"deck_version": result.deck.deck_version,

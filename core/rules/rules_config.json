@@ -12,5 +12,20 @@
   "R12": {"max_ratio": "0.8", "min_creator_sample": 3},
   "R13": {"gap_days": 60},
   "derived": {"min_n": 20},
-  "shopping": {"peak_lift": "1.2", "peak_min_months": 9}
+  "shopping": {"peak_lift": "1.2", "peak_min_months": 9},
+  "min_density": {
+    "line_chart_points": 4,
+    "templates": {
+      "2-1": {"measure": "channels", "min": 2, "merge_into": "자사 vs 경쟁사 채널 비교"},
+      "2-2": {"measure": "months", "min": 4, "merge_into": "채널 인벤토리"},
+      "2-5": {"measure": "months", "min": 4, "merge_into": "채널 인벤토리"},
+      "5-1": {"measure": "sources", "min": 20, "merge_into": "소비자 분석 요약"},
+      "5-2": {"measure": "sources", "min": 20, "merge_into": "소비자 분석 요약"},
+      "VC1": {"measure": "sources", "min": 20, "merge_into": "소비자 분석 요약"},
+      "M1": {"measure": "evidence", "min": 3, "merge_into": "캠페인·시장 사례"},
+      "2-8b": {"measure": "months", "min": 4, "merge_into": "검색 점유 비교"},
+      "TR1": {"measure": "months", "min": 4, "merge_into": "검색 경쟁 분석"},
+      "SH1": {"measure": "months", "min": 4, "merge_into": "쇼핑 수요 분석"}
+    }
+  }
 }

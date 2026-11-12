@@ -91,6 +91,9 @@ def run_qc(deck: DeckSpec, registry: FactRegistry, assets: AssetLookup,
             # Everything is in the plan by default; a part with no data simply stays out of this deck.
             add(Issue("SLOT_NEEDS_INPUT", "warn", f"{slot.label}: 자료가 없어 이번 덱에서 빠짐 ({slot.reason})",
                       "자료를 채택하면 다음 생성 때 들어갑니다", block_id=slot.slot_id))
+        elif slot.readiness == "thin":
+            add(Issue("SLOT_THIN", "warn", f"{slot.label}: {slot.reason}", "관련 장표에서 함께 확인하세요",
+                      block_id=slot.slot_id))
         elif slot.readiness == "omitted":
             add(Issue("SLOT_OMITTED", "warn", f"{slot.label} 생략: {slot.reason}", "생략 목록 확인", block_id=slot.slot_id))
     if not any(s.is_data for s in deck.slides):

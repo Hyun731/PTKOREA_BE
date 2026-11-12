@@ -12,11 +12,11 @@ DAY = date(2026, 10, 1)
 
 
 def _voc(i: int, sentiment: str, *, url: str = "https://theqoo.net/1", topic: str = "price", path=None,
-         status: str = "accepted", sponsored: bool = False, entity: str = "브랜드A") -> CaseMaterial:
+         status: str = "accepted", sponsored: bool = False, entity: str = "브랜드A", pain_points=()) -> CaseMaterial:
     return CaseMaterial(id=f"M{i:03d}-{url[-6:]}", brand_id="B1", entity=entity, section_id="voc", title=f"원문 {i}",
                         source=SourceRef(id=f"S{i}", title="t", url=url, fetched_at=datetime(2026, 9, 20, 10)),
                         review_status=status, voc_sentiment=sentiment, voc_topic=topic, voc_awareness=path,
-                        voc_sponsored=sponsored)
+                        voc_sponsored=sponsored, voc_pain_points=list(pain_points))
 
 
 def _inputs(materials=(), posts=(), reviews=(), min_n=20) -> DerivedInputs:
@@ -77,6 +77,20 @@ def test_comment_sentiment_sums_posts_per_channel():
     ig = {f.dims["polarity"]: f.value for f in _by(facts, "comment_sentiment_rate", channel="instagram")}
     assert ig == {"positive": Decimal("60.0"), "negative": Decimal("20.0"), "neutral": Decimal("20.0")}
     assert not _by(facts, "comment_sentiment_rate", channel="youtube")  # n=1 < 20
+
+
+def test_pain_points_combine_comments_and_accepted_voc():
+    posts = [OwnedPostRef(id=f"P{i}", brand_id="B1", entity="브랜드A", channel="instagram",
+                          url=f"https://instagram.com/p/{i}",
+                          comment_sentiment=CommentSentiment(negative=5, sample_size=5,
+                                                             pain_points=["바퀴 소음", "손잡이 불편"]))
+             for i in range(10)]
+    voc = [_voc(i, "negative", url=f"https://theqoo.net/{i}", pain_points=["바퀴 소음"]) for i in range(10)]
+    facts = derive(_inputs(materials=voc, posts=posts))
+    pain = {f.dims["pain_point"]: f for f in _by(facts, "pain_point_count")}
+    assert pain["바퀴 소음"].value == Decimal("20") and pain["바퀴 소음"].dims["n"] == "30"
+    assert pain["손잡이 불편"].value == Decimal("10")
+    assert pain["바퀴 소음"].source_locator.startswith("https://")
 
 
 def test_review_count_and_rating_scaled_to_five():

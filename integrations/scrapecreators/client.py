@@ -99,6 +99,60 @@ def instagram_post_comments(url: str, *, cursor: Optional[str] = None,
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
 
 
+def _comment_result(data: dict, rows: list[dict], cursor_keys: tuple[str, ...]) -> CallResult:
+    cursor = next((data.get(key) for key in cursor_keys if data.get(key)), None)
+    return CallResult(data={"comments": rows, "cursor": str(cursor) if cursor else None},
+                      usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
+
+
+def youtube_video_comments(url: str, *, cursor: Optional[str] = None,
+                           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    params = {"url": url}
+    if cursor:
+        params["continuationToken"] = cursor
+    data = _get("/youtube/video/comments", params, transport)
+    rows = []
+    for comment in data.get("comments") or []:
+        text = (comment.get("text") or comment.get("content") or comment.get("comment") or "").strip()
+        if text:
+            rows.append({"id": comment.get("id"), "text": text,
+                         "posted_at": str(comment.get("publishedAt") or comment.get("published_at") or "")[:10],
+                         "likes": _int(comment.get("likeCount") or comment.get("likes"))})
+    return _comment_result(data, rows, ("continuationToken", "cursor"))
+
+
+def tiktok_video_comments(url: str, *, cursor: Optional[str] = None,
+                          transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    params = {"url": url}
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/tiktok/video/comments", params, transport)
+    rows = []
+    for comment in data.get("comments") or []:
+        text = (comment.get("text") or "").strip()
+        if text:
+            rows.append({"id": comment.get("cid") or comment.get("id"), "text": text,
+                         "posted_at": _ts_date(comment.get("create_time")),
+                         "likes": _int(comment.get("digg_count") or comment.get("like_count"))})
+    return _comment_result(data, rows, ("cursor", "max_cursor"))
+
+
+def facebook_post_comments(url: str, *, cursor: Optional[str] = None,
+                           transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    params = {"url": url}
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/facebook/post/comments", params, transport)
+    rows = []
+    for comment in data.get("comments") or []:
+        text = (comment.get("message") or comment.get("text") or "").strip()
+        if text:
+            rows.append({"id": comment.get("id"), "text": text,
+                         "posted_at": str(comment.get("created_time") or comment.get("created_at") or "")[:10],
+                         "likes": _int(comment.get("like_count") or comment.get("reactionCount"))})
+    return _comment_result(data, rows, ("cursor",))
+
+
 def instagram_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
     """Follower count for a creator: the post endpoint leaves owner followers empty."""
     data = _get("/instagram/profile", {"handle": handle.lstrip("@")}, transport)

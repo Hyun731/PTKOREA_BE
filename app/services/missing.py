@@ -2,6 +2,7 @@
 
 A missing slide reads as "자료 없음" either way, but the fix differs: cards waiting to be adopted,
 a search that found nothing, a setting the collector needs, or a CSV only a person can upload.
+`thin` slots already have material but intentionally share another page, so they are never recollection gaps.
 """
 from __future__ import annotations
 
