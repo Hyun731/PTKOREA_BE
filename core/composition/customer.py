@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from core.composition.cases import _cell_height, _fit_lines, _publisher
@@ -37,15 +38,21 @@ def _footnote_common(rows: list[CaseMaterial], extra: str) -> list:
     return parts + [T(f" · {extra}")] if extra else parts
 
 
+def _newest_first(m: CaseMaterial) -> tuple:
+    """Sort key: dated quotes by date, undated ones after them (by id) — never compare a date with a str."""
+    d = m.source.published_at or m.activity_date
+    return (d is not None, d or date.min, m.id)
+
+
 def voc_summary_page(project, materials: list[CaseMaterial]) -> Optional[SlideSpec]:
     """5-1: 긍정·부정 각 최대 5건의 원문 요약 + 불만 요인 TOP3."""
     rows = _usable(materials)
     if not rows:
         return None
     pos = sorted([m for m in rows if m.voc_sentiment == "positive"],
-                key=lambda m: m.source.published_at or m.activity_date or m.id, reverse=True)[:MAX_QUOTES_PER_SENTIMENT]
+                key=_newest_first, reverse=True)[:MAX_QUOTES_PER_SENTIMENT]
     neg = sorted([m for m in rows if m.voc_sentiment == "negative"],
-                key=lambda m: m.source.published_at or m.activity_date or m.id, reverse=True)[:MAX_QUOTES_PER_SENTIMENT]
+                key=_newest_first, reverse=True)[:MAX_QUOTES_PER_SENTIMENT]
     if not pos and not neg:
         return None
 
