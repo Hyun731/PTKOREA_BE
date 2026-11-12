@@ -105,6 +105,10 @@ def test_d2_headline_chart_quotes_and_hidden_numbers():
     claim = next(b for b in strength.blocks if b.block_id == "lead_claim")
     assert "선두" in _texts_of(claim) and any(b.block_id == "lead_evidence" for b in strength.blocks)
     assert isinstance(next(b for b in strength.blocks if b.block_id == "chart"), BarChartBlock)
+    chart_head = next(b for b in strength.blocks if b.block_id == "chart_header")
+    assert chart_head.paragraphs[0].parts[0].type == "name"  # labels with digits are metadata, not claims
+    foot = next(b for b in strength.blocks if b.block_id == "footnote")
+    assert any(part.type == "meta" and part.key == "source" for p in foot.paragraphs for part in p.parts)
     assert "튼튼해서 오래 써요" in _texts(strength)  # the cited consumer post as a card
     # the headline cites a number the chart does not draw: it sits under the chart (QC LEAD_CITES_HIDDEN)
     assert not any(b.block_id.startswith("ev") for b in noise.blocks)  # the chart already draws its numbers
@@ -195,3 +199,41 @@ def test_stored_ai_writing_never_replaces_the_diagnosis_headline():
     pages = {s.slide_id: s for s in build_deck(inputs).deck.slides}
     assert "다른 AI 헤드라인" not in _texts(pages["D1"]) + _texts(pages["D2-c1"])
     assert "AI 카드" not in _texts(pages["D1"]) and "AI 카드" in _texts(pages["D2-c1"])  # D2 takes page insights
+
+
+def test_diagnosis_profile_reorders_story_and_moves_raw_pages_to_appendix(tmp_path):
+    base, _, _ = load_fixture()
+    project = base.model_copy(update={
+        "report_profile": "diagnosis",
+        "enabled_slides": ["cover", "index", "divider", "1-1", "2-1", "OW-CMP", "2-8a", "3-1", "5-1", "A-source"],
+    })
+    inputs = _inputs(project=project, diagnosis={"B1": _diagnosis()}, slides=project.enabled_slides)
+    result = build_deck(inputs)
+    ids = [slide.slide_id for slide in result.deck.slides]
+
+    assert ids[:2] == ["cover", "index"]
+    assert ids.index("D1") < ids.index("D2-c1") < ids.index("D3") < ids.index("3-1-B1")
+    assert ids.index("3-1-B1") < ids.index("D4") < ids.index("D5") < ids.index("D6")
+    assert ids.index("D6") < ids.index("2-8a")
+
+    d1 = next(slide for slide in result.deck.slides if slide.slide_id == "D1")
+    raw = next(slide for slide in result.deck.slides if slide.slide_id == "2-8a")
+    assert d1.chapter == "diagnosis:B1"
+    assert raw.chapter == "appendix" and raw.page_role == "appendix"
+    related = raw.block("related_page")
+    assert "관련 본문" in related.paragraphs[0].plain() and "p." in related.paragraphs[0].plain()
+    assert not _blocks(result), _blocks(result)
+    path = render_deck(result.deck, tmp_path / "diagnosis-profile.pptx")
+    assert len(Presentation(str(path)).slides) == len(result.deck.slides)
+
+
+def test_new_project_schema_defaults_to_diagnosis_but_legacy_loader_keeps_diagnostic():
+    from core.schemas.project import Project, load_project
+
+    raw = {
+        "name": "새 프로젝트", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
+        "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"]}],
+        "enabled_slides": ["cover"],
+    }
+    assert Project.model_validate(raw).report_profile == "diagnosis"
+    assert load_project(raw).report_profile == "diagnostic"

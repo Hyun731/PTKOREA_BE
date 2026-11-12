@@ -50,7 +50,7 @@ class ProjectIn(BaseModel):
     scope: Optional[list[dict]] = None
     target_hypothesis: Optional[str] = None
     timezone: str = "Asia/Seoul"
-    report_profile: Literal["diagnostic"] = "diagnostic"
+    report_profile: Literal["diagnostic", "diagnosis"] = "diagnosis"
 
 
 class ProjectPatch(BaseModel):

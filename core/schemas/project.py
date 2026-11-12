@@ -11,9 +11,9 @@ from core.industry_profiles import INDUSTRY_PROFILES
 
 BRAND_ID_RE = re.compile(r"^[A-Z][A-Z0-9]{0,4}$")
 
-ReportProfile = Literal["diagnostic", "proposal"]
+ReportProfile = Literal["diagnostic", "diagnosis", "proposal"]
 # P0 UI must not expose unimplemented profiles (PRD 3).
-IMPLEMENTED_PROFILES: tuple[str, ...] = ("diagnostic",)
+IMPLEMENTED_PROFILES: tuple[str, ...] = ("diagnostic", "diagnosis")
 
 
 class Period(BaseModel):
@@ -224,7 +224,7 @@ class Project(BaseModel):
     enabled_slides: list[str]
     template_version: str = "1.0"
     budget_policy: BudgetPolicy = Field(default_factory=BudgetPolicy)
-    report_profile: ReportProfile = "diagnostic"
+    report_profile: ReportProfile = "diagnosis"
     collection_cutoff: Optional[date] = None
     section_windows: list[SectionWindow] = Field(default_factory=list)
     scope: list[ScopeSetting] = Field(default_factory=list)
@@ -256,7 +256,7 @@ class Project(BaseModel):
                 raise ValueError(f"{b.name}: 다른 자사 브랜드({', '.join(sorted(bench_clash))})를 벤치마크로 등록할 수 없습니다")
             _check_keywords(b)
         if self.report_profile not in IMPLEMENTED_PROFILES:
-            raise ValueError("proposal 프로필은 P1입니다. 현재는 diagnostic만 지원합니다")
+            raise ValueError("proposal 프로필은 아직 지원하지 않습니다")
         return self
 
     def brand(self, brand_id: str) -> Brand:

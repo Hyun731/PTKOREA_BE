@@ -398,5 +398,8 @@ def ensure_default(db: Session, project: Project) -> dict:
             skipped.append(brand.id)
             continue
         run = persist(db, project, brand.id, out, fp, active.instruction if active else "")
+        # The next brand's provider ledger reserves cost through a separate session. Keep no
+        # pending SQLite writer between brands or that reservation can deadlock the build.
+        db.commit()
         generated.append({"brand_id": brand.id, "version": run.version})
     return {"generated": generated, "cached": cached, "skipped": skipped}
