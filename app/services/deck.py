@@ -75,6 +75,15 @@ def _recollect_missing(db: Session, project: Project, progress: Callable[[int], 
     run_research(db, job, lambda pct: progress(10 + pct // 10))  # 0~10%만 이 단계에 배정 (끝에서 db.expire_all())
 
 
+def _extract_pending(db: Session, project: Project, job: Job) -> None:
+    """채택됐지만 아직 요약·추출 전인 자료(모두 채택 직후 등)를 초안 전에 마저 추출한다 — 장표 문장·수치가 빠지지 않게."""
+    from app.services.lazy_extract import extract_many, pending_accepted
+    rows = pending_accepted(db, project.id)
+    if rows:
+        extract_many(db, project, rows, job.id)
+        db.expire_all()
+
+
 def _write_slides(db: Session, project: Project, job: Job, progress: Callable[[int], None]) -> dict:
     """P3-4~: AI가 장마다 헤드라인(주장 + 근거)을 쓴다. 장 본문이 그대로면 예전 글을 다시 쓰고, AI를 못 부르면
     규칙 문장으로 만든다 — 덱 만들기 자체는 멈추지 않는다."""
@@ -121,6 +130,7 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     project = db.get(Project, job.project_id)
     deck = db.get(Deck, job.params["deck_id"])
     _recollect_missing(db, project, progress)
+    _extract_pending(db, project, job)
     writing = _write_slides(db, project, job, progress)
     synthesis = _ensure_synthesis(db, project)
     diagnosis = _ensure_diagnosis(db, project, job)

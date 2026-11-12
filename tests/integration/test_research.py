@@ -61,6 +61,10 @@ class Fakes:
 
     def structured(self, system, user, schema, **kw):
         props = schema["properties"]
+        if set(props) == {"relevant", "reason"}:  # 수집 직후 저가 모델 선별 — 'off-topic'이 든 원문만 거른다
+            self._hit("screen")
+            return CallResult(data={"relevant": "off-topic" not in user, "reason": "대상 브랜드 언급 없음"},
+                              usage={"model": "fake"}, cost_usd=0.0001)
         if set(props) == {"brands"}:
             item_props = set(schema["properties"]["brands"]["items"]["properties"])
             if item_props == {"name", "industry"}:  # 업종 추천: echo back whichever brand name was asked about
@@ -542,6 +546,18 @@ def mute_other_commerce_platforms(monkeypatch, *, keep: str = "musinsa"):
             monkeypatch.setattr(module, "find_product", lambda name, **kw: None)
 
 
+def open_pending(client, pid) -> dict:
+    """사람이 자료를 여는 것과 같다: 아직 요약·추출 전인 자료마다 추출을 부르고, 만든 문장·수치 수를 돌려준다."""
+    made = {"opened": 0, "facts": 0, "claims": 0}
+    for m in ok(client.get(f"/v1/projects/{pid}/materials")):
+        if m.get("extraction_status") == "pending":
+            out = ok(client.post(f"/v1/materials/{m['id']}/extract"))
+            made["opened"] += 1
+            made["facts"] += len(out["facts"])
+            made["claims"] += len([c for c in out["claims"] if c["author"] == "ai"])
+    return made
+
+
 def clear_cache():
     with SessionLocal() as db:
         db.query(ProviderCache).delete()
@@ -561,8 +577,16 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
     assert job["state"] == "succeeded", job
     res = job["result"]["items"][it["id"]]
     assert res["status"] == "succeeded" and res["created"] == 2 and res["pages"] == 1 and res["images"] == 1
-    assert res["facts"] == 1 and res["claims"] == 2  # fake quote and bare-digit claim are dropped
-    assert any("원문 인용 불일치" in d for d in res["dropped"]) and any("근거 없는 숫자" in d for d in res["dropped"])
+    # 수집 때는 저가 모델 선별만 — 비싼 추출은 아직 없다(자료를 열 때 한다)
+    assert res["facts"] == 0 and res["claims"] == 0 and fakes.calls["screen"] == 1 and fakes.calls.get("structured", 0) == 0
+    pending = [m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["extraction_status"] == "pending"]
+    assert len(pending) == 1 and not pending[0]["summary"] and not pending[0]["facts"]
+    opened = ok(client.post(f"/v1/materials/{pending[0]['id']}/extract"))  # 사람이 자료를 연다
+    assert len(opened["facts"]) == 1 and len([c for c in opened["claims"] if c["author"] == "ai"]) == 2
+    dropped = opened["extraction"]["dropped"]  # fake quote and bare-digit claim are dropped
+    assert any("원문 인용 불일치" in d for d in dropped) and any("근거 없는 숫자" in d for d in dropped)
+    again = ok(client.post(f"/v1/materials/{pending[0]['id']}/extract"))  # 다시 열면 저장된 결과 그대로
+    assert again["extraction_status"] == "done" and fakes.calls["structured"] == 1
 
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
     article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
@@ -604,6 +628,7 @@ def test_market_item_classifies_aspect_and_does_not_leak_to_other_sections(clien
     market_it = item(plan, "market")
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [market_it["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
     # Social cards (e.g. the fake's YouTube result) skip AI extraction entirely — only web pages are classified.
     market_mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market"}))
                   if m["source"]["source_type"] != "social"]
@@ -614,6 +639,7 @@ def test_market_item_classifies_aspect_and_does_not_leak_to_other_sections(clien
     campaign_it = item(plan2, "campaign", "경쟁X")
     job2 = ok(client.post(f"/v1/projects/{pid2}/research-runs", json={"item_ids": [campaign_it["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job2['id']}"))["state"] == "succeeded"
+    open_pending(client, pid2)  # 사람이 자료를 열어 요약·추출
     campaign_mats = [m for m in ok(client.get(f"/v1/projects/{pid2}/materials", params={"section_id": "campaign"}))
                      if m["source"]["source_type"] != "social"]
     assert campaign_mats and all(m["market_aspect"] is None for m in campaign_mats)  # market_aspect는 market 전용
@@ -626,6 +652,7 @@ def test_regulation_and_policy_item_shares_the_market_slide_as_a_policy_aspect(c
     assert policy_it["section_id"] == "market" and policy_it["role"] == "market"
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [policy_it["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
     mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market"}))
            if m["source"]["source_type"] != "social"]
     assert mats and all(m["market_aspect"] == "policy" for m in mats)
@@ -654,6 +681,7 @@ def test_market_kpi_item_only_appears_for_metric_industries_and_marks_substitute
     kpi_it = item(plan2, "market_kpi", "경쟁X")  # the fake's canned article titles only name "경쟁X"
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [kpi_it["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
 
     mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "market_kpi"}))
            if m["source"]["source_type"] != "social"]
@@ -676,6 +704,7 @@ def test_campaign_case_reassigns_to_the_brand_it_is_really_about(client, fakes):
     assert b_campaign["role"] == "self"
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [b_campaign["id"]]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
 
     mats = ok(client.get(f"/v1/projects/{pid}/materials", params={"section_id": "campaign"}))
     article = next(m for m in mats if m["source"]["url"] == "https://news.example.com/a1")
@@ -1342,7 +1371,7 @@ def test_same_activity_from_two_outlets_becomes_one_card(client, fakes):
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
     assert res["created"] == 2 and res["duplicates"] == 1
-    assert fakes.calls["structured"] == 1  # the duplicate skipped AI extraction
+    assert fakes.calls["screen"] == 1 and fakes.calls.get("structured", 0) == 0  # the duplicate skipped AI screening
 
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
     primary = next(m for m in mats if m["source"]["url"] == "https://a.example.com/1")
@@ -1495,7 +1524,7 @@ def test_research_keeps_to_the_period(client, fakes):
         if "facts" not in schema["properties"]:
             return fakes.structured(system, user, schema, **kw)
         fakes._hit("structured")
-        past = "q.example.org/past" in user
+        past = "원문 URL: https://q.example.org/past" in user  # not the other cards listed in <existing>
         act = start - timedelta(days=200) if past else start + timedelta(days=15)
         return CallResult(data={"relevant": not past, "relevance_note": "작년 활동" if past else "", "activity_date": str(act),
                                 "activity_date_end": None, "event_name": "팝업", "same_as": None, "facts": [], "claims": []},
@@ -1511,15 +1540,16 @@ def test_research_keeps_to_the_period(client, fakes):
         db.commit()
     job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
     calls = seen["calls"]  # the period is searched in parts that together span lead..tail
     assert len(calls) == 3
     assert calls[0]["published_after"] == (start - timedelta(days=30)).strftime("%m/%d/%Y")
     assert calls[-1]["published_before"] == (end + timedelta(days=14)).strftime("%m/%d/%Y")
-    assert res["created"] == 2 and res["out_of_period"] == 2  # one never fetched, one excluded after extraction
+    assert res["created"] == 2 and res["out_of_period"] == 1  # one never fetched (the other is excluded when opened)
 
     mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials"))}
     assert "https://p.example.com/old" not in mats
-    assert mats["https://p.example.com/in"]["review_status"] == "candidate"
+    assert mats["https://p.example.com/in"]["review_status"] == "candidate", mats["https://p.example.com/in"]["review_reason"]
     past = mats["https://q.example.org/past"]
     assert past["review_status"] == "excluded" and past["review_reason"].startswith("조사 기간 밖")
 
@@ -2466,6 +2496,7 @@ def test_card_ai_help_summary_suggestions_polish_chat(client, fakes):
         db.query(ProviderCache).delete()
         db.commit()
     ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
+    open_pending(client, pid)  # 사람이 자료를 열어 요약·추출
     article = next(m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["source"]["url"] == "https://news.example.com/a1")
 
     # A hand-made card gets its 해석 요약 on request (page fetched once and kept).
@@ -2530,10 +2561,51 @@ def test_accept_all_takes_waiting_cards_and_leaves_doubtful_ones(client, fakes):
         db.commit()
     c = ok(client.post(f"/v1/materials/{plain['id']}/claims", json={"kind": "fact", "text": "팝업 운영"}), 201)
     out = ok(client.post(f"/v1/projects/{pid}/materials/accept-all"))
-    assert out == {"accepted": 1, "left": 1}
+    assert out == {"accepted": 1, "left": 1, "extract_job_id": None}  # 직접 넣은 자료는 추출할 원문이 없다
     m = ok(client.get(f"/v1/materials/{plain['id']}"))
     assert m["review_status"] == "accepted" and m["claims"][0]["review_status"] == "accepted" and m["claims"][0]["id"] == c["id"]
     assert ok(client.get(f"/v1/materials/{doubtful['id']}"))["review_status"] == "candidate"
+
+
+def test_off_topic_pages_are_screened_out_and_accept_all_extracts_the_rest(client, fakes):
+    """관련 없는 원문은 수집 직후 저가 모델 선별에서 걸러져 목록에 보이지 않고, 모두 채택하면
+    채택한 자료의 요약·수치·문장을 서버 작업이 만든 뒤 함께 채택한다."""
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+    clear_cache()
+    original = fakes.fetch_page
+
+    def fetch_page(url, **kw):
+        page = original(url, **kw)
+        if not url.endswith("a2"):
+            return page
+        return Page(**{**page.__dict__, "title": "40대 소비 트렌드 일반 기사", "content_hash": "h2",
+                       "text": "요즘 40대는 러닝과 여행에 지출을 늘린다. off-topic"})
+
+    research.PROVIDERS["fetch_page"] = fetch_page
+    original_search = fakes.search
+
+    def search(queries, **kw):
+        res = original_search(queries, **kw)
+        extra = {"title": "경쟁X 다른 기사", "url": "https://news.example.com/a2", "snippet": "", "date": "2026-03-06"}
+        res.data = {**res.data, "results": [*res.data["results"], extra]}
+        return res
+
+    research.PROVIDERS["search"] = search
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["screened_out"] == 1
+    urls = [m["source"]["url"] for m in ok(client.get(f"/v1/projects/{pid}/materials"))]
+    assert "https://news.example.com/a2" not in urls and "https://news.example.com/a1" in urls  # 걸러진 자료는 숨김
+
+    out = ok(client.post(f"/v1/projects/{pid}/materials/accept-all"))
+    assert out["extract_job_id"]
+    assert ok(client.get(f"/v1/jobs/{out['extract_job_id']}"))["state"] == "succeeded"
+    article = next(m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["source"]["url"] == "https://news.example.com/a1")
+    assert article["review_status"] == "accepted" and article["extraction_status"] == "done" and article["summary"]
+    assert article["facts"] and all(f["verification_status"] == "eligible" for f in article["facts"])
+    assert [c for c in article["claims"] if c["author"] == "ai"] and \
+        all(c["review_status"] == "accepted" for c in article["claims"] if c["author"] == "ai")
 
 
 def test_results_that_never_name_the_brand_are_dropped_before_fetching(client, fakes):

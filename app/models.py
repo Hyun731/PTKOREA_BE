@@ -234,6 +234,8 @@ class Material(Base):
     duplicate_reason: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     event_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # AI's short name for the activity
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # 해석 요약: what was done, why, how it landed
+    # 요약·수치 추출은 자료를 열거나 채택할 때 한 번만(비용 절감): None=예전 방식(이미 추출) · pending · done · failed
+    extraction_status: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     target_segment: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # one of core.schemas.materials.TARGET_SEGMENTS
     # P4 사례 카드 해설 (06_AI_프롬프트_템플릿.md): set only once a CaseCommentary proposal is accepted.
     ai_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

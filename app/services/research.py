@@ -344,6 +344,28 @@ def _digits(s: str) -> str:
     return re.sub(r"[,\s]", "", s or "")
 
 
+# 수집 직후 선별(저가 모델): 관련 없는 원문은 비싼 추출 전에 거르고 목록에 보이지 않게 한다.
+SCREENED_PREFIX = "선별 제외"
+SCREEN_PAGE_CHARS = 2500
+SCREEN_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["relevant", "reason"],
+    "properties": {"relevant": {"type": "boolean"}, "reason": {"type": "string"}},
+}
+SCREEN_SYSTEM = """당신은 리서치 자료 선별 보조입니다. <page>가 <task>의 조사 질문에 답하는 자료인지만 판단합니다.
+- 조사 대상(브랜드·경쟁사)이 원문의 중심 주제이고, 조사 질문의 활동·주제를 실제로 다루면 relevant=true.
+- 대상 이름이 목록·광고·추천 링크에 스치듯 나오거나, 상품 판매 페이지·쇼핑몰 목록뿐이거나, 일반 트렌드 글에
+  대상이 없으면 false.
+- 조사 대상이 '시장' 같은 주제이면 그 주제의 수치·동향을 다루는지로 판단합니다.
+- 조사 기간 밖의 활동만 다루면 false.
+reason은 한 문장으로 씁니다."""
+
+
+def screen_prompt(item: ResearchItem, project: Project, title: str, published, text: str) -> str:
+    names = ", ".join(subject_names(item, project)[:4]) or item.entity
+    return (f"<task>조사 대상: {names}\n조사 질문: {item.question}\n조사 기간: {item.period_start} ~ {item.period_end}</task>\n"
+            f"<page>제목: {title}\n발행: {published or '미상'}\n본문 앞부분:\n{text[:SCREEN_PAGE_CHARS]}</page>")
+
+
 def validate_extraction(data: dict, page_text: str) -> tuple[list[dict], list[dict], list[str]]:
     """Keep only facts/claims whose quotes are verbatim and whose numbers are in the quote."""
     text = _norm(page_text)
@@ -587,7 +609,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         fetched = list(pool.map(lambda sm: fetch(sm[0].original_url), to_fetch))
 
     # 3. store pages and images, drop repeats of a known activity (ordered: dedupe sees earlier cards)
-    extract_jobs = []
+    screen_jobs = []
     kept = 0
     pending = {m.id for _, m in to_fetch}
     for (src, m), (page, err, images) in zip(to_fetch, fetched):
@@ -617,7 +639,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             continue
         kept += 1
         if ai_enabled and page.text:
-            extract_jobs.append((src, m, page.text, _extract_prompt(db, project, item, m, src, page.text, frozenset(pending))))
+            screen_jobs.append((src, m, screen_prompt(item, project, m.title, src.published_at, page.text)))
     # cards beyond the cap (fetched but not kept) are removed rather than left half-filled
     for (src, m), _ in list(zip(to_fetch, fetched))[out["created"]:]:
         db.delete(m)
@@ -627,26 +649,68 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             out["created"] += 1
     db.commit()
 
-    # 4. AI extraction in parallel (network via the thread-safe ledger), 5. store in order
-    def extract(job):
-        src, m, text, (user, existing_ids) = job
+    # 4. 저가 모델로 관련성만 선별(병렬). 요약·수치·문장 추출(비싼 모델)은 자료를 열거나 채택할 때 한다.
+    def screen(job):
+        src, m, user = job
         try:
-            return ledger.call("anthropic", "extract", {"url": src.original_url, "hash": src.content_hash,
-                                                        "item": item.question}, 0.08,
-                               lambda: p["structured"](EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, max_tokens=6000)), None
+            return ledger.call("anthropic", "screen", {"url": src.original_url, "hash": src.content_hash,
+                                                       "item": item.question}, 0.001,
+                               lambda: p["structured"](SCREEN_SYSTEM, user, SCREEN_SCHEMA, max_tokens=300,
+                                                       effort="low", light=True)), None
         except ProviderError as exc:
             return None, exc
 
-    with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="extract") as pool:
-        answers = list(pool.map(extract, extract_jobs))
-    for (src, m, text, (_, existing_ids)), (res, err) in zip(extract_jobs, answers):
-        if err:
-            if err.code == "BUDGET_EXCEEDED":
-                raise err
-            out["errors"].append({"code": err.code, "message": f"AI 추출 실패: {err.message}"})
+    with ThreadPoolExecutor(max_workers=PAGE_WORKERS, thread_name_prefix="screen") as pool:
+        answers = list(pool.map(screen, screen_jobs))
+    for (src, m, _), (res, err) in zip(screen_jobs, answers):
+        if err and err.code == "BUDGET_EXCEEDED":
+            raise err
+        if res is not None and not res.data.get("relevant"):
+            hide_screened(m, (res.data.get("reason") or "")[:200])
+            out["screened_out"] = out.get("screened_out", 0) + 1
             continue
-        _apply_extraction(db, project, item, m, src, text, res.data, existing_ids, out)
-        db.commit()
+        m.extraction_status = "pending"  # 선별 실패(err)도 사람이 열어 보면 그때 추출한다
+        if period.apply(m, item, src) == "out":
+            out["out_of_period"] = out.get("out_of_period", 0) + 1
+    db.commit()
+    return out
+
+
+def hide_screened(m: Material, reason: str) -> None:
+    """선별에서 걸러진 자료: 목록에 보이지 않는 시스템 제외(같은 URL을 다음 실행이 다시 가져오지 않게 행은 남긴다)."""
+    m.review_status = "excluded"
+    m.review_reason = f"{SCREENED_PREFIX}: {reason}" if reason else SCREENED_PREFIX
+
+
+def extract_material(db: Session, ledger: RunLedger, project: Project, m: Material) -> dict:
+    """자료 하나의 요약·수치·문장 추출(비싼 모델) — 사람이 자료를 열거나 채택할 때 한 번만 부른다.
+    관련 없다고 판단되면 아직 검토 전인 자료는 목록에서 숨긴다. 이미 채택된 자료면 새 문장·수치도 함께 채택한다."""
+    from app.services import adopt
+
+    out: dict = {"facts": 0, "claims": 0, "duplicates": 0, "errors": []}
+    src = db.get(Source, m.source_id)
+    item = db.get(ResearchItem, m.research_item_id) if m.research_item_id else None
+    if item is None or src is None or not src.text:
+        m.extraction_status = "failed"
+        out["errors"].append({"code": "NO_TEXT", "message": "원문이 없어 요약할 수 없습니다"})
+        return out
+    p = _providers()
+    user, existing_ids = _extract_prompt(db, project, item, m, src, src.text)
+    try:
+        res = ledger.call("anthropic", "extract", {"url": src.original_url, "hash": src.content_hash,
+                                                    "item": item.question}, 0.08,
+                          lambda: p["structured"](EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, max_tokens=6000))
+    except ProviderError as exc:
+        m.extraction_status = "failed"
+        out["errors"].append({"code": exc.code, "message": f"AI 추출 실패: {exc.message}"})
+        return out
+    was = m.review_status
+    _apply_extraction(db, project, item, m, src, src.text, res.data, existing_ids, out)
+    m.extraction_status = "done"
+    if not res.data.get("relevant") and m.review_status == "candidate":  # 기간 밖 판정(제외·사유 표시)은 그대로 둔다
+        hide_screened(m, (res.data.get("relevance_note") or "")[:200])
+    elif was == "accepted":
+        adopt.adopt_children(db, m)
     return out
 
 
@@ -1346,7 +1410,8 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         src, m, user = job
         try:
             return ledger.call("anthropic", "voc_classify", {"url": src.original_url, "hash": src.content_hash}, 0.01,
-                               lambda: p["structured"](VOC_SYSTEM, user, VOC_SCHEMA, max_tokens=800)), None
+                               lambda: p["structured"](VOC_SYSTEM, user, VOC_SCHEMA, max_tokens=800,
+                                                       effort="low", light=True)), None
         except ProviderError as exc:
             return None, exc
 
@@ -2324,7 +2389,8 @@ def run_blog_types(db: Session, ledger: RunLedger, project: Project, item: Resea
                 ans = ledger.call("anthropic", "blog_type_classify",
                                   {"keyword": kw, "urls": [d["url"] for d, _ in batch],
                                    "hash": hashlib.sha256(user.encode("utf-8")).hexdigest()}, 0.01,
-                                  lambda u=user: p["structured"](BLOG_TYPE_SYSTEM, u, BLOG_TYPE_SCHEMA, max_tokens=800))
+                                  lambda u=user: p["structured"](BLOG_TYPE_SYSTEM, u, BLOG_TYPE_SCHEMA, max_tokens=800,
+                                                                 effort="low", light=True))
             except ProviderError as exc:
                 if exc.code == "BUDGET_EXCEEDED":
                     raise
