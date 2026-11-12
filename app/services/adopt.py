@@ -30,6 +30,12 @@ def doubt(m: Material, src: Source) -> str | None:
 
 def adopt(db: Session, m: Material, who: str) -> None:
     m.review_status, m.reviewed_by, m.reviewed_at = "accepted", who, utcnow()
+    adopt_children(db, m)
+    m.version += 1
+
+
+def adopt_children(db: Session, m: Material) -> None:
+    """채택된 자료의 AI 문장·원문 수치·대표 이미지를 함께 채택한다(추출이 채택 뒤에 끝난 경우에도 부른다)."""
     for c in db.scalars(select(Claim).where(Claim.material_id == m.id, Claim.review_status == "pending")):
         c.review_status = "accepted"
     for f in db.scalars(select(FactRow).where(FactRow.material_id == m.id, FactRow.verification_status == "candidate",
@@ -39,7 +45,6 @@ def adopt(db: Session, m: Material, who: str) -> None:
         a = db.get(Asset, m.selected_asset_id)
         if a and a.review_status == "candidate":
             a.review_status = "accepted"
-    m.version += 1
 
 
 def accept_all(db: Session, project: Project, who: str) -> dict:
