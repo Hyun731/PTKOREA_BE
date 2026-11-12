@@ -486,6 +486,9 @@ def review_material(material_id: str, body: ReviewIn, db: Session = Depends(get_
     before = m.review_status
     m.review_status, m.review_reason, m.reviewed_by, m.reviewed_at = body.status, body.reason, who, utcnow()
     m.version += 1
+    if body.status == "accepted":
+        from app.services.market_figures import adopt_figures
+        adopt_figures(db, m)  # P4-1: the card's market figures go in with it
     audit(db, m.project_id, "material", m.id, "review", before=before, after=body.status, reason=body.reason, actor=who)
     db.commit()
     return material_out(db, m)
