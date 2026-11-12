@@ -1,7 +1,8 @@
 """업종별 세부 트렌드 키워드 후보 (피드백 #1 하이브리드 설계), candidates only.
 
-core.industry_profiles.INDUSTRY_PROFILES에 프로필이 없는 업종의 브랜드마다, Perplexity 검색 +
-AI 판단으로 그 업계의 구체적인 서브트렌드 키워드(예: 여행업 '트래블룩', '고프코어')를 찾는다.
+core.industry_profiles.INDUSTRY_PROFILES에 확인된(reviewed) 프로필이 없는 업종의 브랜드마다, 그 업계의
+구체적인 서브트렌드 키워드(예: 여행업 '트래블룩', '고프코어')를 후보로 낸다. 검토 전 AI 초안 프로필이
+있으면 그 keyword_hints를 후보로 쓰고(외부 호출 없음), 없으면 Perplexity 검색 + AI 판단으로 찾는다.
 아무것도 자동 채택하지 않는다: 모든 후보는 IndustryKeywordHint(status="candidate")로 남고,
 사람이 확인해야(core.schemas.project.Brand.keyword_hints()) 시장 조사(3-1) 검색에 쓰인다.
 """
@@ -44,15 +45,19 @@ def _search():
 
 
 def missing(brand: dict) -> bool:
-    """이 브랜드의 업종에 사전 정의된 프로필이 없고, 아직 후보를 낸 적도 없으면 True."""
+    """이 브랜드의 업종에 확인된 프로필이 없고, 아직 후보를 낸 적도 없으면 True."""
     industry = brand.get("industry")
-    if not industry or industry in INDUSTRY_PROFILES:
+    profile = INDUSTRY_PROFILES.get(industry or "")
+    if not industry or (profile and profile.reviewed):
         return False
     return not brand.get("industry_keywords")
 
 
 def discover(industry: str, ledger: RunLedger) -> list[dict]:
     """<industry> 업계의 후보 IndustryKeywordHint dict 목록, 없으면 []."""
+    draft = INDUSTRY_PROFILES.get(industry)
+    if draft and draft.keyword_hints:  # 검토 전 AI 초안 — 사람이 확인해야 쓰인다
+        return [{"text": t, "status": "candidate"} for t in draft.keyword_hints[:5]]
     query = f"{industry} 업계 트렌드 키워드 2026"
     try:
         res = ledger.call("perplexity", "industry_keywords_search", {"industry": industry}, 0.005,

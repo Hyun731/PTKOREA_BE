@@ -32,7 +32,8 @@ SECTIONS = [
              "리뷰 수·긍정부정 키워드. 무신사 외에는 봇 차단으로 접근 불가가 흔함",
      "default_window": "최신 수집 시점"},
     {"id": "voc", "label": "소비자 원문(VOC)", "templates": ["5-1", "5-2"],
-     "data": "카페·블로그·커뮤니티 공개 글(Perplexity 사이트 검색) + X·Threads 공개 게시물(ScrapeCreators 키워드 검색) — "
+     "data": "카페·블로그·커뮤니티 공개 글(네이버 검색 API·Perplexity 사이트 검색) + 네이버 지식iN + X·Threads·TikTok 공개 게시물과 "
+             "YouTube 영상 댓글(ScrapeCreators 키워드 검색) — "
              "AI 감성·주제·인식 경로 분류",
      "default_window": "24M"},
     # P4-3: 장표에 바로 들어가지 않는 조사 항목의 자료 카드(자료 확인 화면에서 항목별로 본다)
@@ -98,6 +99,13 @@ CHANNELS = {
     # 아니라 ScrapeCreators의 키워드 검색 API를 직접 쓴다. 페이스북은 문서화된 게시물 검색이 없어 뺐다.
     "x_search": {"label": "X(트위터) 공개 게시물 검색", "support": "auto", "provider": "scrapecreators"},
     "threads_search": {"label": "Threads 공개 게시물 검색", "support": "auto", "provider": "scrapecreators"},
+    # P2-8: 같은 '검색 결과 = 본문' 경로 — 틱톡은 영상 설명(한국어로 브랜드를 말하는 것만), 유튜브는
+    # 기간 안 상위 영상의 제목과 시청자 댓글을 원문 하나로 쓴다. 지식iN은 네이버 검색 API.
+    "tiktok_search": {"label": "TikTok 공개 영상 검색", "support": "auto", "provider": "scrapecreators"},
+    "youtube_search": {"label": "YouTube 영상 검색과 댓글", "support": "auto", "provider": "scrapecreators"},
+    "naver_kin": {"label": "네이버 지식iN 질문·답변", "support": "auto", "provider": "naver"},
+    # P2-9: 메타(국내 게재)·구글(국내 게재)·틱톡(유럽 공개분) 공개 광고 라이브러리 — 소재 수와 AI 유형 비중.
+    "ad_library": {"label": "공개 광고 라이브러리 (메타·구글·틱톡)", "support": "auto", "provider": "scrapecreators"},
     # Phase 2: 무신사·29CM·올리브영·스마트스토어·쿠팡 모두 공개 페이지 자동 수집을 시도한다.
     # 무신사만 정직한 봇 식별 요청을 허용하고, 나머지는 봇 차단(Cloudflare·Akamai 등)으로
     # 접근 불가가 흔하다 — 우회 없이 "접근 불가"로 남긴다.

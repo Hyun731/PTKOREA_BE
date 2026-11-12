@@ -31,6 +31,8 @@ class Project(Base):
     lead_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> Headline
     insight_overrides: Mapped[dict] = mapped_column(JSON, default=dict)  # slide_id -> [{title, body_segments}]
     synthesis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Phase 3-1 전: 더 안 씀, SynthesisRun으로 대체
+    # P5-1 브랜드 진단: {brand_id: {"active": n, "versions": [...]}} (core.schemas.diagnosis.DiagnosisVersion)
+    diagnosis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     owner: Mapped[str] = mapped_column(String(120), default="dev")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -148,7 +150,7 @@ class ImportBatch(Base):
     __tablename__ = "import_batches"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(10))  # facts | posts
+    kind: Mapped[str] = mapped_column(String(10))  # facts | posts | client (P4-5 보유 자료)
     filename: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(20), default="candidate")  # candidate|accepted|rejected|replaced
     total_rows: Mapped[int] = mapped_column(Integer, default=0)
@@ -168,7 +170,7 @@ class FactRow(Base):
     pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     fact_id: Mapped[str] = mapped_column(String(40), index=True)
-    origin: Mapped[str] = mapped_column(String(10))  # csv | posts | manual | auto (AI-extracted candidate)
+    origin: Mapped[str] = mapped_column(String(10))  # csv | posts | client (P4-5 보유 자료) | manual | auto (AI-extracted candidate)
     batch_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     material_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     research_item_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)

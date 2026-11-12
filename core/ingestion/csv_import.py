@@ -11,7 +11,7 @@ import hashlib
 import io
 import json
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable, Optional
 
 from core.decimalx import DecimalParseError, canonical_decimal, parse_count, parse_decimal
@@ -357,3 +357,247 @@ def _parse_post_row(row: dict, row_no: int, brand_ids: set[str], batch_id: str,
         facts.append(fact)
         post.fact_ids[field] = fact.id
     return post, facts
+
+
+# ------------------------------------------------------------------ 고객 제공 자료 (P4-5)
+# 설문·내부 리포트·SNS 인사이트처럼 고객이 가진 수치를 한 줄에 하나씩 올린다. 열 이름은 한국어(양식)와
+# 영어(개발 문서) 둘 다 받는다. 올린 수치는 확인 전(candidate)이고, 배치를 채택해야 계산·장표에 쓰인다.
+
+CLIENT_METRIC = "client_metric"
+CLIENT_METHOD = "client_provided"  # Fact.method — 고객 제공 수치 표시(각주는 Fact.source가 맡는다)
+CLIENT_SOURCE_PREFIX = "고객 제공"
+CLIENT_COLUMNS: list[tuple[str, str, bool]] = [  # (영문 열, 양식 열, 필수)
+    ("entity", "대상", True), ("metric_label", "지표", True), ("value", "값", True), ("unit", "단위", True),
+    ("period_start", "시작일", True), ("period_end", "종료일", True), ("segment", "구분", False),
+    ("sample_n", "응답자 수", False), ("source_name", "출처", True), ("source_date", "출처 날짜", False),
+]
+_CLIENT_HEADER = {ko: en for en, ko, _ in CLIENT_COLUMNS} | {en: en for en, _, _ in CLIENT_COLUMNS}
+_CLIENT_LABEL = {en: ko for en, ko, _ in CLIENT_COLUMNS}
+# 단위 표기 → (Fact.unit, 곱할 수). Fact.unit은 장표 서식(UNIT_FORMATTER)이 아는 이름만 쓴다.
+CLIENT_UNITS: dict[str, tuple[str, int]] = {
+    "%": ("percent", 1), "퍼센트": ("percent", 1), "percent": ("percent", 1),
+    "%p": ("pp", 1), "pp": ("pp", 1),
+    "원": ("krw", 1), "천원": ("krw", 1_000), "만원": ("krw", 10_000), "백만원": ("krw", 1_000_000),
+    "억원": ("krw", 100_000_000), "krw": ("krw", 1),
+    "명": ("count", 1), "건": ("count", 1), "개": ("count", 1), "회": ("count", 1), "count": ("count", 1),
+    "위": ("rank", 1), "rank": ("rank", 1),
+    "점": ("rating", 1), "rating": ("rating", 1),
+    "지수": ("index", 1), "index": ("index", 1),
+    "개월": ("months", 1),
+}
+
+
+def client_template_csv() -> str:
+    """내려받는 양식: 머리글 한 줄(예시 행은 넣지 않는다 — 지우지 않고 올리면 가짜 수치가 섞인다)."""
+    return "﻿" + ",".join(ko for _, ko, _ in CLIENT_COLUMNS) + "\r\n"
+
+
+def _excel_serial(text: str) -> Optional[date]:
+    """엑셀이 날짜를 숫자(1900년부터 센 날)로 내보낸 경우."""
+    try:
+        n = float(text)
+    except ValueError:
+        return None
+    if 20000 <= n <= 80000:
+        return date(1899, 12, 30) + timedelta(days=int(n))
+    return None
+
+
+def _client_date(raw: str, column: str, *, end: bool = False) -> date:
+    text = (raw or "").strip().replace(".", "-").replace("/", "-").rstrip("-")
+    serial = _excel_serial(text) if text and "-" not in text else None
+    if serial:
+        return serial
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})(?:-(\d{1,2}))?", text)
+    if not m:
+        raise RowInvalid(column, "INVALID_DATE", f"{_CLIENT_LABEL[column]}은 2026-03-31처럼 적어 주세요: {raw!r}")
+    y, mo = int(m.group(1)), int(m.group(2))
+    try:
+        if m.group(3):
+            return date(y, mo, int(m.group(3)))
+        return date(y, mo, calendar.monthrange(y, mo)[1] if end else 1)  # 2026-03 = 그 달 전체
+    except (ValueError, calendar.IllegalMonthError) as exc:
+        raise RowInvalid(column, "INVALID_DATE", f"{_CLIENT_LABEL[column]}에 없는 날짜입니다: {raw!r}") from exc
+
+
+def _client_brand(entity: str, brands: list) -> Optional[tuple[str, str]]:
+    """(brand_id, 정식 이름) — 자사 브랜드가 먼저, 그다음 경쟁사(다른 표기 포함)."""
+    for b in brands:
+        if entity in b.names_for(b.name):
+            return b.id, b.name
+    for b in brands:
+        for c in b.competitors:
+            if entity in b.names_for(c):
+                return b.id, c
+    return None
+
+
+def import_client_csv(text: str, project: Project, batch_id: str, file: str = "client.csv") -> ImportResult:
+    fieldnames, rows = _read_rows(text)
+    result = ImportResult(file=file, batch_id=batch_id, total_rows=len(rows))
+    header = {(n or "").strip(): _CLIENT_HEADER.get((n or "").strip()) for n in fieldnames}
+    have = set(header.values())
+    missing = [ko for en, ko, required in CLIENT_COLUMNS if required and en not in have]
+    if missing:
+        result.errors.extend(RowError(file=file, row_no=1, column=c, code="MISSING_COLUMN", message=f"'{c}' 열이 없습니다")
+                             for c in missing)
+        return result
+    parsed: list[Fact] = []
+    for idx, raw in enumerate(rows):
+        row = {header[k.strip()]: v for k, v in raw.items() if isinstance(k, str) and header.get(k.strip())}
+        if not any((v or "").strip() for v in row.values()):
+            result.total_rows -= 1  # 빈 줄(엑셀이 끝에 남기는 것)은 세지 않는다
+            continue
+        try:
+            parsed.append(_parse_client_row(row, idx + 2, project.brands, batch_id))
+        except RowInvalid as err:
+            result.errors.append(RowError(file=file, row_no=idx + 2, column=_CLIENT_LABEL.get(err.column or "", err.column),
+                                          code=err.code, message=err.message))
+    result.facts, result.duplicates = _dedupe(parsed)
+    return result
+
+
+def _parse_client_row(row: dict, row_no: int, brands: list, batch_id: str) -> Fact:
+    def cell(name: str) -> str:
+        return " ".join((row.get(name) or "").split())
+
+    entity = cell("entity")
+    found = _client_brand(entity, brands)
+    if not found:
+        raise RowInvalid("entity", "UNKNOWN_ENTITY", f"설정에 없는 브랜드·경쟁사입니다: {entity!r}")
+    brand_id, entity = found
+    label = cell("metric_label")
+    if not label:
+        raise RowInvalid("metric_label", "MISSING_VALUE", "지표 이름이 비어 있습니다")
+    unit_raw = cell("unit")
+    unit_key = unit_raw if unit_raw in CLIENT_UNITS else unit_raw.lower()
+    if unit_key not in CLIENT_UNITS:
+        raise RowInvalid("unit", "INVALID_UNIT", "단위는 %, %p, 원, 만원, 억원, 명, 건, 개, 회, 위, 점, 지수 중 하나로 적어 주세요")
+    unit, scale = CLIENT_UNITS[unit_key]
+    try:
+        value = parse_decimal(cell("value").replace(",", "").removesuffix("%"))
+    except DecimalParseError as exc:
+        raise RowInvalid("value", "INVALID_VALUE", f"값이 숫자가 아닙니다: {cell('value')!r}") from exc
+    if value is None:
+        raise RowInvalid("value", "INVALID_VALUE", "값이 비어 있습니다")
+    value = value * scale
+    if unit in ("count", "rank") and value != value.to_integral_value():
+        raise RowInvalid("value", "INVALID_VALUE", f"{unit_raw} 단위 값은 정수여야 합니다")
+    start = _client_date(cell("period_start"), "period_start")
+    end = _client_date(cell("period_end"), "period_end", end=True)
+    if start > end:
+        raise RowInvalid("period_end", "INVALID_PERIOD", "시작일이 종료일보다 늦습니다")
+    source_name = cell("source_name")
+    if not source_name:
+        raise RowInvalid("source_name", "MISSING_SOURCE", "출처(조사·리포트 이름)가 비어 있습니다")
+    measured_at = _client_date(cell("source_date"), "source_date") if cell("source_date") else end
+    dims: dict[str, str] = {}
+    if cell("segment"):
+        dims["segment"] = cell("segment")
+    if cell("sample_n"):
+        try:
+            n = parse_count(cell("sample_n").replace(",", ""))
+        except DecimalParseError as exc:
+            raise RowInvalid("sample_n", "INVALID_COUNT", "응답자 수는 0 이상의 정수여야 합니다") from exc
+        if n is not None:
+            dims["n"] = str(n)
+    source = f"{CLIENT_SOURCE_PREFIX} · {source_name}"
+    payload = {"brand": brand_id, "entity": entity, "metric": CLIENT_METRIC, "label": label,
+               "value": canonical_decimal(value), "unit": unit, "dims": _canonical_dims(dims),
+               "period": f"{start}~{end}", "measured_at": measured_at.isoformat(), "source": source}
+    h = content_hash(payload)
+    return Fact(id=fact_id_from_hash(h), content_hash=h, brand_id=brand_id, entity=entity, metric=CLIENT_METRIC,
+                value=value, unit=unit, dims=dims, period_start=start, period_end=end, measured_at=measured_at,
+                source=source, method=CLIENT_METHOD, confidence="verified", label=label,
+                source_record_key=f"{label}|{dims.get('segment', '')}", batch_id=batch_id, row_no=row_no)
+
+
+def xlsx_to_csv(data: bytes) -> str:
+    """첫 시트를 CSV 글로 바꾼다(엑셀 양식 지원 — 별도 라이브러리 없이 xlsx의 XML을 직접 읽는다)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+          "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+          "pr": "http://schemas.openxmlformats.org/package/2006/relationships"}
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        book = ET.fromstring(z.read("xl/workbook.xml"))
+        first = book.find("m:sheets/m:sheet", ns)
+        rid = first.get(f"{{{ns['r']}}}id") if first is not None else None
+        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        target = next((r.get("Target") for r in rels.findall("pr:Relationship", ns) if r.get("Id") == rid), None)
+        if not target:
+            raise ValueError("시트가 없습니다")
+        path = target.lstrip("/") if target.startswith("/") else "xl/" + target
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in z.namelist():
+            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+                shared.append("".join(t.text or "" for t in si.iter(f"{{{ns['m']}}}t")))
+        sheet = ET.fromstring(z.read(path))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, ValueError) as exc:
+        raise ValueError("엑셀 파일을 읽을 수 없습니다") from exc
+
+    def col_index(ref: str) -> int:
+        n = 0
+        for ch in re.match(r"[A-Z]*", ref).group(0) or "A":
+            n = n * 26 + ord(ch) - 64
+        return n - 1
+
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\r\n")
+    for row in sheet.iter(f"{{{ns['m']}}}row"):
+        cells: dict[int, str] = {}
+        for c in row.findall("m:c", ns):
+            t, v = c.get("t"), c.find("m:v", ns)
+            if t == "s" and v is not None:
+                text = shared[int(v.text)]
+            elif t == "inlineStr":
+                text = "".join(x.text or "" for x in c.iter(f"{{{ns['m']}}}t"))
+            elif v is not None and v.text is not None:
+                text = v.text
+                if t in (None, "n") and re.fullmatch(r"-?\d+\.\d+(E-?\d+)?", text, re.I):
+                    text = f"{float(text):.10f}".rstrip("0").rstrip(".")  # 0.30000000000000004 → 0.3
+            else:
+                text = ""
+            cells[col_index(c.get("r", "A"))] = text
+        if cells:
+            w.writerow([cells.get(i, "") for i in range(max(cells) + 1)])
+    return out.getvalue()
+
+
+def client_charts(facts: list[Fact], self_names: set[str]) -> list[dict]:
+    """채택한 고객 제공 수치를 지표(이름·단위·구분)별 차트로 묶는다 — 기간이 하나면 막대, 여럿이면 선.
+    화면(자료 확인)이 편집기 차트(bar_chart·line_chart 블록) 모양 그대로 그린다."""
+    from core.composition.formatters import UNIT_FORMATTER, format_value
+
+    groups: dict[tuple, list[Fact]] = {}
+    for f in sorted(facts, key=lambda f: (f.measured_at, f.row_no or 0)):
+        if f.metric == CLIENT_METRIC and f.value is not None:
+            groups.setdefault((f.label or "", f.unit, f.dims.get("segment", "")), []).append(f)
+    charts = []
+    for (label, unit, segment), members in groups.items():
+        fmt = UNIT_FORMATTER.get(unit, "int")
+        periods = sorted({(f.period_start, f.period_end) for f in members})
+        entities = list(dict.fromkeys(sorted((f.entity for f in members), key=lambda e: e not in self_names)))
+
+        def role(e: str) -> str:
+            return "self" if e in self_names else "other"
+
+        base = {"label": label, "unit": unit, "segment": segment or None,
+                "sources": sorted({f.source for f in members}),
+                "n": sorted({int(f.dims["n"]) for f in members if "n" in f.dims})}
+        latest = {(f.entity, (f.period_start, f.period_end)): f for f in members}  # 같은 칸은 나중 것이 이긴다
+        if len(periods) == 1:
+            p = periods[0]
+            charts.append({**base, "kind": "bar_chart", "period": [str(p[0]), str(p[1])], "items": [
+                {"entity": e, "label": e, "fact_id": latest[(e, p)].id, "value": float(latest[(e, p)].value),
+                 "display": format_value(fmt, latest[(e, p)].value), "role": role(e)} for e in entities]})
+            continue
+        cats = [f"{s:%Y.%m}" if (s.year, s.month) == (e.year, e.month) else f"{s:%y.%m}~{e:%y.%m}" for s, e in periods]
+        charts.append({**base, "kind": "line_chart", "categories": cats, "series": [
+            {"entity": e, "role": role(e), "points": [
+                {"month": c, "value": float(latest[(e, p)].value) if (e, p) in latest else None}
+                for c, p in zip(cats, periods)]}
+            for e in entities]})
+    return charts

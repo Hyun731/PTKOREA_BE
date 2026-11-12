@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from app.services.catalog import CHANNELS, shift_months
+from core.industry_profiles import profile_for
 from core.ingestion.csv_import import window_months
 from core.schemas.project import INDUSTRY_TYPES, Project, ScopeSetting
 
@@ -34,9 +35,10 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "search_trend": {"google_trends", "shopping_insight"},
     "commerce_review": {"commerce_review"},
     "search": {"search_naver", "naver_mentions", "naver_blog_types"},
-    "voc": {"community", "naver_blog", "x_search", "threads_search"},
+    "voc": {"community", "naver_blog", "x_search", "threads_search", "tiktok_search", "youtube_search", "naver_kin"},
     # P4-3: 공개 웹으로 찾을 수 있는 이슈·포지셔닝·트렌드 항목 — 웹 기사(Perplexity)와 네이버 뉴스로 자료 카드를 만든다.
     "issue": {"web", "naver_news"},
+    "ad_library": {"ad_library"},
 }
 
 # subject: self | competitor | benchmark | market — whom one research item looks at, per self brand.
@@ -115,9 +117,14 @@ ITEMS: list[dict] = [
      "templates": ["M1"], "channels": ["web", "report"], "default_channels": ["web"], "period": "inherit",
      "output": "이슈마다 기관·일자·영향 1줄"},
     {"id": "3-5", "part": "competitor", "group": "경쟁사", "title": "경쟁사 포지셔닝 (3C 비교)",
-     "question": "경쟁사 {entity}의 타깃 공략 방식·포지셔닝·미디어 믹스", "subject": "competitor", "collector": "issue",
-     "channels": ["web", "tvcf", "youtube"], "default_channels": ["web"], "period": "inherit",
-     "output": "경쟁사마다 Customer·Competitor·Company 각 1~2줄"},
+     # P2-9: 포지셔닝의 근거로 경쟁사 광고 소재(공개 광고 라이브러리)를 자동으로 모은다 — 소재 수·유형 비중.
+     "question": "경쟁사 {entity}의 타깃 공략 방식·포지셔닝·미디어 믹스", "subject": "competitor",
+     # P4-3 웹 기사와 P2-9 광고 라이브러리는 서로 다른 provider/결과를 만들므로 같은 범위에서 두 item으로 실행한다.
+     "collector": "issue", "collectors": ["issue", "ad_library"],
+     "channels": ["web", "naver_news", "ad_library", "tvcf", "youtube"],
+     "default_channels": ["web", "ad_library"],
+     "period": "inherit",
+     "output": "경쟁사마다 Customer·Competitor·Company 각 1~2줄 + 광고 소재 수·유형 비중(제품·셀럽·크리에이터·할인·브랜드 필름)"},
     {"id": "3-6", "part": "competitor", "group": "경쟁사", "title": "경쟁사 BRAND 페이지",
      "question": "경쟁사 {entity}의 슬로건·TVC 카피·공식 문구, 비주얼, 소비자가 읽은 메시지", "subject": "competitor",
      "collector": "issue", "channels": ["web", "instagram", "youtube", "commerce_review", "community"],
@@ -152,15 +159,19 @@ ITEMS: list[dict] = [
     {"id": "5-1", "part": "customer", "group": "소비자 인식", "title": "소비자 인식 원문",
      "question": "{brand}를 믿고 사는 이유와 다른 브랜드로 넘어가는 이유(소비자 원문)", "subject": "self_and_competitor",
      "collector": "voc", "templates": ["5-1"],
-     "channels": ["community", "naver_blog", "x_search", "threads_search", "commerce_review", "app_review"],
-     "default_channels": ["community", "naver_blog", "x_search", "threads_search"], "period": 24,
+     "channels": ["community", "naver_blog", "naver_kin", "x_search", "threads_search", "tiktok_search", "youtube_search",
+                  "commerce_review", "app_review"],
+     "default_channels": ["community", "naver_blog", "naver_kin", "x_search", "threads_search", "tiktok_search",
+                          "youtube_search"], "period": 24,
      "period_hint": "커뮤니티 표본 확보를 위해 넓게",
      "output": "긍정·부정 키워드 TOP5 + 불만 요인 3개, 키워드마다 원문·일자"},
     {"id": "5-2", "part": "customer", "group": "소비자 인식", "title": "브랜드 인식 경로",
      "question": "{brand} 소비자가 브랜드를 처음 알거나 확인한 경로(광고·지인·인플루언서·매장·검색 등)", "subject": "self_and_competitor",
      "collector": "voc", "templates": ["5-2"],
-     "channels": ["community", "naver_blog", "x_search", "threads_search", "report", "upload"],
-     "default_channels": ["community", "naver_blog", "x_search", "threads_search"], "period": 24,
+     "channels": ["community", "naver_blog", "naver_kin", "x_search", "threads_search", "tiktok_search", "youtube_search",
+                  "report", "upload"],
+     "default_channels": ["community", "naver_blog", "naver_kin", "x_search", "threads_search", "tiktok_search",
+                          "youtube_search"], "period": 24,
      "period_hint": "5-1과 같은 원문에서 뽑음",
      "uploads": ["브랜드 트래커"], "output": "접점별 비중 + 표본 수 + 분류 방법"},
     {"id": "5-3", "part": "customer", "group": "구매 여정", "title": "구매 여정과 이탈 지점",
@@ -200,7 +211,8 @@ def automation(spec: dict, channels: list[str]) -> str:
     col = spec["collector"]
     if col == "generated":
         return "generated"
-    if col and AUTO_CHANNELS.get(col, set()) & set(channels):
+    collectors = spec.get("collectors", [col])
+    if any(AUTO_CHANNELS.get(collector or "", set()) & set(channels) for collector in collectors):
         return "auto"
     return "manual"
 
@@ -212,7 +224,9 @@ def catalog() -> dict:
             "id": s["id"], "part": s["part"], "group": s["group"], "title": s["title"], "question": s["question"],
             "subject": s["subject"], "collector": s["collector"], "templates": s.get("templates", []),
             "channels": s["channels"], "default_channels": _default_channels(s),
-            "auto_channels": sorted(AUTO_CHANNELS.get(s["collector"] or "", set()) & set(s["channels"])),
+            "auto_channels": sorted(set().union(*(AUTO_CHANNELS.get(c or "", set())
+                                                   for c in s.get("collectors", [s["collector"]])))
+                                    & set(s["channels"])),
             "period": s["period"], "period_hint": s.get("period_hint"), "limit": s.get("limit"),
             "uploads": s.get("uploads", []), "needs": s.get("needs"), "from": s.get("from", []), "output": s["output"],
         })
@@ -229,6 +243,9 @@ def _default_setting(spec: dict, project: Project) -> ScopeSetting:
         enabled = any("metric" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
     if spec["id"] == "2-9":  # 커머스 리뷰: 리뷰 중심 업종에서만 기본으로 켠다(전자·뷰티·패션은 꺼도 감사 기록)
         enabled = any("review" in INDUSTRY_TYPES.get(b.industry, ()) for b in project.brands)
+    # P4-2: 업종 프로필이 기본으로 켜라고 한 항목(예: 여행 → 업종 KPI의 출입국자 수)은 유형과 상관없이 켠다.
+    if any(spec["id"] in getattr(profile_for(b.industry), "default_scope_on", ()) for b in project.brands):
+        enabled = True
     section = next((sec for sec, iid in SECTION_ITEM.items() if iid == spec["id"]), None)
     w = project.window_for(section) if section else None
     if w and (w.start, w.end) != (project.period.start, project.period.end):  # a window set before scope existed
@@ -377,12 +394,17 @@ def generate_items(project: Project) -> list[dict]:
             if not r["enabled"] or spec["collector"] == "generated":
                 continue
             for entity, role in _subjects(spec, brand, r["targets"]):
-                items.append({
-                    "order": len(items) + 1, "brand_id": brand.id, "entity": entity, "role": role,
-                    "section_id": spec["collector"] or spec["part"], "scope_id": spec["id"],
-                    "question": spec["question"].format(brand=brand.name, entity=entity, category=category,
-                                                        competitors=", ".join(brand.competitors)),
-                    "period_start": r["start"], "period_end": r["end"], "channels": r["channels"],
-                    "required": role == "self" and spec["collector"] is not None,
-                })
+                for collector in spec.get("collectors", [spec["collector"] or spec["part"]]):
+                    channels = [channel for channel in r["channels"] if channel in AUTO_CHANNELS.get(collector, set())]
+                    if not channels and spec.get("collectors"):
+                        continue
+                    items.append({
+                        "order": len(items) + 1, "brand_id": brand.id, "entity": entity, "role": role,
+                        "section_id": collector, "scope_id": spec["id"],
+                        "question": spec["question"].format(brand=brand.name, entity=entity, category=category,
+                                                            competitors=", ".join(brand.competitors)),
+                        "period_start": r["start"], "period_end": r["end"],
+                        "channels": channels if spec.get("collectors") else r["channels"],
+                        "required": role == "self" and spec["collector"] is not None,
+                    })
     return items

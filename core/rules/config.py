@@ -32,6 +32,10 @@ class RulesConfig:
     shop_peak_lift: Decimal = Decimal("1.2")
     shop_peak_min_months: int = 9  # 데이터가 있는 달이 이보다 적은 드문 키워드는 성수기를 말하지 않는다
     line_chart_min_points: int = 4
+    # P2-10 크리에이터 필터: 해시태그로 찾은 인스타그램 게시물 중 팔로워가 이보다 적거나, 캡션·바이오에
+    # 한글이 없는 계정(해외)은 인플루언서 표에 넣지 않는다.
+    creator_min_followers: int = 1000
+    creator_require_korean: bool = True
     density_rules: dict[str, dict] = field(default_factory=dict)
 
     @classmethod
@@ -57,5 +61,7 @@ class RulesConfig:
             shop_peak_lift=Decimal(raw.get("shopping", {}).get("peak_lift", "1.2")),
             shop_peak_min_months=int(raw.get("shopping", {}).get("peak_min_months", 9)),
             line_chart_min_points=int(density.get("line_chart_points", 4)),
+            creator_min_followers=int(raw.get("creator", {}).get("min_followers", 1000)),
+            creator_require_korean=bool(raw.get("creator", {}).get("require_korean", True)),
             density_rules=density.get("templates", {}),
         )

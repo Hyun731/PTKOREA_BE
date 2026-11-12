@@ -12,6 +12,7 @@ from app.models import (
 )
 from app.storage import get_storage
 from core.composition.build import BuildInputs
+from core.schemas.diagnosis import active_data
 from core.schemas.facts import Fact, Post
 from core.schemas.materials import (
     AssetRef, CaseMaterial, ClaimRef, OwnedPostRef, ReviewKeywordRef, ReviewSnapshotRef, SourceRef,
@@ -56,7 +57,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     by_id: dict[str, Fact] = {}
     for row in db.scalars(select(FactRow).where(FactRow.project_id == project.id, FactRow.superseded_by.is_(None))):
         f = Fact.model_validate(row.data)
-        if row.origin in ("csv", "posts"):
+        if row.origin in ("csv", "posts", "client"):  # 배치 단위로 채택한다(client = P4-5 보유 자료)
             status = "eligible" if row.batch_id in accepted_batches else "candidate"
         else:
             status = row.verification_status
@@ -128,6 +129,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     synthesis: dict[str, dict] = {}
     for run in db.scalars(select(SynthesisRun).where(SynthesisRun.project_id == project.id, SynthesisRun.active.is_(True))):
         synthesis[run.brand_id] = run.data
+    diagnosis = active_data(project.diagnosis)  # P5-1 브랜드 진단: 자사 브랜드마다 활성 버전
     # Phase 3-4: Google Trends 연관 검색어 — 그 브랜드의 가장 최근 수집 결과만 쓴다.
     trend_related: dict[str, list[str]] = {}
     for ri in db.scalars(select(ResearchItem).where(ResearchItem.project_id == project.id,
@@ -138,5 +140,6 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     return BuildInputs(project=core_project(project), facts=facts, posts=posts, materials=materials,
                        owned_posts=owned_posts, omitted_slots=omitted, lead_overrides=leads,
                        insight_overrides=project.insight_overrides or {}, ai_writing=ai_writing, synthesis=synthesis,
+                       diagnosis=diagnosis,
                        trend_related=trend_related, reviews=reviews, generated_on=date.today(),
                        deck_id=project.id)

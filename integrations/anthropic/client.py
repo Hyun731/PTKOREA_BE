@@ -29,8 +29,58 @@ def _client():
     return anthropic.Anthropic(max_retries=2, timeout=120.0)
 
 
+# 구조화 출력이 받지 않는 제약(400 "property 'maxItems' is not supported"). 부르는 쪽이 개수·길이를
+# 다시 자르므로, 보내기 전에 지워도 결과가 달라지지 않는다. minItems는 0·1만 받는다.
+UNSUPPORTED_KEYS = ("maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum",
+                    "exclusiveMaximum", "multipleOf")
+
+
+def api_schema(schema: Any) -> Any:
+    """서비스 모듈의 스키마를 API가 받는 꼴로 — 지원하지 않는 제약만 뺀 사본."""
+    if isinstance(schema, list):
+        return [api_schema(v) for v in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {}
+    for k, v in schema.items():
+        if k in UNSUPPORTED_KEYS or (k == "minItems" and isinstance(v, int) and v > 1):
+            continue
+        if k == "properties" and isinstance(v, dict):  # 속성 이름은 제약이 아니다 — 값만 다듬는다
+            out[k] = {name: api_schema(sub) for name, sub in v.items()}
+        else:
+            out[k] = v if k in ("enum", "const", "required") else api_schema(v)
+    return out
+
+
+def image_media_type(data: bytes) -> Optional[str]:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return None
+
+
+def user_content(user: str, images: Optional[list[bytes]] = None) -> Any:
+    """글만 있으면 문자열 그대로, 이미지가 있으면 이미지 블록들 뒤에 글 — 알 수 없는 형식의 이미지는 뺀다."""
+    if not images:
+        return user
+    import base64
+    blocks: list[dict] = []
+    for data in images:
+        media = image_media_type(data)
+        if media:
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": media,
+                                                       "data": base64.b64encode(data).decode("ascii")}})
+    return [*blocks, {"type": "text", "text": user}] if blocks else user
+
+
 def structured(system: str, user: str, schema: dict, *, max_tokens: int = 8000, effort: str = "medium",
-               client: Optional[Any] = None) -> CallResult:
+               client: Optional[Any] = None, images: Optional[list[bytes]] = None) -> CallResult:
+    """images: 글과 함께 볼 이미지(광고 소재 등) — 순서대로 붙고, 글에서 '이미지 n'으로 가리킨다."""
     import anthropic
     model = model_id()
     c = client or _client()
@@ -39,8 +89,8 @@ def structured(system: str, user: str, schema: dict, *, max_tokens: int = 8000, 
             model=model,
             max_tokens=max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
-            output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
+            messages=[{"role": "user", "content": user_content(user, images)}],
+            output_config={"effort": effort, "format": {"type": "json_schema", "schema": api_schema(schema)}},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
         )

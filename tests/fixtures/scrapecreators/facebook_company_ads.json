@@ -1,0 +1,412 @@
+{
+ "success": true,
+ "credits_remaining": 21869,
+ "credits_charged": 1,
+ "results": [
+  {
+   "ad_archive_id": "981783581667395",
+   "collation_count": 1,
+   "collation_id": "1460938419555039",
+   "is_active": true,
+   "page_id": "138688432858063",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": {
+     "page_id": "138688432858063",
+     "page_is_deleted": false,
+     "page_profile_uri": "https://www.facebook.com/KoreaSamsonite/",
+     "page_name": "Korea Samsonite"
+    },
+    "page_id": "114101357806265",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.instagram.com/_u/hiwonik",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "hiwonik",
+    "page_profile_picture_url": "https://example.invalid/p.jpg",
+    "event": null,
+    "caption": "www.samsonite.co.kr",
+    "cta_text": "See details",
+    "cards": [],
+    "body": {
+     "text": "#광고 평소 다양한 공간을 소개하다 보니, 자연스럽게 물건을 고를 때도 디자인과 실용성을 함께 보게 돼요!\n\n최근 사용 중인 쌤소나이트(@samsonite_korea)의 NOVAN(노반) 백팩!\n가벼운 고내구성 나일론 소재와 미니멀한 디자인이 돋보이는 비즈니스 캐주얼 라인인데요.\n\n✔️180도로 열리는 메인 수납공간과 확장 기능\n✔️다양한 전면·사이드 포켓은 물론, 최대 16인치 노트북을 위한 별도 수납공간까지!\n✔️패킹큐브와 탈부착 가능한 파우치도 함께 제공돼 일상뿐 아니라 출장이나 여행에서도 높은 활용성\n✔️부분 방검 소재와 TPU 코팅을 적용해 수납 안정성과 생활 방수 기능까지!\n\n결국 좋은 디자인은 보기에도 좋지만, 사용할수록 그 가치를 느끼게 되는 것 같습니다.\n\n#Samsonite #쌤소나이트 #NOVAN #노반"
+    },
+    "cta_type": "SEE_DETAILS",
+    "display_format": "VIDEO",
+    "link_description": null,
+    "link_url": "https://www.samsonite.co.kr/novan/backpack/ss-163858-1041.html?srsltid=AYCX9vI_uw3iteb3wGyU4RnkZiYB7lRXz9tSIpE1TkvddNt0BTjd8epA%3Futm_source%3DINSTA&utm_medium=YouTube-&utm_campaign=261027_SAM_KR_KR-_-KLP-NOVAN-BACKPACK-IG-ads_hiwonik-_-BR&utm_content=NOVAN-BACKPACK-IG-ADS-HIWONIK",
+    "images": [],
+    "page_categories": [
+     "Profile"
+    ],
+    "page_like_count": 0,
+    "title": null,
+    "videos": [
+     {
+      "video_hd_url": "https://example.invalid/v.mp4",
+      "video_preview_image_url": "https://example.invalid/preview.jpg",
+      "video_sd_url": "https://example.invalid/v.mp4",
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null
+     }
+    ],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "Korea Samsonite",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "INSTAGRAM"
+   ],
+   "start_date": 1793606400,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=981783581667395",
+   "start_date_string": "2026-11-02T08:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  },
+  {
+   "ad_archive_id": "2131567870902659",
+   "collation_count": null,
+   "collation_id": null,
+   "is_active": true,
+   "page_id": "138688432858063",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "138688432858063",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/KoreaSamsonite/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "Korea Samsonite",
+    "page_profile_picture_url": "https://example.invalid/p.jpg",
+    "event": null,
+    "caption": "samsonite.co.kr",
+    "cta_text": "Shop now",
+    "cards": [
+     {
+      "body": "",
+      "cta_type": null,
+      "caption": "",
+      "link_description": null,
+      "link_url": null,
+      "title": null,
+      "cta_text": null,
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": null,
+      "resized_image_url": null,
+      "watermarked_resized_image_url": null
+     }
+    ],
+    "body": {
+     "text": "쌤소나이트 베스트셀러 캐리어 40% off 특가 기획전"
+    },
+    "cta_type": "SHOP_NOW",
+    "display_format": "DPA",
+    "link_description": null,
+    "link_url": "https://cat.as.criteo.com/delivery/ckwca.aspx?r=https%3a%2f%2fwww.samsonite.co.kr%2f&rs=1-hGkEl66B4SZ_EVwnWd5xNjY_o6TXEA-ZFV1wZZNabTM&no_cat",
+    "images": [],
+    "page_categories": [
+     "Bags/Luggage"
+    ],
+    "page_like_count": 149888,
+    "title": "{{product.name}}",
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "Korea Samsonite",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "FACEBOOK",
+    "INSTAGRAM"
+   ],
+   "start_date": 1790665200,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=2131567870902659",
+   "start_date_string": "2026-09-29T07:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  },
+  {
+   "ad_archive_id": "4028234560816350",
+   "collation_count": 1,
+   "collation_id": "1340273288093571",
+   "is_active": true,
+   "page_id": "138688432858063",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "138688432858063",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/KoreaSamsonite/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "Korea Samsonite",
+    "page_profile_picture_url": "https://example.invalid/p.jpg",
+    "event": null,
+    "caption": "samsonite.co.kr",
+    "cta_text": "Shop now",
+    "cards": [],
+    "body": {
+     "text": "[쌤소나이트 11월 Special Offer]\n\n일상부터 여행까지,\n쌤소나이트 컬렉션을 특별한 혜택으로🔥\n\n쌤소나이트 컬렉션\n최대 40% 할인\n\n신규회원 할인부터 네이버페이 추가 적립,\n현대 M포인트 혜택까지 더해진\n쌤소나이트 공식몰의 Spcial offer.\n\n[11월 공식몰 혜택]\n🎁 신규회원 10% 할인\n🎁 네이버 페이 5% 추가 적립\n🎁 현대 M 포인트 30%"
+    },
+    "cta_type": "SHOP_NOW",
+    "display_format": "IMAGE",
+    "link_description": "쌤소나이트 11월 Special Offer",
+    "link_url": "https://www.samsonite.co.kr/promotion/soev_2410_hotdeal/?utm_source=meta&utm_medium=display&utm_campaign=so_mt_special_offer_2611&utm_content=non_2054mf&utm_term=img_special_offer_2611_4",
+    "images": [
+     {
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/img.jpg",
+      "resized_image_url": "https://example.invalid/img.jpg",
+      "watermarked_resized_image_url": ""
+     }
+    ],
+    "page_categories": [
+     "Bags/Luggage"
+    ],
+    "page_like_count": 149888,
+    "title": "쌤소나이트",
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "Korea Samsonite",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "FACEBOOK",
+    "INSTAGRAM",
+    "AUDIENCE_NETWORK",
+    "WHATSAPP",
+    "THREADS"
+   ],
+   "start_date": 1793692800,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=4028234560816350",
+   "start_date_string": "2026-11-03T08:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  },
+  {
+   "ad_archive_id": "3421044288057724",
+   "collation_count": 1,
+   "collation_id": "1142143108210804",
+   "is_active": true,
+   "page_id": "138688432858063",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "138688432858063",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/KoreaSamsonite/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "Korea Samsonite",
+    "page_profile_picture_url": "https://example.invalid/p.jpg",
+    "event": null,
+    "caption": "samsonite.co.kr",
+    "cta_text": "Shop now",
+    "cards": [],
+    "body": {
+     "text": "[쌤소나이트 11월 Special Offer]\n\n일상부터 여행까지,\n쌤소나이트 컬렉션을 특별한 혜택으로🔥\n\n쌤소나이트 컬렉션\n최대 40% 할인\n\n신규회원 할인부터 네이버페이 추가 적립,\n현대 M포인트 혜택까지 더해진\n쌤소나이트 공식몰의 Spcial offer.\n\n[11월 공식몰 혜택]\n🎁 신규회원 10% 할인\n🎁 네이버 페이 5% 추가 적립\n🎁 현대 M 포인트 30%"
+    },
+    "cta_type": "SHOP_NOW",
+    "display_format": "IMAGE",
+    "link_description": "쌤소나이트 11월 Special Offer",
+    "link_url": "https://www.samsonite.co.kr/promotion/soev_2410_hotdeal/?utm_source=meta&utm_medium=display&utm_campaign=so_mt_special_offer_2611&utm_content=non_2054mf&utm_term=img_special_offer_2611_2",
+    "images": [
+     {
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/img.jpg",
+      "resized_image_url": "https://example.invalid/img.jpg",
+      "watermarked_resized_image_url": ""
+     }
+    ],
+    "page_categories": [
+     "Bags/Luggage"
+    ],
+    "page_like_count": 149888,
+    "title": "쌤소나이트",
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "Korea Samsonite",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "FACEBOOK",
+    "INSTAGRAM",
+    "AUDIENCE_NETWORK",
+    "WHATSAPP",
+    "THREADS"
+   ],
+   "start_date": 1793692800,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=3421044288057724",
+   "start_date_string": "2026-11-03T08:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  }
+ ],
+ "searchResultsCount": 4,
+ "cursor": ""
+}

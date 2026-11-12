@@ -25,6 +25,7 @@ from app.services.inputs import load_inputs
 from app.services.ledger import RunLedger
 from core.composition.build import body_fingerprint, build_deck, lead_of
 from core.composition.chrome import EVIDENCE_BULLET, PartFactory
+from core.composition.diagnosis import OWN_HEADLINE, OWN_INSIGHTS
 from core.composition.measure import line_count, paragraph_runs
 from core.composition.tokens import region, type_spec
 from core.quality.qc import FORBIDDEN_WORDS, OVERCLAIMS, self_brand_names, self_brands_in
@@ -388,8 +389,8 @@ def write_headlines(db: Session, project: Project, result, ledger: RunLedger,
                                                                           SlideWriting.kind == "lead"))}
     todo: list[tuple[SlideSpec, str]] = []
     for s in result.deck.slides:
-        if s.page_role != "content" or lead_of(s) is None or s.slide_id in overrides:
-            continue
+        if s.page_role != "content" or lead_of(s) is None or s.slide_id in overrides or s.template_id in OWN_HEADLINE:
+            continue  # P5-2 진단 장은 진단의 주장이 곧 헤드라인
         fp = body_fingerprint(s)
         if s.slide_id in stored and stored[s.slide_id].body_fp == fp:
             continue
@@ -438,7 +439,8 @@ def write_page_insights(db: Session, project: Project, result, ledger: RunLedger
                                                                           SlideWriting.kind == "insights"))}
     todo: list[tuple[SlideSpec, str]] = []
     for slide in result.deck.slides:
-        if slide.page_role != "content" or lead_of(slide) is None or slide.slide_id in overrides:
+        if (slide.page_role != "content" or lead_of(slide) is None or slide.slide_id in overrides
+                or slide.template_id in OWN_INSIGHTS):
             continue
         fp = body_fingerprint(slide)
         if slide.slide_id in stored and stored[slide.slide_id].body_fp == fp:

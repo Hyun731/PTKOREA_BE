@@ -20,18 +20,22 @@ CAUSES = {
     "adopt": ("채택 대기", "모은 자료가 있습니다 — 자료 확인에서 채택하세요"),
     "collect": ("수집 필요", "아직 모은 자료가 없습니다 — 다시 모으기로 수집하세요"),
     "setup": ("설정 필요", "수집에 필요한 입력이 없습니다"),
-    "upload": ("업로드 필요", "자동 수집이 없는 자료입니다 — CSV를 올리세요"),
+    "upload": ("업로드 필요", "자동 수집이 없는 자료입니다 — 자료 확인에서 보유 자료(설문·내부 리포트)를 올리고 채택하세요"),
     "access": ("접근 불가", "찾은 글에 접근할 수 없었습니다"),
 }
 # Slot template -> the research section that feeds it.
 SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
            "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
            "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
-           "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search", "OW-CMP": "owned"}
+           "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search", "OW-CMP": "owned",
+           # P4-4 5대 축
+           "MK1": "market", "PL1": "market", "DM1": "search_trend", "CS1": "voc"}
 # P3 비교·차트 장: 자료 카드가 아니라 자동 수집 수치(Fact)로 채워지므로, 확인 전 수치가 있으면 '채택 대기'.
 FACT_METRICS: dict[str, tuple[str, ...]] = {
     "OW-CMP": ("owned_followers", "owned_posts_monthly", "owned_videos_monthly", "owned_likes_median",
                "owned_reactions_median", "owned_comments_median", "owned_views_avg", "owned_views_median"),
+    "MK1": ("market_size", "market_cagr", "macro_indicator"),  # P4-1 시장 수치
+    "DM1": ("shop_click_index", "shop_peak_lift", "shop_click_share"),
 }
 UPLOAD: set[str] = set()  # 검색 점유(2-8a~d)는 네이버 데이터랩으로 자동 수집한다(P2-1) — 업로드 전용 장표 없음
 

@@ -29,8 +29,9 @@ from core.quality.qc import FORBIDDEN_WORDS, OVERCLAIMS
 PARTS = ("company", "competitor", "customer")
 SOFTEN = ["진단", "부족", "부재", "약세"]  # client-facing tone: 조사, 아쉬움, 강화 필요, 낮은 편
 
-SYNTHESIS_TYPES = ("insight", "swot", "problem")
-TYPE_LABEL = {"insight": "분석 요약과 인사이트", "swot": "경쟁사 대비 SWOT 요약", "problem": "문제 정의와 솔루션 방향"}
+SYNTHESIS_TYPES = ("insight", "swot", "problem", "journey", "situation")
+TYPE_LABEL = {"insight": "분석 요약과 인사이트", "swot": "경쟁사 대비 SWOT 요약", "problem": "문제 정의와 솔루션 방향",
+              "journey": "구매 여정", "situation": "구매 상황 지도"}
 DEFAULT_TYPES = ["insight"]
 
 LINE = {"type": "object", "additionalProperties": False, "required": ["text", "ref"],
@@ -50,6 +51,17 @@ TYPE_FIELDS: dict[str, dict] = {
     "swot": {"swot_lead": {"type": "string"}, "S": CITED_LIST, "W": CITED_LIST,
              "O": CITED_LIST, "T": CITED_LIST},
     "problem": {"problem_lead": {"type": "string"}, "problems": CITED_LIST, "solutions": TITLE_BODY_LIST},
+    # P4-4 5-3 구매 여정 (P5-1 진단과 같은 자료): 단계 × 접점·상태·끊기는 곳, 줄마다 근거 장표
+    "journey": {"journey_lead": {"type": "string"}, "stages": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "required": ["stage", "touchpoint", "state", "drop", "ref"],
+        "properties": {k: {"type": "string"} for k in ("stage", "touchpoint", "state", "drop", "ref")}}}},
+    # P4-4 5-4 구매 상황 지도: 이유는 <voc> 원문 문장을 글자 그대로
+    "situation": {"situation_lead": {"type": "string"}, "situations": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "required": ["situation", "brands", "pick_quote", "skip_quote"],
+        "properties": {"situation": {"type": "string"}, "brands": {"type": "array", "items": {"type": "string"}},
+                       "pick_quote": {"type": "string"}, "skip_quote": {"type": "string"}}}}},
 }
 TYPE_PROMPT: dict[str, str] = {
     "insight": """- es_company / es_competitor / es_customer: 3C별 핵심 요약 각 2줄. 줄마다 근거가 된 본문 장표의 id를 ref에 넣습니다. 그 장(chapter)에 본문 장표가 없으면 빈 배열.
@@ -59,6 +71,13 @@ TYPE_PROMPT: dict[str, str] = {
     "problem": """- problem_lead: 지금 가장 풀어야 할 문제를 한 줄로.
 - problems: 본문에서 드러난 문제 2~3개. 각 줄에 근거 장표 ref를 넣습니다.
 - solutions: 문제에 대응하는 솔루션 방향 3개. title은 12자 안팎, body는 무엇을 어떻게 할지 한 줄이며 근거 장표 ref를 넣습니다. '강화', '최적화' 같은 추상어만으로 끝내지 않습니다.""",
+    "journey": """- journey_lead: 구매 여정 장의 헤드라인 한 줄(어디서 끊기는지).
+- stages: 인지 → 탐색 → 비교 → 구매 → 사용·재구매 중 본문 장표로 말할 수 있는 단계 3~5개. stage는 단계 이름, touchpoint는 그 단계의
+  접점(채널·매장 등), state는 소비자 상태, drop은 그 단계에서 끊기는 곳(없으면 빈 문자열). 각 단계에 근거 장표 id를 ref에 넣습니다.""",
+    "situation": """- situation_lead: 구매 상황 지도 장의 헤드라인 한 줄.
+- situations: <voc> 소비자 원문에서 읽히는 구매 상황 2~5개. situation은 상황 이름(예: 첫 해외여행 준비), brands는 그 상황에서 함께
+  고민하는 브랜드(<brand>와 <voc>에 나온 경쟁 브랜드 이름 그대로), pick_quote는 <brand>를 고르는 이유, skip_quote는 고르지 않는 이유입니다.
+  두 인용은 <voc>의 text에서 글자 그대로 옮긴 짧은 구절이며, 없으면 빈 문자열입니다.""",
 }
 
 # Indirection so tests can stub the model call.
@@ -242,7 +261,73 @@ def _clean_problem(data: dict, pages: dict[str, dict], parts_with_pages: set[str
     return out, issues
 
 
-_CLEANERS = {"insight": _clean_insight, "swot": _clean_swot, "problem": _clean_problem}
+def _clean_journey(data: dict, pages: dict[str, dict], parts_with_pages: set[str]) -> tuple[dict, list[str]]:
+    issues: list[str] = []
+    lead = (data.get("journey_lead") or "").strip()
+    out: dict = {"lead": lead if not problem(lead) else "", "stages": []}
+    for raw in (data.get("stages") or [])[:5]:
+        texts = {k: (raw.get(k) or "").strip() for k in ("stage", "touchpoint", "state", "drop")}
+        why = next((f"{k}: {problem(v)}" for k, v in texts.items() if (v or k != "drop") and problem(v)), None)
+        ref = raw.get("ref") or ""
+        why = why or (None if ref in pages else f"없는 장표 '{ref}'")
+        if why:
+            issues.append(f"여정 '{texts['stage'][:20]}': {why}")
+            continue
+        out["stages"].append({**texts, "ref": ref, "source_url": next(iter(pages[ref].get("sources", [])), None)})
+    return out, issues
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def voc_excerpts(inputs, brand) -> list[dict]:
+    """The brand's accepted consumer posts (협찬 제외) the 5-4 reasons must be quoted from."""
+    from core.composition.cases import _publisher
+    out = []
+    for m in inputs.materials:
+        if m.section_id != "voc" or m.review_status != "accepted" or m.voc_sponsored or m.entity != brand.name:
+            continue
+        quote = next((c.quote for c in m.claims if c.quote and c.review_status == "accepted"), None)
+        when = m.source.published_at or m.activity_date
+        out.append({"text": _norm(quote or m.title)[:300], "url": m.source.url, "site": _publisher(m),
+                    "date": when.isoformat() if when else None})
+    return out[:80]
+
+
+def _clean_situation(data: dict, pages: dict[str, dict], parts_with_pages: set[str], *, voc: list[dict] = (),
+                     brand=None, self_names: frozenset = frozenset()) -> tuple[dict, list[str]]:
+    issues: list[str] = []
+    lead = (data.get("situation_lead") or "").strip()
+    out: dict = {"lead": lead if not problem(lead) else "", "rows": []}
+    allowed = {brand.name, *brand.competitors, *brand.benchmarks} if brand else set()
+
+    def find(q: str):
+        q = _norm(q).strip("“”\"' ")
+        if not q:
+            return None, None
+        hit = next((v for v in voc if q in v["text"]), None)
+        if hit is None:
+            return None, f"원문에 없는 인용 '{q[:20]}'"
+        return {"text": q[:80], "url": hit["url"], "site": hit["site"], "date": hit["date"]}, None
+
+    for raw in (data.get("situations") or [])[:5]:
+        name = (raw.get("situation") or "").strip()
+        pick, why_pick = find(raw.get("pick_quote") or "")
+        skip, why_skip = find(raw.get("skip_quote") or "")
+        why = problem(name) or why_pick or why_skip or (None if pick or skip else "인용 없음")
+        if why:
+            issues.append(f"상황 '{name[:20]}': {why}")
+            continue
+        # 원칙 8: 다른 자사 브랜드는 같은 줄에 두지 않는다.
+        brands = [b for b in dict.fromkeys(raw.get("brands") or [])
+                  if b in allowed and (b == brand.name or b not in self_names)]
+        out["rows"].append({"situation": name, "brands": brands, "pick": pick, "skip": skip})
+    return out, issues
+
+
+_CLEANERS = {"insight": _clean_insight, "swot": _clean_swot, "problem": _clean_problem, "journey": _clean_journey,
+             "situation": _clean_situation}
 
 
 def generate(db: Session, project: Project, brand_id: str, types: list[str], instruction: str = "") -> dict:
@@ -256,7 +341,10 @@ def generate(db: Session, project: Project, brand_id: str, types: list[str], ins
     pages_by_id = {p["id"]: p for p in pages}
     with_pages = {p["chapter"] for p in pages}
     listing = json.dumps(pages, ensure_ascii=False)
+    voc = voc_excerpts(load_inputs(db, project), brand) if "situation" in types else []
+    situation_kw = {"voc": voc, "brand": brand, "self_names": frozenset(b.name for b in core.brands)}
     user = (f"<brand>{brand.name}</brand>\n<pages>\n{listing}\n</pages>"
+            + (f"\n<voc>\n{json.dumps([{'text': v['text']} for v in voc], ensure_ascii=False)}\n</voc>" if voc else "")
            + (f"\n<request>\n{instruction.strip()[:400]}\n</request>" if instruction.strip() else ""))
     schema, system = _schema_for(types), _system_for(types)
     ledger = RunLedger(db, project.id, None)
@@ -267,7 +355,7 @@ def generate(db: Session, project: Project, brand_id: str, types: list[str], ins
                            lambda: _structured()(system, user + note, schema, max_tokens=4000), cache_days=None).data
         out, issues = {}, []
         for t in types:
-            cleaned, iss = _CLEANERS[t](data, pages_by_id, with_pages)
+            cleaned, iss = _CLEANERS[t](data, pages_by_id, with_pages, **(situation_kw if t == "situation" else {}))
             out[t] = cleaned
             issues += iss
         if not issues:

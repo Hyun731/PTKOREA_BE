@@ -1,0 +1,67 @@
+{
+ "success": true,
+ "credits_remaining": 21877,
+ "credits_charged": 1,
+ "searchResults": [
+  {
+   "page_id": "323271004355493",
+   "category": "Bags & Luggage Store",
+   "image_uri": "https://example.invalid/p.jpg",
+   "likes": 1884392,
+   "verification": "BLUE_VERIFIED",
+   "name": "Samsonite",
+   "country": null,
+   "entity_type": "PERSON_PROFILE",
+   "ig_username": "mysamsonite",
+   "ig_followers": 311020,
+   "ig_verification": true,
+   "page_alias": "samsoniteofficial",
+   "page_is_deleted": false
+  },
+  {
+   "page_id": "638503349355880",
+   "category": "Bags & Luggage Store",
+   "image_uri": "https://example.invalid/p.jpg",
+   "likes": 5,
+   "verification": "NOT_VERIFIED",
+   "name": "Samsonite Outlet",
+   "country": null,
+   "entity_type": "PERSON_PROFILE",
+   "ig_username": null,
+   "ig_followers": null,
+   "ig_verification": null,
+   "page_alias": "",
+   "page_is_deleted": false
+  },
+  {
+   "page_id": "288656478759",
+   "category": "Bags & Luggage Store",
+   "image_uri": "https://example.invalid/p.jpg",
+   "likes": 1884392,
+   "verification": "BLUE_VERIFIED",
+   "name": "Samsonite",
+   "country": "US",
+   "entity_type": "PERSON_PROFILE",
+   "ig_username": "samsoniteusa",
+   "ig_followers": 114988,
+   "ig_verification": true,
+   "page_alias": "Samsoniteusa",
+   "page_is_deleted": false
+  },
+  {
+   "page_id": "138688432858063",
+   "category": "Bags/Luggage",
+   "image_uri": "https://example.invalid/p.jpg",
+   "likes": 149888,
+   "verification": "NOT_VERIFIED",
+   "name": "Korea Samsonite",
+   "country": null,
+   "entity_type": "PERSON_PROFILE",
+   "ig_username": "samsonite_korea",
+   "ig_followers": 10487,
+   "ig_verification": true,
+   "page_alias": "KoreaSamsonite",
+   "page_is_deleted": false
+  }
+ ]
+}

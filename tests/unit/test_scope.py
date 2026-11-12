@@ -162,6 +162,15 @@ def test_owned_channel_targets_narrow_which_competitors_but_never_drop_self():
     assert {r["entity"] for r in rows} == {"샘소나이트", "리모와"}
 
 
+def test_positioning_runs_web_issue_and_ad_library_as_separate_items():
+    rows = [r for r in scope.generate_items(project()) if r["scope_id"] == "3-5"]
+    assert {(r["entity"], r["section_id"]) for r in rows} == {
+        ("리모와", "issue"), ("리모와", "ad_library"),
+        ("투미", "issue"), ("투미", "ad_library"),
+    }
+    assert {tuple(r["channels"]) for r in rows} == {("web",), ("ad_library",)}
+
+
 def test_voc_items_default_to_their_own_months_period_not_a_broken_custom_window():
     """5-1's 24-month default is wider than a typical project period — resolving it twice (as a
     real save does, once section_windows is recomputed) must not turn it into an invalid 'custom'

@@ -154,11 +154,13 @@ def facebook_post_comments(url: str, *, cursor: Optional[str] = None,
 
 
 def instagram_profile(handle: str, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
-    """Follower count for a creator: the post endpoint leaves owner followers empty."""
+    """Follower count for a creator: the post endpoint leaves owner followers empty. bio는 P2-10
+    크리에이터 필터(한국어 계정인지)에 쓴다."""
     data = _get("/instagram/profile", {"handle": handle.lstrip("@")}, transport)
     user = (data.get("data") or {}).get("user") or {}
     return CallResult(data={"followers": _int((user.get("edge_followed_by") or {}).get("count")),
-                            "name": user.get("full_name") or user.get("username")},
+                            "name": user.get("full_name") or user.get("username"),
+                            "bio": user.get("biography") or ""},
                       usage={"credits": _credits(data)}, cost_usd=_credits(data) * EST_COST_PER_CREDIT)
 
 
@@ -431,3 +433,187 @@ def youtube_channel_shorts(*, channel_id: Optional[str] = None, handle: Optional
                        "comments": _int(v.get("commentCountInt")),
                        "published_at": str(v.get("publishDate") or "")[:10] or None})
     return _result(data, {"shorts": shorts, "continuation_token": data.get("continuationToken")})
+
+
+# ---------------------------------------------------------------- P2-8 소비자 원문용 키워드 검색
+# 필드 이름은 2026-11-11 실제 응답(샘소나이트)으로 확인했다(tests/fixtures/scrapecreators/*_search.json).
+
+def tiktok_search_keyword(query: str, *, region: Optional[str] = "KR", cursor: Optional[str] = None,
+                          transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/tiktok/search/keyword — 공개 영상 30개 한 쪽. region=KR이어도 해외 영상이 섞여
+    오므로 한국어 여부는 부르는 쪽이 거른다. 본문은 영상 설명(desc)이다."""
+    params: dict[str, Any] = {"query": query}
+    if region:
+        params["region"] = region
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/tiktok/search/keyword", params, transport)
+    posts = []
+    for row in data.get("search_item_list") or []:
+        a = row.get("aweme_info") or row
+        text = (a.get("desc") or "").strip()
+        url = _strip_query(a.get("url") or a.get("share_url"))
+        if not text or not url:
+            continue
+        author = a.get("author") or {}
+        st = a.get("statistics") or {}
+        posts.append({"url": url, "text": text, "posted_at": _ts_date(a.get("create_time")),
+                      "author": author.get("unique_id"), "followers": _int(author.get("follower_count")),
+                      "views": _int(st.get("play_count")), "likes": _int(st.get("digg_count")),
+                      "comments": _int(st.get("comment_count")), "region": a.get("region"),
+                      "sponsored": bool(a.get("is_ad") or a.get("is_paid_partnership"))})
+    cursor_out = data.get("cursor")
+    return _result(data, {"posts": posts, "cursor": str(cursor_out) if cursor_out else None,
+                          "has_more": bool(data.get("has_more"))})
+
+
+def youtube_search(query: str, *, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/youtube/search — 일반 영상과 쇼츠. 게시일(publishedTime)은 '2년 전' 같은 표시에서 나온
+    근사값이고 쇼츠에는 아예 없다. 설명은 오지 않아 제목만 있다 — 댓글은 따로 부른다."""
+    data = _get("/youtube/search", {"query": query}, transport)
+    videos = []
+    for v in [*(data.get("videos") or []), *(data.get("shorts") or [])]:
+        url, title = v.get("url"), (v.get("title") or "").strip()
+        if not url or not title:
+            continue
+        ch = v.get("channel") or {}
+        videos.append({"url": url, "title": title, "posted_at": (v.get("publishedTime") or "")[:10] or None,
+                       "author": ch.get("title") or ch.get("handle"), "views": _int(v.get("viewCountInt")),
+                       "is_short": v.get("type") == "short"})
+    return _result(data, {"videos": videos})
+
+
+# ---------------------------------------------------------------- P2-9 광고 라이브러리(공개)
+# 2026-11-11 실제 응답으로 확인(tests/fixtures/scrapecreators/*ad*.json):
+# - 메타: 페이지 검색은 한글 이름으로는 비어 오고 영문 이름으로 찾는다. 글로벌 페이지는 country=KR
+#   광고가 0건이고, 한국 페이지(예: 'Korea Samsonite')에 국내 광고가 있다.
+# - 틱톡: 공개 광고 라이브러리는 유럽(DSA) 공개분뿐이다 — region=KR은 400.
+# - 구글: 광고주 검색은 한글 이름으로 되고, 광고 목록은 형식(text·image·video)과 이미지만 준다.
+
+def _iso_day(v: Any) -> Optional[str]:
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return _ts_date(v / 1000 if v > 10**11 else v)  # 틱톡은 밀리초
+    return str(v)[:10] or None
+
+
+def facebook_ad_companies(query: str, *, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/facebook/adLibrary/search/companies — 광고를 내는 페이지 후보."""
+    data = _get("/facebook/adLibrary/search/companies", {"query": query}, transport)
+    pages = [{"page_id": str(r.get("page_id")), "name": r.get("name") or "", "country": r.get("country"),
+              "likes": _int(r.get("likes")), "ig_username": r.get("ig_username"), "alias": r.get("page_alias"),
+              "verified": r.get("verification") == "BLUE_VERIFIED"}
+             for r in data.get("searchResults") or [] if r.get("page_id") and not r.get("page_is_deleted")]
+    return _result(data, {"pages": pages})
+
+
+def _fb_image(snap: dict) -> Optional[str]:
+    for im in snap.get("images") or []:
+        if im.get("resized_image_url") or im.get("original_image_url"):
+            return im.get("resized_image_url") or im.get("original_image_url")
+    for v in snap.get("videos") or []:
+        if v.get("video_preview_image_url"):
+            return v["video_preview_image_url"]
+    for c in snap.get("cards") or []:
+        u = c.get("resized_image_url") or c.get("original_image_url") or c.get("video_preview_image_url")
+        if u:
+            return u
+    return None
+
+
+def _fb_text(snap: dict) -> str:
+    body = snap.get("body")
+    text = (body.get("text") if isinstance(body, dict) else body) or ""
+    if "{{" in text:  # 카탈로그 광고(DCO·DPA)는 본문이 자리표시자 — 카드 문구로 대신한다
+        text = ""
+    cards = snap.get("cards") or []
+    if not text and cards:
+        c = cards[0]
+        text = " ".join(x for x in (c.get("title"), c.get("body")) if x and "{{" not in x)
+    title = snap.get("title") if snap.get("title") and "{{" not in snap.get("title") else ""
+    return " ".join(x for x in (title, text.strip()) if x).strip()
+
+
+def facebook_company_ads(page_id: str, *, country: Optional[str] = "KR", cursor: Optional[str] = None,
+                         transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/facebook/adLibrary/company/ads — 페이지의 광고 한 쪽(30개). 같은 소재 묶음(collation_id)은
+    부르는 쪽에서 하나로 센다."""
+    params: dict[str, Any] = {"pageId": page_id}
+    if country:
+        params["country"] = country
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/facebook/adLibrary/company/ads", params, transport)
+    ads = [_fb_ad(a) for a in data.get("results") or []]
+    return _result(data, {"ads": ads, "cursor": data.get("cursor") or None, "total": _int(data.get("searchResultsCount"))})
+
+
+def _fb_ad(a: dict) -> dict:
+    snap = a.get("snapshot") or {}
+    return {"id": str(a.get("ad_archive_id")), "group": str(a.get("collation_id") or a.get("ad_archive_id")),
+            "url": a.get("url") or f"https://www.facebook.com/ads/library/?id={a.get('ad_archive_id')}",
+            "page_id": str(a.get("page_id") or snap.get("page_id") or ""),
+            "advertiser": snap.get("page_name") or a.get("page_name") or "",
+            "format": (snap.get("display_format") or "").lower(), "text": _fb_text(snap)[:600],
+            "image_url": _fb_image(snap), "landing": snap.get("link_url"),
+            "start": _iso_day(a.get("start_date_string") or a.get("start_date")),
+            "end": _iso_day(a.get("end_date_string") or a.get("end_date")), "active": bool(a.get("is_active"))}
+
+
+def facebook_ad_search(query: str, *, country: Optional[str] = "KR", cursor: Optional[str] = None,
+                       transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/facebook/adLibrary/search/ads — 광고 문구 키워드 검색(한 쪽 약 30개). 한글 브랜드명으로
+    국내 게재 광고와 그 광고를 낸 페이지(page_id·page_name)를 찾는 데 쓴다 — 페이지 검색은 한글로 안 된다."""
+    params: dict[str, Any] = {"query": query}
+    if country:
+        params["country"] = country
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/facebook/adLibrary/search/ads", params, transport)
+    ads = [_fb_ad(a) for a in data.get("searchResults") or data.get("results") or []]
+    return _result(data, {"ads": ads, "cursor": data.get("cursor") or None, "total": _int(data.get("searchResultsCount"))})
+
+
+def tiktok_ad_library_search(query: str, *, cursor: Optional[str] = None,
+                             transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/tiktok/ad-library/search — 유럽 공개분 광고. 광고주 이름(name)으로 거르는 것은 부르는 쪽."""
+    params: dict[str, Any] = {"query": query}
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/tiktok/ad-library/search", params, transport)
+    ads = []
+    for a in data.get("ads") or []:
+        images = a.get("image_urls") or []
+        cover = next((v.get("cover_img") or v.get("cover") for v in a.get("videos") or [] if isinstance(v, dict)), None)
+        ads.append({"id": str(a.get("id")), "group": str(a.get("id")), "url": a.get("url"),
+                    "advertiser": a.get("name") or "", "format": "video" if a.get("videos") else "image",
+                    "text": (a.get("title") or "")[:600], "image_url": images[0] if images else cover,
+                    "start": _iso_day(a.get("first_shown_date")), "end": _iso_day(a.get("last_shown_date"))})
+    return _result(data, {"ads": ads, "cursor": data.get("cursor") or None, "has_more": bool(data.get("has_more"))})
+
+
+def google_ad_advertisers(query: str, *, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/google/adLibrary/advertisers/search — 광고 투명성 센터의 광고주 후보."""
+    data = _get("/google/adLibrary/advertisers/search", {"query": query}, transport)
+    rows = [{"advertiser_id": r.get("advertiser_id"), "name": r.get("name") or "", "region": r.get("region"),
+             "ads_estimate": _int(r.get("number_of_ads_estimate"))}
+            for r in data.get("advertisers") or [] if r.get("advertiser_id")]
+    return _result(data, {"advertisers": rows})
+
+
+def google_company_ads(advertiser_id: str, *, region: Optional[str] = "KR", cursor: Optional[str] = None,
+                       transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/google/company/ads — 광고주의 광고 한 쪽(최대 40개). 문구는 오지 않고 형식과 이미지뿐이다."""
+    params: dict[str, Any] = {"advertiser_id": advertiser_id}
+    if region:
+        params["region"] = region
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/google/company/ads", params, transport)
+    ads = [{"id": a.get("creativeId"), "group": a.get("creativeId"), "url": a.get("adUrl"),
+            "advertiser": a.get("advertiserName") or "", "format": a.get("format") or "", "text": "",
+            "image_url": a.get("imageUrl"), "start": _iso_day(a.get("firstShown")), "end": _iso_day(a.get("lastShown"))}
+           for a in data.get("ads") or [] if a.get("creativeId")]
+    return _result(data, {"ads": ads, "cursor": data.get("cursor") or None,
+                          "total": _int(data.get("number_of_ads_estimate"))})
