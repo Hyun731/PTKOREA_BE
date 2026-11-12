@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Callable, Optional, Union
 
-from core.composition import cases, commerce, compare, customer, demand, overview, owned, quant, synthesis
+from core.composition import axes, cases, commerce, compare, customer, demand, overview, owned, quant, synthesis
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, headline_blocks, insight_blocks, lead_block, synthetic_badge,
     text_block, title_block,
@@ -55,6 +55,8 @@ TEMPLATE_SECTION.update({
     "VC1": "voc",
     "PP1": "voc",
     "SH1": "search_trend",
+    # P4-4 리서치 5대 축
+    "MK1": "campaign", "DM1": "search_trend", "PL1": "campaign", "CS1": "voc", "5-3": "voc", "5-4": "voc",
 })  # P3 비교·차트 장
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
@@ -72,6 +74,8 @@ TEMPLATE_LABEL.update({
     "VC1": "커뮤니티별 부정 비율",
     "PP1": "페인 포인트",
     "SH1": "품목별 쇼핑 수요·성수기",
+    "MK1": "시장 규모·성장", "DM1": "품목별 수요·시즌", "PL1": "정책·규제", "CS1": "소비자 인사이트",
+    "5-3": "구매 여정", "5-4": "구매 상황 지도",
 })
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
@@ -102,12 +106,18 @@ TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2":
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
                     "SWOT": "summary", "PROBLEM": "summary", "SOLUTION": "summary"}
 TEMPLATE_CHAPTER.update({"OW-CMP": "company", "MN1": "competitor", "BL1": "customer", "VC1": "customer",
-                         "PP1": "customer", "SH1": "competitor"})
+                         "PP1": "customer", "SH1": "competitor",
+                         "MK1": "competitor", "DM1": "competitor", "PL1": "competitor", "CS1": "customer",
+                         "5-3": "customer", "5-4": "customer"})
 # P3 비교·차트 장은 같은 자료를 쓰는 기존 장이 켜져 있으면 함께 켜진다(따로 켜도 된다).
-FOLLOWS = {"OW-CMP": "2-1"}
+FOLLOWS = {"OW-CMP": "2-1",
+           # P4-4 5대 축: 시장 자료(M1)가 켜지면 시장 규모·정책 장, 검색 추이(TR1)가 켜지면 수요 장,
+           # 소비자 원문(5-1)이 켜지면 소비자 인사이트 장도 함께 — 자료가 모자라면 만들지 않는다.
+           "MK1": "M1", "PL1": "M1", "DM1": "TR1", "CS1": "5-1"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
-PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "M1", "M2", "2-8a", "2-8b",
-              "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
+PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "MK1", "DM1", "PL1", "M1", "M2",
+              "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "CS1", "5-3", "5-4",
+              "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
               "PROBLEM", "SOLUTION", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
@@ -333,7 +343,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("MN1"):
             s = compare.mention_page(c, frozenset(b.name for b in project.brands))
             slot("MN1", "MN1", [s] if s else [], "자사·경쟁사 채널별 언급량이 2개 채널 이상 필요", part=part)
-        if on("SH1"):
+        if on("DM1"):  # P4-4: the same demand page, placed with the other market axes (SH1 is then not repeated)
+            s = demand.shopping_demand_page(c)
+            if s:
+                s.slide_id, s.title = "DM1", TEMPLATE_LABEL["DM1"]
+            slot("DM1", "DM1", [s] if s else [], "월별 쇼핑 클릭 지수가 4개 이상인 제품군 없음", part=part)
+        elif on("SH1"):
             s = demand.shopping_demand_page(c)
             slot("SH1", "SH1", [s] if s else [], "월별 쇼핑 클릭 지수가 4개 이상인 제품군 없음", part=part)
         if on("3-1"):
@@ -371,14 +386,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                                                  prefix=detail_id)
                 slot(detail_id, "C2", detail, f"채택된 {what} 자료 없음 (이미지·근거 문장 채택 필요)", label=f"{title_sub} 상세",
                      chapter=chapter, key=detail_id, part=part)
-        if not multi and on("M1"):
+        if not multi and (on("M1") or on("MK1") or on("PL1")):
             # Several self brands: handled once per distinct category, below (Phase 3-2).
             category = c.project.brands[0].categories[0] if c.project.brands[0].categories else c.project.brands[0].name
             market = [m for m in mats if m.section_id == "market" and m.entity == category]
-            evidence_n = sum(m.review_status == "accepted" and any(c.review_status == "accepted" for c in m.claims)
-                             for m in market)
-            slot("M1", "M1", cases.market_pages(market, pf, badge if _uses_synthetic(market, metrics) else []),
-                 "채택된 시장·타겟 근거 없음", part=part, density={"evidence": evidence_n})
+            _market_family(c, category, market, enabled, slot, badge if _uses_synthetic(market, metrics) else [],
+                           part=part)
         self_name = c.project.brands[0].name if c.project.brands else None
         self_id = c.project.brands[0].id if c.project.brands else None
         if on("M2"):
@@ -422,6 +435,12 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         if on("PP1"):
             s = demand.pain_point_page(c, voc)
             slot("PP1", "PP1", [s] if s else [], "원문 수가 있는 페인 포인트 3개 이상 없음", part=part)
+        if on("CS1"):
+            s = axes.consumer_insight_page(c, voc)
+            slot("CS1", "CS1", [s] if s else [], "구매 결정 요인과 페인 포인트가 각각 3개 이상 필요(소비자 원문 채택·분류)",
+                 part=part, density={"sources": max((int(f.dims.get("n", 0)) for f in metrics.registry.facts.values()
+                                                      if f.brand_id == self_id and f.metric == "pain_point_count"),
+                                                     default=0)})
         if on("5-recap"):
             s = quant.recap(c)
             slot("5-recap", "5-recap", [s] if s else [], "요약할 Finding 없음", part=part)
@@ -437,6 +456,11 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                 data = synth.get(type_key)
                 if data and (s := page_fn(data, pf)):
                     slot(key, key, [s], "", part=part)
+            # P4-4 생성형 장(P5-1과 공유): 구매 여정·구매 상황 지도 — 쓴 적 없으면 빈 슬롯도 만들지 않는다.
+            for key, page_fn in (("5-3", axes.journey_page), ("5-4", axes.situation_page)):
+                data = synth.get({"5-3": "journey", "5-4": "situation"}[key])
+                if data and (s := page_fn(data)):
+                    slot(key, key, [s], "", part=part)
 
     if not multi:
         brand_part(ctx, inputs.materials, inputs.owned_posts, None)
@@ -451,7 +475,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             c = replace(ctx, project=project.model_copy(update={"brands": [b]}),
                         findings=[f for f in findings if f.brand_id == b.id])
             brand_part(c, mats, [o for o in inputs.owned_posts if o.brand_id == b.id], b.id, "own")
-        _market_by_category(project.brands, inputs.materials, enabled, slot, pf, badge, metrics)
+        _market_by_category(ctx, inputs.materials, enabled, slot, badge, metrics)
     if "A-source" in enabled:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
@@ -504,37 +528,64 @@ def _uses_synthetic(materials: list[CaseMaterial], metrics: MetricsResult) -> bo
     return False
 
 
-def _market_by_category(brands: list[Brand], materials: list[CaseMaterial], enabled: set[str], slot: Callable,
-                        pf: PartFactory, badge: list, metrics: MetricsResult) -> None:
-    """M1 산업 카테고리 분석(Phase 3-2): 자사 카테고리마다 한 번 — 두 브랜드가 같은 카테고리면
-    브랜드 비교 장처럼 한 번만 공유하고, 다르면 각자의 장에 따로 둔다."""
-    if "M1" not in enabled:
+def _market_by_category(ctx: quant.QuantContext, materials: list[CaseMaterial], enabled: set[str], slot: Callable,
+                        badge: list, metrics: MetricsResult) -> None:
+    """M1 산업 카테고리 분석(Phase 3-2)과 시장 축(P4-4 MK1·PL1): 자사 카테고리마다 한 번 — 두 브랜드가
+    같은 카테고리면 브랜드 비교 장처럼 한 번만 공유하고, 다르면 각자의 장에 따로 둔다."""
+    if not {"M1", "MK1", "PL1"} & enabled:
         return
     owners: dict[str, list[Brand]] = {}
-    for b in brands:
+    for b in ctx.project.brands:
         cat = b.categories[0] if b.categories else b.name
         owners.setdefault(cat, []).append(b)
     market = [m for m in materials if m.section_id == "market"]
     shared_n = 0
     for cat, owning in owners.items():
         cat_mats = [m for m in market if m.entity == cat]
-        evidence_n = sum(m.review_status == "accepted" and any(c.review_status == "accepted" for c in m.claims)
-                         for m in cat_mats)
-        pages = cases.market_pages(cat_mats, pf, badge if _uses_synthetic(cat_mats, metrics) else [])
-        label = f"시장·타겟 근거 · {cat}" if len(owners) > 1 else None
+        c = replace(ctx, project=ctx.project.model_copy(update={"brands": owning}))
+        cat_badge = badge if _uses_synthetic(cat_mats, metrics) else []
+        tag = cat if len(owners) > 1 else None
         if len(owning) == 1:
-            slot("M1", "M1", pages, "채택된 시장·타겟 근거 없음", label=label, part=owning[0].id, key="M1",
-                 density={"evidence": evidence_n})
+            _market_family(c, cat, cat_mats, enabled, slot, cat_badge, part=owning[0].id, tag=tag)
             continue
-        slot_id = "M1" if shared_n == 0 else f"M1-{shared_n}"
+        _market_family(c, cat, cat_mats, enabled, slot, cat_badge, tag=tag, suffix=f"-{shared_n}" if shared_n else "")
         shared_n += 1
-        if slot_id != "M1":
+
+
+def _market_family(c: quant.QuantContext, category: str, cat_mats: list[CaseMaterial], enabled: set[str],
+                   slot: Callable, badge: list, *, part: Optional[str] = None, tag: Optional[str] = None,
+                   suffix: str = "") -> None:
+    """One category's market pages: MK1 시장 규모·성장, PL1 정책·규제 and M1 시장·타겟 근거 (P4-4). Policy notes
+    get their own table only when there are enough of them; otherwise they stay rows of M1."""
+    policy = axes.policy_materials(cat_mats)
+    split = "PL1" in enabled and len(policy) >= int(c.config.density_rules.get("PL1", {}).get("min", 1))
+    m1_mats = [m for m in cat_mats if m not in policy] if split else cat_mats
+
+    def named(pages: list[SlideSpec], base: str) -> list[SlideSpec]:
+        if suffix:  # a second shared category: M1-1, MK1-1, …
             for s in pages:
-                s.slide_id = slot_id if s.slide_id == "M1" else s.slide_id.replace("M1", slot_id, 1)
+                s.slide_id = s.slide_id.replace(base, base + suffix, 1)
                 if s.parent_slide_id:
-                    s.parent_slide_id = slot_id
-        slot(slot_id, "M1", pages, "채택된 시장·타겟 근거 없음", label=label, key="M1",
-             density={"evidence": evidence_n})
+                    s.parent_slide_id = base + suffix
+        return pages
+
+    def label(template: str) -> Optional[str]:
+        return f"{TEMPLATE_LABEL[template]} · {tag}" if tag else None
+
+    if "MK1" in enabled:
+        figs = axes.market_figures(c, category, cat_mats)
+        s = axes.market_size_page(c, category, cat_mats, figs)
+        slot("MK1" + suffix, "MK1", named([s] if s else [], "MK1"), "채택된 시장 규모·연평균 성장률 수치 없음",
+             label=label("MK1"), key="MK1", part=part,
+             density={"figures": len(figs.get("size") or []) + len(figs.get("cagr") or [])})
+    if "PL1" in enabled:
+        slot("PL1" + suffix, "PL1", named(axes.policy_pages(policy, c.pf, badge, category), "PL1"),
+             "채택된 정책·규제 자료 없음", label=label("PL1"), key="PL1", part=part, density={"policies": len(policy)})
+    if "M1" in enabled:
+        evidence_n = sum(m.review_status == "accepted" and any(x.review_status == "accepted" for x in m.claims)
+                         for m in m1_mats)
+        slot("M1" + suffix, "M1", named(cases.market_pages(m1_mats, c.pf, badge), "M1"), "채택된 시장·타겟 근거 없음",
+             label=label("M1"), key="M1", part=part, density={"evidence": evidence_n})
 
 
 def _refresh_facts(p: Paragraph, pf: PartFactory) -> Paragraph:

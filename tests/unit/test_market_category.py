@@ -3,17 +3,23 @@ from datetime import date
 
 from core.composition.build import BuildInputs, _market_by_category, build_deck
 from core.composition.chrome import PartFactory
+from core.composition.quant import QuantContext
 from core.metrics.registry import FactRegistry
+from core.rules.config import RulesConfig
 from core.schemas.materials import CaseMaterial, ClaimRef, SourceRef
 from core.schemas.project import Project
 
 
-def _brands(cats: list[str]) -> list:
+def _brands(cats: list[str]) -> Project:
     p = Project.model_validate({
         "name": "p", "client": "c", "period": {"start": "2026-01-01", "end": "2026-09-30"}, "enabled_slides": ["M1"],
         "brands": [{"id": f"B{i + 1}", "name": f"자사{i + 1}", "competitors": [f"경쟁{i + 1}"], "categories": [c]}
                   for i, c in enumerate(cats)]})
-    return p.brands
+    return p
+
+
+def _ctx(project) -> QuantContext:
+    return QuantContext(project, None, [], PartFactory(FactRegistry()), RulesConfig.load(), False)
 
 
 def _market_material(idx: int, category: str) -> CaseMaterial:
@@ -23,13 +29,13 @@ def _market_material(idx: int, category: str) -> CaseMaterial:
                         claims=claims, review_status="accepted")
 
 
-def _run(brands, materials):
+def _run(project, materials):
     calls = []
 
     def fake_slot(slot_id, template, slides, reason, label=None, part=None, key=None, density=None):
         calls.append({"slot_id": slot_id, "label": label, "part": part, "slides": slides, "density": density})
 
-    _market_by_category(brands, materials, {"M1"}, fake_slot, PartFactory(FactRegistry()), [], None)
+    _market_by_category(_ctx(project), materials, {"M1"}, fake_slot, [], None)
     return calls
 
 
@@ -57,10 +63,9 @@ def test_no_market_materials_still_reports_missing_once():
 
 
 def test_market_slide_not_enabled_is_skipped():
-    brands = _brands(["러기지"])
     calls = []
-    _market_by_category(brands, [_market_material(1, "러기지")], set(),
-                        lambda *a, **k: calls.append(1), PartFactory(FactRegistry()), [], None)
+    _market_by_category(_ctx(_brands(["러기지"])), [_market_material(1, "러기지")], set(),
+                        lambda *a, **k: calls.append(1), [], None)
     assert calls == []
 
 

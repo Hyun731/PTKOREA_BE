@@ -26,7 +26,11 @@
       "M1": {"measure": "evidence", "min": 3, "merge_into": "캠페인·시장 사례"},
       "2-8b": {"measure": "months", "min": 4, "merge_into": "검색 점유 비교"},
       "TR1": {"measure": "months", "min": 4, "merge_into": "검색 경쟁 분석"},
-      "SH1": {"measure": "months", "min": 4, "merge_into": "쇼핑 수요 분석"}
+      "SH1": {"measure": "months", "min": 4, "merge_into": "쇼핑 수요 분석"},
+      "DM1": {"measure": "months", "min": 4, "merge_into": "쇼핑 수요 분석"},
+      "MK1": {"measure": "figures", "min": 2, "merge_into": "시장·타겟 근거"},
+      "PL1": {"measure": "policies", "min": 2, "merge_into": "시장·타겟 근거"},
+      "CS1": {"measure": "sources", "min": 20, "merge_into": "페인 포인트"}
     }
   }
 }
