@@ -247,4 +247,3 @@ def test_five_axis_pages_render(tmp_path):
     assert not _blocks_qc(r, ids)
     path = render_deck(r.deck, tmp_path / "axes.pptx")
     assert len(Presentation(str(path)).slides) == len(r.deck.slides)
-

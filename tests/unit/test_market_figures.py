@@ -58,7 +58,10 @@ def test_million_dollar_figures_and_usd_display():
 
 
 def test_gov_queries_follow_the_industry():
-    assert gov_queries("여행", "캐리어", 2026) == ["한국관광공사 국민 해외관광객 출국자 수 보도자료 2026"]
+    assert gov_queries("여행", "캐리어", 2026) == [
+        "한국관광공사 국민 해외관광객 출국자 수 보도자료 2026",
+        "문화체육관광부 국민여행조사 보도자료 2026",
+    ]
     assert gov_queries(None, "백팩", 2026) == ["백팩 통계청 관세청 보도자료 2026"]
 
 

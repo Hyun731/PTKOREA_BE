@@ -85,11 +85,11 @@ def _create_plan(db: Session, project: Project, core: CoreProject, previous: Opt
     plan = ResearchPlan(id=new_id("PLAN"), project_id=project.id, project_version=project.version, version=version)
     db.add(plan)
     db.flush()
-    keep = {(i.brand_id, i.entity, i.scope_id): i for i in (previous or []) if i.scope_id}
+    keep = {(i.brand_id, i.entity, i.scope_id, i.section_id): i for i in (previous or []) if i.scope_id}
     # Items made before the scope existed match on their section (only collector sections had items).
     legacy = {(i.brand_id, i.entity, i.section_id): i for i in (previous or []) if not i.scope_id}
     for spec in scope.generate_items(core):
-        old = keep.get((spec["brand_id"], spec["entity"], spec["scope_id"])) or legacy.pop(
+        old = keep.get((spec["brand_id"], spec["entity"], spec["scope_id"], spec["section_id"])) or legacy.pop(
             (spec["brand_id"], spec["entity"], spec["section_id"]), None)
         item = ResearchItem(id=new_id("RI"), plan_id=plan.id, project_id=project.id, **spec)
         if old:  # keep the person's decisions when the plan is regenerated

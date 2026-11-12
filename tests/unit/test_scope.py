@@ -73,8 +73,10 @@ def test_direction_reads_like_a_plan():
     assert lines[1] == "최근 24개월(2024.10.01 ~ 2026.09.30) 안의 것만 봅니다."
     assert "자동으로 찾습니다" in lines[2] and "최대 4개" in lines[3]
     assert lines[-1] == "팝업·오프라인 행사를 먼저 봅니다."
-    manual = scope.direction(scope.BY_ID["4-2"], by_id(p)["4-2"], p)
-    assert manual[0].startswith("샘소나이트 사기") and "직접 넣습니다" in manual[2]
+    manual = scope.direction(scope.BY_ID["2-4"], by_id(p)["2-4"], p)
+    assert manual[0].startswith("샘소나이트 인지") and "직접 넣습니다" in manual[2]
+    issue = scope.direction(scope.BY_ID["4-2"], by_id(p)["4-2"], p)  # P4-3: 웹 기사와 네이버 뉴스로 자동
+    assert issue[0].startswith("샘소나이트 사기") and "네이버 뉴스에서 자동으로 찾습니다" in issue[2]
 
 
 def test_legacy_window_becomes_custom_period():
@@ -158,6 +160,15 @@ def test_owned_channel_targets_narrow_which_competitors_but_never_drop_self():
     p = project(scope=[{"item_id": "2-6", "targets": ["리모와"]}])
     rows = [r for r in scope.generate_items(p) if r["scope_id"] == "2-6"]
     assert {r["entity"] for r in rows} == {"샘소나이트", "리모와"}
+
+
+def test_positioning_runs_web_issue_and_ad_library_as_separate_items():
+    rows = [r for r in scope.generate_items(project()) if r["scope_id"] == "3-5"]
+    assert {(r["entity"], r["section_id"]) for r in rows} == {
+        ("리모와", "issue"), ("리모와", "ad_library"),
+        ("투미", "issue"), ("투미", "ad_library"),
+    }
+    assert {tuple(r["channels"]) for r in rows} == {("web",), ("ad_library",)}
 
 
 def test_voc_items_default_to_their_own_months_period_not_a_broken_custom_window():

@@ -36,6 +36,8 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "commerce_review": {"commerce_review"},
     "search": {"search_naver", "naver_mentions", "naver_blog_types"},
     "voc": {"community", "naver_blog", "x_search", "threads_search", "tiktok_search", "youtube_search", "naver_kin"},
+    # P4-3: 공개 웹으로 찾을 수 있는 이슈·포지셔닝·트렌드 항목 — 웹 기사(Perplexity)와 네이버 뉴스로 자료 카드를 만든다.
+    "issue": {"web", "naver_news"},
     "ad_library": {"ad_library"},
 }
 
@@ -59,8 +61,8 @@ ITEMS: list[dict] = [
      "collector": None, "channels": ["upload", "app_review"], "period": 12, "period_hint": "최신 1회분 + 전년 비교",
      "uploads": ["자체 패널 조사", "브랜드 트래커"], "output": "지표마다 값·n·국가·측정일"},
     {"id": "2-5", "part": "company", "group": "기업과 제품", "title": "소비자 정의 (타깃 프로필)",
-     "question": "{brand} 핵심 타깃은 누구이고 무엇을 원하며 어떤 상황에서 사나", "subject": "self",
-     "collector": None, "channels": ["upload", "community"], "period": "inherit",
+     "question": "{brand} 핵심 타깃은 누구이고 무엇을 원하며 어떤 상황에서 사나(라이프스타일 트렌드)", "subject": "self",
+     "collector": "issue", "channels": ["web", "upload", "community"], "default_channels": ["web"], "period": "inherit",
      "output": "타깃 한 줄 + 니즈 3개 + 근거 원문 2개"},
     {"id": "2-6", "part": "company", "group": "채널과 활동", "title": "Owned 채널 운영 현황",
      "question": "{brand} 공식 Instagram·YouTube 채널 전체 게시물(팔로워·게시 빈도·반응)", "subject": "self_and_competitor",
@@ -85,15 +87,15 @@ ITEMS: list[dict] = [
      "channels": ["commerce_review"], "default_channels": ["commerce_review"], "period": "inherit",
      "period_hint": "최신 수집 시점 기준", "output": "플랫폼별 대표 상품 평점·리뷰 수 + 긍정·부정 키워드(원문 근거)"},
     {"id": "4-1", "part": "company", "group": "주요 이슈", "title": "긍정 이슈",
-     "question": "{brand} 신규 기능·비전 발표·서비스 확장·수상·투자 소식", "subject": "self", "collector": None,
-     "channels": ["web"], "period": 6, "period_hint": "최근 3~6개월, 최신순", "output": "이슈마다 제목·매체·일자·요약 2줄"},
+     "question": "{brand} 신규 기능·비전 발표·서비스 확장·수상·투자 소식", "subject": "self", "collector": "issue",
+     "channels": ["web", "naver_news"], "period": 6, "period_hint": "최근 3~6개월, 최신순", "output": "이슈마다 제목·매체·일자·요약 2줄"},
     {"id": "4-2", "part": "company", "group": "주요 이슈", "title": "리스크 이슈",
-     "question": "{brand} 사기·만족도·조직·규제 위반 등 부정 이슈", "subject": "self", "collector": None,
-     "channels": ["web", "community"], "default_channels": ["web"], "period": 6, "period_hint": "최근 3~6개월, 최신순",
+     "question": "{brand} 사기·만족도·조직·규제 위반 등 부정 이슈", "subject": "self", "collector": "issue",
+     "channels": ["web", "naver_news", "community"], "default_channels": ["web", "naver_news"], "period": 6, "period_hint": "최근 3~6개월, 최신순",
      "output": "이슈마다 제목·매체·일자·요약 2줄"},
     {"id": "4-3", "part": "company", "group": "주요 이슈", "title": "대응 활동",
-     "question": "{brand} 리스크 이슈에 대한 대응(제도 도입·모니터링 강화)", "subject": "self", "collector": None,
-     "channels": ["web"], "period": 6, "output": "리스크 이슈와 1:1로 짝지은 대응"},
+     "question": "{brand} 리스크 이슈에 대한 대응(제도 도입·모니터링 강화)", "subject": "self", "collector": "issue",
+     "channels": ["web", "naver_news"], "period": 6, "output": "리스크 이슈와 1:1로 짝지은 대응"},
     # ---------------------------------------------------------------- 2. 경쟁사 분석 (Competitor)
     {"id": "3-1", "part": "competitor", "group": "시장 환경", "title": "산업 현황",
      "question": "{category} 시장 규모·성장률, 유통 채널 구조, 주요 플레이어 지도 (공식 자료)", "subject": "market", "collector": "market",
@@ -106,8 +108,8 @@ ITEMS: list[dict] = [
      "default_channels": ["search_naver", "naver_mentions", "naver_blog_types"], "period": "inherit", "period_hint": "최근 12개월 + 조사 기간",
      "uploads": ["검색 지수 CSV(선택)"], "output": "한 장표에 한 소스, 같은 기준일"},
     {"id": "3-3", "part": "competitor", "group": "시장 환경", "title": "신규 진입자",
-     "question": "{category} 최근 새로 들어온 플레이어와 차별점", "subject": "market", "collector": None,
-     "channels": ["web"], "period": 12, "output": "플레이어마다 진입 시점·차별점 1줄·출처"},
+     "question": "{category} 최근 새로 들어온 플레이어와 차별점", "subject": "market", "collector": "market",
+     "templates": ["M1"], "channels": ["web"], "period": 12, "output": "플레이어마다 진입 시점·차별점 1줄·출처"},
     # 피드백 #1 축 4(규제와 정책): 3-1과 같은 collector("market")를 써서 같은 M1 장표로 합친다
     # (build_queries()가 scope_id로 정책 전용 질의를 따로 만든다).
     {"id": "3-4", "part": "competitor", "group": "시장 환경", "title": "규제와 정책",
@@ -117,12 +119,15 @@ ITEMS: list[dict] = [
     {"id": "3-5", "part": "competitor", "group": "경쟁사", "title": "경쟁사 포지셔닝 (3C 비교)",
      # P2-9: 포지셔닝의 근거로 경쟁사 광고 소재(공개 광고 라이브러리)를 자동으로 모은다 — 소재 수·유형 비중.
      "question": "경쟁사 {entity}의 타깃 공략 방식·포지셔닝·미디어 믹스", "subject": "competitor",
-     "collector": "ad_library", "channels": ["ad_library", "web", "tvcf", "youtube"], "default_channels": ["ad_library"],
+     # P4-3 웹 기사와 P2-9 광고 라이브러리는 서로 다른 provider/결과를 만들므로 같은 범위에서 두 item으로 실행한다.
+     "collector": "issue", "collectors": ["issue", "ad_library"],
+     "channels": ["web", "naver_news", "ad_library", "tvcf", "youtube"],
+     "default_channels": ["web", "ad_library"],
      "period": "inherit",
      "output": "경쟁사마다 Customer·Competitor·Company 각 1~2줄 + 광고 소재 수·유형 비중(제품·셀럽·크리에이터·할인·브랜드 필름)"},
     {"id": "3-6", "part": "competitor", "group": "경쟁사", "title": "경쟁사 BRAND 페이지",
      "question": "경쟁사 {entity}의 슬로건·TVC 카피·공식 문구, 비주얼, 소비자가 읽은 메시지", "subject": "competitor",
-     "collector": None, "channels": ["web", "instagram", "youtube", "commerce_review", "community"],
+     "collector": "issue", "channels": ["web", "instagram", "youtube", "commerce_review", "community"],
      "default_channels": ["web", "instagram", "youtube"], "period": 24,
      "output": "브랜드 표현 3개 + 비주얼 4컷 + 메시지 vs 인식 3열"},
     {"id": "3-7", "part": "competitor", "group": "경쟁사", "title": "경쟁사 CASE 카드",
@@ -178,10 +183,10 @@ ITEMS: list[dict] = [
      "channels": [], "period": "inherit", "from": ["5-1"], "output": "구매 계기 × 고려 요소 × 대표 원문"},
     {"id": "6-1", "part": "customer", "group": "채널과 콘텐츠 트렌드", "title": "채널별 콘텐츠 트렌드",
      "question": "{category} 숏폼·AI 활용·라이브·커뮤니티형 등 지금 통하는 콘텐츠 형식과 성공 사례", "subject": "market",
-     "collector": None, "channels": ["report", "web"], "period": 12, "output": "트렌드 카드 4장(수치·출처)"},
+     "collector": "issue", "channels": ["report", "web"], "default_channels": ["web"], "period": 12, "output": "트렌드 카드 4장(수치·출처)"},
     {"id": "6-2", "part": "customer", "group": "채널과 콘텐츠 트렌드", "title": "매체 환경과 다음 해 키워드",
-     "question": "디지털 광고비 전망, 매체별 비중 변화, 새 매체와 기술", "subject": "market", "collector": None,
-     "channels": ["report", "web"], "period": 12, "period_hint": "최근 12개월 + 다음 해 전망",
+     "question": "디지털 광고비 전망, 매체별 비중 변화, 새 매체와 기술", "subject": "market", "collector": "issue",
+     "channels": ["report", "web"], "default_channels": ["web"], "period": 12, "period_hint": "최근 12개월 + 다음 해 전망",
      "output": "수치 3~5개 + 키워드 3~5"},
 ]
 BY_ID = {s["id"]: s for s in ITEMS}
@@ -206,7 +211,8 @@ def automation(spec: dict, channels: list[str]) -> str:
     col = spec["collector"]
     if col == "generated":
         return "generated"
-    if col and AUTO_CHANNELS.get(col, set()) & set(channels):
+    collectors = spec.get("collectors", [col])
+    if any(AUTO_CHANNELS.get(collector or "", set()) & set(channels) for collector in collectors):
         return "auto"
     return "manual"
 
@@ -218,7 +224,9 @@ def catalog() -> dict:
             "id": s["id"], "part": s["part"], "group": s["group"], "title": s["title"], "question": s["question"],
             "subject": s["subject"], "collector": s["collector"], "templates": s.get("templates", []),
             "channels": s["channels"], "default_channels": _default_channels(s),
-            "auto_channels": sorted(AUTO_CHANNELS.get(s["collector"] or "", set()) & set(s["channels"])),
+            "auto_channels": sorted(set().union(*(AUTO_CHANNELS.get(c or "", set())
+                                                   for c in s.get("collectors", [s["collector"]])))
+                                    & set(s["channels"])),
             "period": s["period"], "period_hint": s.get("period_hint"), "limit": s.get("limit"),
             "uploads": s.get("uploads", []), "needs": s.get("needs"), "from": s.get("from", []), "output": s["output"],
         })
@@ -386,12 +394,17 @@ def generate_items(project: Project) -> list[dict]:
             if not r["enabled"] or spec["collector"] == "generated":
                 continue
             for entity, role in _subjects(spec, brand, r["targets"]):
-                items.append({
-                    "order": len(items) + 1, "brand_id": brand.id, "entity": entity, "role": role,
-                    "section_id": spec["collector"] or spec["part"], "scope_id": spec["id"],
-                    "question": spec["question"].format(brand=brand.name, entity=entity, category=category,
-                                                        competitors=", ".join(brand.competitors)),
-                    "period_start": r["start"], "period_end": r["end"], "channels": r["channels"],
-                    "required": role == "self" and spec["collector"] is not None,
-                })
+                for collector in spec.get("collectors", [spec["collector"] or spec["part"]]):
+                    channels = [channel for channel in r["channels"] if channel in AUTO_CHANNELS.get(collector, set())]
+                    if not channels and spec.get("collectors"):
+                        continue
+                    items.append({
+                        "order": len(items) + 1, "brand_id": brand.id, "entity": entity, "role": role,
+                        "section_id": collector, "scope_id": spec["id"],
+                        "question": spec["question"].format(brand=brand.name, entity=entity, category=category,
+                                                            competitors=", ".join(brand.competitors)),
+                        "period_start": r["start"], "period_end": r["end"],
+                        "channels": channels if spec.get("collectors") else r["channels"],
+                        "required": role == "self" and spec["collector"] is not None,
+                    })
     return items

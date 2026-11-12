@@ -138,7 +138,10 @@ def make_figure_fact(fig: dict, *, brand_id: str, entity: str, measured_at: date
 
 
 # Profile gov_stats entries that name a collector module rather than a search phrase (P4-2 turns them into phrases).
-GOV_PRESS = {"immigration_arrivals": "한국관광공사 국민 해외관광객 출국자 수 보도자료"}
+GOV_PRESS = {
+    "immigration_arrivals": "한국관광공사 국민 해외관광객 출국자 수 보도자료",
+    "한국관광공사 출입국 통계": "한국관광공사 국민 해외관광객 출국자 수 보도자료",
+}
 GOV_DEFAULT = "{cat} 통계청 관세청 보도자료"
 
 
@@ -147,7 +150,7 @@ def gov_queries(industry: Optional[str], cat: str, year) -> list[str]:
     profile = INDUSTRY_PROFILES.get(industry or "")
     phrases = []
     for g in (profile.gov_stats if profile else ()):
-        phrase = GOV_PRESS.get(g) if re.fullmatch(r"[a-z_]+", g) else g
+        phrase = GOV_PRESS.get(g, g)
         if phrase:
             phrases.append(phrase if "보도자료" in phrase else f"{phrase} 보도자료")
     phrases = phrases or [GOV_DEFAULT.format(cat=cat)]

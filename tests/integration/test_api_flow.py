@@ -306,7 +306,7 @@ def test_scope_change_regenerates_plan_and_keeps_decisions(client):
     assert next(w for w in p["config"]["section_windows"] if w["section_id"] == "influencer")["start"] == "2026-06-01"
     items = ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"]
     issue = next(i for i in items if i["scope_id"] == "4-2")
-    assert issue["period_start"] == "2026-07-01" and issue["section_id"] == "company"
+    assert issue["period_start"] == "2026-07-01" and issue["section_id"] == "issue"  # P4-3: 웹·뉴스로 자동 수집
     assert next(i for i in items if i["scope_id"] == "3-7" and i["entity"] == "경쟁2")["review_status"] == "accepted"
     bad = [{**s, "channels": ["tvcf"]} if s["item_id"] == "4-1" else s for s in settings]
     r = client.patch(f"/v1/projects/{pid}", json={"base_version": p["version"], "changes": {"scope": bad}})

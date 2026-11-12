@@ -176,6 +176,13 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     year = item.period_start.year if item.period_start.year == item.period_end.year else f"{item.period_start.year} {item.period_end.year}"
     # Words the planner asked for (via the direction chat) go first, so the per-item query cap keeps them.
     asked = (scope.setting_for(core, item.scope_id) or {}).get("keywords") or []
+    if item.section_id == "issue":
+        return [f"{q} {year}".strip() for q in [*(f"{item.entity} {k}" for k in asked),
+                                                 *issue_queries(item.scope_id, item.entity, cat, brand)]]
+    if item.section_id == "market" and item.scope_id == "3-3":
+        # P4-3 신규 진입자: M1의 주요 플레이어 행으로 들어간다.
+        return [f"{cat} {k} {year}" for k in asked] + [
+            f"{cat} 신규 브랜드 진출 {year}", f"{cat} 신생 브랜드 론칭 {year}", f"{cat} 시장 새 경쟁자 {year}"]
     if item.section_id == "market" and item.scope_id == "3-4":
         # 피드백 #1 축 4(규제와 정책) — 3-1과 같은 M1 장표로 합쳐지지만 질의는 정책·제도 전용.
         # P4-2: 업종 프로필의 정책 축 질의(예: 여행 → 면세 한도)를 기본 질의 뒤에 덧붙인다.
@@ -186,19 +193,21 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
         age = brand.target.label.split("·")[0].strip() if brand.target else ""
         # Phase 3-2: 시장 규모·성장, 유통 채널 구조, 주요 플레이어를 각각 겨냥 — 한 질의가 셋을 다 못 챙긴다.
         queries = [f"{cat} {k} {year}" for k in asked] + [
-            f"{cat} 시장 규모 성장률 {year}", f"{cat} 유통 채널 점유율 {year}", f"{cat} 주요 브랜드 경쟁 구도 {year}",
-            f"{age} {cat} 이용 조사 {year}".strip()]
+            f"{cat} 시장 규모 성장률 {year}", f"{cat} 유통 채널 점유율 {year}", f"{cat} 주요 브랜드 경쟁 구도 {year}"]
         # P4-1: 정부 통계는 보도자료로 — 같은 추출로 수치(출입국자 수 등)를 Fact 후보로 만든다.
         queries += market_figures.gov_queries(brand.industry, cat, year)[:1]
         # 피드백 #1(업종별 variation): 업종 특화 서브트렌드 키워드를 한 질의로 묶어 덧붙인다(한도
         # 안에서 밀려나도 핵심 질의 4개는 남도록 맨 뒤에 둔다).
         # P4-2: 업종 프로필의 시장·수요·소비자 축 질의 — 축마다 첫 질의가 먼저 오도록 섞어, 질의 한도
         # (MAX_QUERIES_PER_ITEM) 안에 업종 특화 질의가 들어가게 한다.
-        axes = [industry_axis_queries(brand.industry, a, category=cat, year=year) for a in ("market", "demand", "consumer")]
+        # 일반 시장 질의 세 개가 market 축을 이미 덮으므로, 한도 안에는 업종별 수요·소비자 질의를 먼저 넣는다.
+        axes = [industry_axis_queries(brand.industry, a, category=cat, year=year) for a in ("demand", "consumer", "market")]
         queries += [qs[0] for qs in axes if qs]
         hints = brand.keyword_hints()
         if hints:
             queries.append(f"{cat} {' '.join(hints[:3])} {year}")
+        if age:
+            queries.append(f"{age} {cat} 이용 조사 {year}".strip())
         queries += [q for qs in axes for q in qs[1:]]
         return list(dict.fromkeys(queries))
     if item.section_id == "market_kpi":
@@ -215,6 +224,51 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     if item.role == "self":  # the client's own activities carry the report: look wider
         queries += [f"{item.entity} 신메뉴 출시 {year}", f"{item.entity} 팝업 {year}"]
     return queries
+
+
+# P4-3: 공개 웹으로 찾는 이슈·포지셔닝·트렌드 항목의 질의 (연도는 build_queries가 붙인다)
+ISSUE_QUERIES: dict[str, tuple[str, ...]] = {
+    "4-1": ("{e} 신제품 출시", "{e} 수상", "{e} 매장 확장 투자", "{e} 신규 서비스"),
+    "4-2": ("{e} 논란", "{e} 불만 품질 문제", "{e} 리콜 소송", "{e} 피해 신고"),
+    "4-3": ("{e} 사과 대응", "{e} 개선 조치", "{e} 고객 보상 정책"),
+    "3-5": ("{e} 타깃 전략", "{e} 브랜드 포지셔닝", "{e} 마케팅 전략 매체"),
+    "3-6": ("{e} 슬로건", "{e} 광고 카피", "{e} 브랜드 캠페인 메시지"),
+    "2-5": ("{cat} 라이프스타일 트렌드 리포트", "{target} {cat} 소비 트렌드", "{e} 주 고객층"),
+    "6-1": ("{cat} 숏폼 콘텐츠 트렌드", "{cat} 라이브 커머스 사례", "{cat} 콘텐츠 마케팅 성공 사례"),
+    "6-2": ("디지털 광고비 전망", "매체별 광고비 비중 변화", "광고 마케팅 트렌드 키워드"),
+}
+# Items whose answers rarely name the brand itself (trend reports, ad-market outlooks): no name filter.
+UNNAMED_ITEMS = {"2-5", "6-1", "6-2"}
+NEWS_QUERIES = 2  # 네이버 뉴스로 함께 찾는 질의 수(최신순)
+NEWS_PER_QUERY = 20
+
+
+def issue_queries(scope_id: Optional[str], entity: str, cat: str, brand) -> list[str]:
+    target = brand.target.label.split("·")[0].strip() if brand.target else ""
+    return [" ".join(q.format(e=entity, cat=cat, target=target).split())
+            for q in ISSUE_QUERIES.get(scope_id or "", ("{e} 소식",))]
+
+
+def _naver_news_results(ledger: RunLedger, p: dict, item: ResearchItem, queries: list[str], out: dict) -> list[dict]:
+    """네이버 뉴스 검색(최신순) 결과를 웹 검색 결과와 같은 모양으로. 키가 없거나 막히면 웹 검색만 쓴다."""
+    if "naver_news" not in (item.channels or []) or "naver_search" not in p:
+        return []
+    found: list[dict] = []
+    for q in queries[:NEWS_QUERIES]:
+        q = re.sub(r"\s+\d{4}(\s+\d{4})?$", "", q)  # the news API sorts by date itself: no year words
+        try:
+            res = ledger.call("naver", "search", {"kind": "news", "q": q, "start": 1, "sort": "date"}, 0.0,
+                              lambda qq=q: p["naver_search"]("news", qq, display=NEWS_PER_QUERY, start=1, sort="date"),
+                              cache_days=1)
+        except ProviderError as exc:
+            out.setdefault("naver_news", exc.message)
+            return found
+        for it in res.data["items"]:
+            if it.get("url"):
+                found.append({"title": it.get("title") or it["url"], "url": it["url"], "snippet": it.get("snippet") or "",
+                              "date": it.get("date")})
+    out["naver_news"] = len(found)
+    return found
 
 
 # ------------------------------------------------------------------ AI extraction (F02: candidates only)
@@ -427,10 +481,19 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         out["errors"].append({"code": "LIMIT", "message": f"실행당 검색 질의 한도({MAX_QUERIES_PER_RUN})에 도달했습니다"})
         return out
     results = _search_windows(ledger, p, item, queries)
+    if item.section_id == "issue":  # P4-3: 소식·이슈는 뉴스가 먼저 — 웹 검색 결과와 번갈아 둔다(페이지 한도 안에 둘 다)
+        news = _naver_news_results(ledger, p, item, queries, out)
+        mixed, seen = [], set()
+        for pair in zip_longest(news, results):
+            for r in pair:
+                if r and r["url"] not in seen:
+                    seen.add(r["url"])
+                    mixed.append(r)
+        results = mixed
     # Generic words in a query ("이벤트 프로모션 2026") pull in other brands' promotions. A result that never
     # names the subject would only use up a card slot before the AI rejects it: drop it here, and look
     # at results naming it in the title before those naming it only in the snippet.
-    if item.section_id != "market":
+    if item.section_id != "market" and item.role != "market" and item.scope_id not in UNNAMED_ITEMS:
         names = subject_names(item, project)
         results, out["off_topic"] = _named(results, names)
         if not results:
@@ -2458,7 +2521,7 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
             item.execution_status, item.latest_job_id = "running", job_id
             s.commit()
             try:
-                if item.section_id in ("campaign", "market", "market_kpi"):
+                if item.section_id in ("campaign", "market", "market_kpi", "issue"):
                     if not settings.provider_configured("perplexity"):
                         raise ProviderError("PROVIDER_AUTH", "Perplexity 키가 없습니다")
                     r = run_web_item(s, ledger, project, item, state, ai_enabled)
