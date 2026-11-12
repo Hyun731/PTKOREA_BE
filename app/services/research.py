@@ -32,6 +32,7 @@ from app.services.dedupe import find_duplicate, merge, primaries, usable
 from app.services.inputs import core_project
 from app.services.ledger import RunLedger
 from app.storage import get_storage
+from core.industry_profiles import axis_queries as industry_axis_queries, profile_for
 from core.ingestion.manual import make_manual_fact
 from core.schemas.materials import MARKET_ASPECTS, TARGET_SEGMENTS
 from integrations.base import CallResult, ProviderError
@@ -169,9 +170,10 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
     asked = (scope.setting_for(core, item.scope_id) or {}).get("keywords") or []
     if item.section_id == "market" and item.scope_id == "3-4":
         # 피드백 #1 축 4(규제와 정책) — 3-1과 같은 M1 장표로 합쳐지지만 질의는 정책·제도 전용.
-        return [f"{cat} {k} {year}" for k in asked] + [
+        # P4-2: 업종 프로필의 정책 축 질의(예: 여행 → 면세 한도)를 기본 질의 뒤에 덧붙인다.
+        return list(dict.fromkeys([f"{cat} {k} {year}" for k in asked] + [
             f"{cat} 정책 규제 {year}", f"{cat} 제도 개정 {year}", f"{cat} 정부 지원 정책 {year}",
-            f"{cat} ESG 친환경 규제 {year}"]
+            f"{cat} ESG 친환경 규제 {year}"] + industry_axis_queries(brand.industry, "policy", category=cat, year=year)))
     if item.section_id == "market":
         age = brand.target.label.split("·")[0].strip() if brand.target else ""
         # Phase 3-2: 시장 규모·성장, 유통 채널 구조, 주요 플레이어를 각각 겨냥 — 한 질의가 셋을 다 못 챙긴다.
@@ -180,13 +182,20 @@ def build_queries(item: ResearchItem, project: Project) -> list[str]:
             f"{age} {cat} 이용 조사 {year}".strip()]
         # 피드백 #1(업종별 variation): 업종 특화 서브트렌드 키워드를 한 질의로 묶어 덧붙인다(한도
         # 안에서 밀려나도 핵심 질의 4개는 남도록 맨 뒤에 둔다).
+        # P4-2: 업종 프로필의 시장·수요·소비자 축 질의 — 축마다 첫 질의가 먼저 오도록 섞어, 질의 한도
+        # (MAX_QUERIES_PER_ITEM) 안에 업종 특화 질의가 들어가게 한다.
+        axes = [industry_axis_queries(brand.industry, a, category=cat, year=year) for a in ("market", "demand", "consumer")]
+        queries += [qs[0] for qs in axes if qs]
         hints = brand.keyword_hints()
         if hints:
             queries.append(f"{cat} {' '.join(hints[:3])} {year}")
-        return queries
+        queries += [q for qs in axes for q in qs[1:]]
+        return list(dict.fromkeys(queries))
     if item.section_id == "market_kpi":
         # 지표 중심 업종(거래량·ARPU·판매 대수 등) — 공식 통계·공시에서 자사·경쟁사 숫자를 찾는다.
-        return [f"{item.entity} {k} {year}" for k in asked] + [
+        # P4-2: 업종 핵심 지표(예: 여행 → 출입국자 수)를 일반 지표보다 먼저 찾는다.
+        metrics = getattr(profile_for(brand.industry), "key_metrics", ())[:3]
+        return [f"{item.entity} {k} {year}" for k in asked] + [f"{item.entity} {m} {year}" for m in metrics] + [
             f"{item.entity} 거래량 실적 {year}", f"{item.entity} ARPU {year}", f"{item.entity} 판매 대수 실적 {year}",
             f"{item.entity} 공시 지표 {year}"]
     # Different kinds of activity surface different articles (PRD 13: 12 queries per run).
