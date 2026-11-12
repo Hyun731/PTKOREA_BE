@@ -28,7 +28,10 @@ from app.services.audit import audit
 from app.services.inputs import core_project
 from app.storage import get_storage
 from core.composition.formatters import UNIT_FORMATTER, fmt_date_dot, format_value
-from core.ingestion.csv_import import import_facts_csv, import_posts_csv
+from core.ingestion.csv_import import (
+    CLIENT_SOURCE_PREFIX, client_charts, client_template_csv, import_client_csv, import_facts_csv, import_posts_csv,
+    xlsx_to_csv,
+)
 from core.ingestion.manual import make_manual_fact
 from core.schemas.facts import MANUAL_METRICS, Fact
 from core.schemas.materials import TARGET_SEGMENTS
@@ -46,30 +49,44 @@ def _unbound_digit(text: str) -> bool:
 
 # ------------------------------------------------------------------ CSV imports
 
+def _client_source_key(b: ImportBatch) -> str:
+    return f"imports/{b.project_id}/{b.id}/source.pdf"
+
+
 def batch_out(b: ImportBatch) -> dict:
     return {"id": b.id, "kind": b.kind, "filename": b.filename, "status": b.status, "total_rows": b.total_rows,
             "valid_rows": b.valid_rows, "errors": b.errors, "duplicates": b.duplicates, "synthetic": b.synthetic,
-            "reviewed_by": b.reviewed_by, "reviewed_at": b.reviewed_at, "created_at": b.created_at}
+            "reviewed_by": b.reviewed_by, "reviewed_at": b.reviewed_at, "created_at": b.created_at,
+            "has_source_file": b.kind == "client" and get_storage().exists(_client_source_key(b))}
 
 
 def _store_batch(db: Session, project, kind: str, filename: str, text: str, who: str,
-                 source_name: str = "posts.csv") -> ImportBatch:
+                 source_name: str = "posts.csv", source_pdf: Optional[tuple[str, bytes]] = None) -> ImportBatch:
     core = core_project(project)
     batch_id = new_id("BAT")
     result = (import_facts_csv(text, core, batch_id, filename) if kind == "facts"
+              else import_client_csv(text, core, batch_id, filename) if kind == "client"
               else import_posts_csv(text, core, batch_id, filename, source_name))
     if any(e.code == "MISSING_COLUMN" for e in result.errors):
-        raise ApiError(422, "INVALID_ROW", "필수 열이 없습니다", "템플릿 열 이름을 확인하세요",
-                       [e.model_dump() for e in result.errors])
+        hint = "양식을 내려받아 열 이름을 맞춰 주세요" if kind == "client" else "템플릿 열 이름을 확인하세요"
+        raise ApiError(422, "INVALID_ROW", "필수 열이 없습니다", hint, [e.model_dump() for e in result.errors])
     key = get_storage().put_bytes(f"imports/{project.id}/{batch_id}/{filename}", text.encode("utf-8"))
     synthetic = any(f.source == "synthetic_fixture" for f in result.facts)
-    valid = len(result.facts) if kind == "facts" else len(result.posts)
+    valid = len(result.facts) if kind in ("facts", "client") else len(result.posts)
     batch = ImportBatch(id=batch_id, project_id=project.id, kind=kind, filename=filename, total_rows=result.total_rows,
                         valid_rows=valid, errors=[e.model_dump() for e in result.errors],
                         duplicates=[d.model_dump() for d in result.duplicates], file_key=key, synthetic=synthetic)
     db.add(batch)
+    if source_pdf:  # P4-5: 원문 PDF는 출처 파일로 함께 남긴다(수치마다 source_id로 이어짐)
+        pdf_name, pdf = source_pdf
+        src = Source(id=new_id("SRC"), project_id=project.id, title=pdf_name[-300:], publisher=CLIENT_SOURCE_PREFIX,
+                     upload_key=get_storage().put_bytes(_client_source_key(batch), pdf), source_type="client_provided",
+                     access_status="ok", fetched_at=utcnow())
+        db.add(src)
+        result.facts = [f.model_copy(update={"source_id": src.id}) for f in result.facts]
+    origin = {"facts": "csv", "client": "client"}.get(kind, "posts")
     for f in result.facts:
-        db.add(FactRow(project_id=project.id, fact_id=f.id, origin="csv" if kind == "facts" else "posts",
+        db.add(FactRow(project_id=project.id, fact_id=f.id, origin=origin,
                        batch_id=batch_id, data=json.loads(f.model_dump_json()), verification_status="candidate"))
     for p in result.posts:
         db.add(PostRow(project_id=project.id, batch_id=batch_id, post_id=p.post_id, data=json.loads(p.model_dump_json())))
@@ -79,19 +96,83 @@ def _store_batch(db: Session, project, kind: str, filename: str, text: str, who:
 
 
 @router.post("/projects/{project_id}/imports", status_code=201)
-async def upload_import(project_id: str, kind: Literal["facts", "posts"] = Form(...), file: UploadFile = File(...),
+async def upload_import(project_id: str, kind: Literal["facts", "posts", "client"] = Form(...),
+                        file: UploadFile = File(...), source_file: Optional[UploadFile] = File(None),
                         db: Session = Depends(get_db), who: str = Depends(actor)):
+    """kind=client(P4-5 보유 자료): 엑셀(xlsx) 또는 CSV + 선택한 원문 PDF. 다른 종류처럼 배치를 채택해야 쓰인다."""
     p = get_project(db, project_id)
     data = await file.read()
     if len(data) > settings.max_csv_bytes:
-        raise ApiError(413, "FILE_TOO_LARGE", "CSV는 5MB 이하만 업로드할 수 있습니다")
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        raise ApiError(422, "INVALID_ROW", "UTF-8 CSV만 지원합니다", "UTF-8(BOM 허용)로 저장해 다시 업로드")
-    batch = _store_batch(db, p, kind, (file.filename or f"{kind}.csv")[-120:], text, who)
+        raise ApiError(413, "FILE_TOO_LARGE", "파일은 5MB 이하만 올릴 수 있습니다")
+    filename = (file.filename or f"{kind}.csv")[-120:]
+    if kind == "client" and (filename.lower().endswith(".xlsx") or data[:2] == b"PK"):
+        try:
+            text = xlsx_to_csv(data)
+        except ValueError:
+            raise ApiError(422, "INVALID_ROW", "엑셀 파일을 읽을 수 없습니다", "양식을 내려받아 다시 저장한 뒤 올려 주세요")
+        filename = filename.rsplit(".", 1)[0] + ".csv"
+    else:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ApiError(422, "INVALID_ROW", "UTF-8 CSV만 지원합니다", "UTF-8(BOM 허용)로 저장해 다시 업로드")
+    pdf = None
+    if source_file is not None and source_file.filename:
+        if kind != "client":
+            raise ApiError(422, "INVALID_FILE", "원문 파일은 보유 자료에만 함께 올릴 수 있습니다")
+        blob = await source_file.read()
+        if len(blob) > MAX_SOURCE_PDF_BYTES:
+            raise ApiError(413, "FILE_TOO_LARGE", "원문 PDF는 30MB 이하만 올릴 수 있습니다")
+        if not blob.startswith(b"%PDF"):
+            raise ApiError(422, "INVALID_FILE", "원문 파일은 PDF만 올릴 수 있습니다")
+        pdf = (source_file.filename[-200:], blob)
+    batch = _store_batch(db, p, kind, filename, text, who, source_pdf=pdf)
     db.commit()
     return batch_out(batch)
+
+
+MAX_SOURCE_PDF_BYTES = 30 * 1024 * 1024
+
+
+@router.get("/imports/client-template.csv")
+def client_template():
+    """보유 자료 양식(엑셀에서 바로 열리는 CSV, 머리글만)."""
+    return Response(client_template_csv(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''%EB%B3%B4%EC%9C%A0%EC%9E%90%EB%A3%8C_%EC%96%91%EC%8B%9D.csv"})
+
+
+@router.get("/imports/{batch_id}/source.pdf")
+def client_source_file(batch_id: str, db: Session = Depends(get_db)):
+    b = db.get(ImportBatch, batch_id)
+    key = _client_source_key(b) if b is not None and b.kind == "client" else None
+    if not key or not get_storage().exists(key):
+        raise not_found("원문 파일")
+    return FileResponse(get_storage().path(key), media_type="application/pdf")
+
+
+@router.get("/projects/{project_id}/client-data")
+def client_data(project_id: str, db: Session = Depends(get_db)):
+    """보유 자료(P4-5): 올린 배치마다 수치 목록, 그리고 채택한 배치의 수치로 그린 차트."""
+    p = get_project(db, project_id)
+    core = core_project(p)
+    batches = list(db.scalars(select(ImportBatch).where(ImportBatch.project_id == project_id, ImportBatch.kind == "client")
+                              .order_by(ImportBatch.created_at.desc())))
+    rows_by_batch: dict[str, list[FactRow]] = {}
+    for r in db.scalars(select(FactRow).where(FactRow.project_id == project_id, FactRow.origin == "client")
+                        .order_by(FactRow.pk)):
+        rows_by_batch.setdefault(r.batch_id or "", []).append(r)
+    accepted: dict[str, Fact] = {}
+    out = []
+    for b in batches:
+        facts = [Fact.model_validate(r.data) for r in rows_by_batch.get(b.id, [])]
+        if b.status == "accepted":
+            accepted.update({f.id: f for f in facts})
+        out.append({**batch_out(b), "rows": [{
+            "id": f.id, "entity": f.entity, "label": f.label, "unit": f.unit, "segment": f.dims.get("segment"),
+            "n": f.dims.get("n"), "display": format_value(UNIT_FORMATTER.get(f.unit, "int"), f.value),
+            "period_start": f.period_start, "period_end": f.period_end, "source": f.source} for f in facts]})
+    self_names = {b.name for b in core.brands}
+    return {"batches": out, "charts": client_charts(list(accepted.values()), self_names)}
 
 
 FIXTURE_ENTITIES = ["브랜드A", "경쟁X", "경쟁Y"]
@@ -155,7 +236,7 @@ def review_batch(batch_id: str, body: BatchReview, db: Session = Depends(get_db)
     before = b.status
     b.status = "accepted" if body.action == "accept" else "rejected"
     b.reviewed_by, b.reviewed_at = who, utcnow()
-    if body.action == "accept":
+    if body.action == "accept" and b.kind != "client":  # 보유 자료는 서로 다른 조사·리포트라 앞 배치를 바꾸지 않는다
         # Same-kind earlier accepted batches are replaced only within imports (manual data untouched),
         # and only when they cover a brand this batch also covers: research writes one posts CSV per brand.
         mine = _batch_brands(db, b)
@@ -176,9 +257,14 @@ def batch_errors(batch_id: str, db: Session = Depends(get_db)):
         raise not_found("CSV 배치")
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["file", "row_no", "column", "code", "message"])
-    for e in b.errors:
-        w.writerow([e["file"], e["row_no"], e.get("column") or "", e["code"], e["message"]])
+    if b.kind == "client":  # 보유 자료는 기획자가 직접 고치는 양식이라 쉬운 말로(줄 번호는 엑셀 줄과 같음)
+        w.writerow(["줄", "열", "고칠 내용"])
+        for e in b.errors:
+            w.writerow([e["row_no"], e.get("column") or "", e["message"]])
+    else:
+        w.writerow(["file", "row_no", "column", "code", "message"])
+        for e in b.errors:
+            w.writerow([e["file"], e["row_no"], e.get("column") or "", e["code"], e["message"]])
     return Response("﻿" + buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="errors-{b.id}.csv"'})
 

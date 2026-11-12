@@ -56,7 +56,7 @@ def load_inputs(db: Session, project: Project) -> BuildInputs:
     by_id: dict[str, Fact] = {}
     for row in db.scalars(select(FactRow).where(FactRow.project_id == project.id, FactRow.superseded_by.is_(None))):
         f = Fact.model_validate(row.data)
-        if row.origin in ("csv", "posts"):
+        if row.origin in ("csv", "posts", "client"):  # 배치 단위로 채택한다(client = P4-5 보유 자료)
             status = "eligible" if row.batch_id in accepted_batches else "candidate"
         else:
             status = row.verification_status

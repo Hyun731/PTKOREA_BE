@@ -148,7 +148,7 @@ class ImportBatch(Base):
     __tablename__ = "import_batches"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    kind: Mapped[str] = mapped_column(String(10))  # facts | posts
+    kind: Mapped[str] = mapped_column(String(10))  # facts | posts | client (P4-5 보유 자료)
     filename: Mapped[str] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(20), default="candidate")  # candidate|accepted|rejected|replaced
     total_rows: Mapped[int] = mapped_column(Integer, default=0)
@@ -168,7 +168,7 @@ class FactRow(Base):
     pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     fact_id: Mapped[str] = mapped_column(String(40), index=True)
-    origin: Mapped[str] = mapped_column(String(10))  # csv | posts | manual | auto (AI-extracted candidate)
+    origin: Mapped[str] = mapped_column(String(10))  # csv | posts | client (P4-5 보유 자료) | manual | auto (AI-extracted candidate)
     batch_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     material_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     research_item_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
