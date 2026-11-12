@@ -10,7 +10,7 @@ from PIL import Image
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import FactRow, Material, PostRow, ProviderCache, ProviderCall, Source, new_id, utcnow
+from app.models import FactRow, Material, PostRow, ProviderCache, ProviderCall, ResearchItem, Source, new_id, utcnow
 from app.services import (
     aliases, case_commentary, commerce_collect, direction, hero_products, industry, industry_keywords, insights,
     material_ai, official_accounts, outline, research, synthesis,
@@ -301,6 +301,15 @@ class Fakes:
         self._hit("threads_search")
         return CallResult(data={"posts": []}, cost_usd=0.002)
 
+    # P2-8: 틱톡·유튜브 검색도 기본은 빈 결과 — 전용 테스트가 덮어쓴다.
+    def tiktok_search_keyword(self, query, region=None, cursor=None, **kw):
+        self._hit("tiktok_search_keyword")
+        return CallResult(data={"posts": [], "cursor": None, "has_more": False}, cost_usd=0.002)
+
+    def youtube_search(self, query, **kw):
+        self._hit("youtube_search")
+        return CallResult(data={"videos": []}, cost_usd=0.002)
+
     def youtube_channel_videos(self, channel_id=None, handle=None, continuation_token=None, **kw):
         self._hit("youtube_channel_videos")
         videos = [{"id": "v1", "url": "https://youtube.com/watch?v=v1", "title": "영상1", "views": 1000,
@@ -422,7 +431,8 @@ def fakes(monkeypatch):
                               tiktok_profile_videos=f.tiktok_profile_videos, facebook_profile=f.facebook_profile,
                               facebook_profile_posts=f.facebook_profile_posts, twitter_profile=f.twitter_profile,
                               twitter_user_tweets=f.twitter_user_tweets, threads_profile=f.threads_profile,
-                              threads_user_posts=f.threads_user_posts)
+                              threads_user_posts=f.threads_user_posts, tiktok_search_keyword=f.tiktok_search_keyword,
+                              youtube_search=f.youtube_search)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -2083,6 +2093,82 @@ def test_voc_item_also_collects_x_and_threads_public_posts(client, fakes):
     assert tw["voc_sentiment"] == "positive" and tw["source"]["source_type"] == "social"
     th = mats["https://www.threads.com/@bar/post/abc"]
     assert th["voc_sentiment"] == "negative" and th["voc_topic"] == "shipping"
+
+
+def test_voc_item_adds_tiktok_youtube_comments_and_kin_as_their_own_channels(client, fakes):
+    """P2-8: 틱톡 검색(한국어로 브랜드를 말하는 것만), 유튜브 검색(기간 안 영상의 제목 + 댓글), 지식iN이
+    각자 채널로 모이고 수집 현황 화면의 채널별 건수에 보인다. 모두 후보로만 남는다."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "voc", "브랜드A")
+    assert {"tiktok_search", "youtube_search", "naver_kin"} <= {c["id"] for c in it["channels"]}  # 기본으로 켜진다
+    fakes.naver_items = {"kin": [{"title": "브랜드A 바퀴 고장 났어요", "url": "https://kin.naver.com/qna/1",
+                                  "snippet": "AS 되나요", "date": "2026-05-01", "author": None, "author_url": None}]}
+
+    def search(queries, sites=None, **kw):
+        fakes._hit("search")
+        return CallResult(data={"id": "s", "results": []}, cost_usd=0.005)
+
+    def tiktok_search_keyword(query, region=None, **kw):
+        fakes._hit("tiktok_search_keyword")
+        assert region == "KR"
+        return CallResult(data={"posts": [
+            {"url": "https://www.tiktok.com/@a/video/1", "text": "브랜드A 캐리어 3개월 써본 후기", "posted_at": "2026-05-01",
+             "author": "a", "followers": 5000, "views": 100, "likes": 5, "comments": 1, "region": "KR", "sponsored": False},
+            {"url": "https://www.tiktok.com/@b/video/2", "text": "my new 브랜드A luggage", "posted_at": "2026-05-01",
+             "author": "b"},  # 한글이 있지만 브랜드 이름만 — 통과
+            {"url": "https://www.tiktok.com/@c/video/3", "text": "so light and pretty #luggage", "posted_at": "2026-05-01",
+             "author": "c"},  # 해외 영상
+            {"url": "https://www.tiktok.com/@d/video/4", "text": "오늘의 여행 짐 싸기", "posted_at": "2026-05-01",
+             "author": "d"},  # 브랜드 이야기가 아님
+        ], "cursor": None, "has_more": False}, cost_usd=0.002)
+
+    def youtube_search(query, **kw):
+        fakes._hit("youtube_search")
+        return CallResult(data={"videos": [
+            {"url": "https://www.youtube.com/watch?v=v1", "title": "브랜드A 캐리어 리뷰", "posted_at": "2026-06-01",
+             "author": "리뷰채널", "views": 9000, "is_short": False},
+            {"url": "https://www.youtube.com/watch?v=s1", "title": "브랜드A 쇼츠", "posted_at": None,
+             "author": "숏폼", "views": 99999, "is_short": True},  # 게시일을 알 수 없어 뺀다
+            {"url": "https://www.youtube.com/watch?v=old", "title": "브랜드A 옛날 리뷰", "posted_at": "2019-01-01",
+             "author": "x", "views": 50000, "is_short": False},  # 기간 밖 — 댓글도 부르지 않는다
+        ]}, cost_usd=0.002)
+
+    research.PROVIDERS.update(search=search, tiktok_search_keyword=tiktok_search_keyword, youtube_search=youtube_search)
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["channels"] == {"kin": 1, "tiktok_search": 2, "youtube_search": 1}
+    assert res["skipped"] == {"foreign": 1, "unrelated": 1}
+    assert fakes.calls["youtube_video_comments"] == 1  # 기간 안 영상 하나만
+
+    mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "voc"}
+    yt = mats["https://www.youtube.com/watch?v=v1"]
+    assert yt["title"] == "브랜드A 캐리어 리뷰" and "진짜 예뻐요 재구매각" in yt["excerpt"]
+    assert yt["source"]["source_type"] == "social"
+    assert all(m["review_status"] == "candidate" for m in mats.values())
+
+    mix = ok(client.get(f"/v1/projects/{pid}/collection-mix"))
+    row = next(b for b in mix["brands"] if b["brand_id"] == "B1")
+    assert row["channels"]["kin"] == {"count": 1, "label": "지식iN"}
+    assert row["channels"]["sns_search"] == {"count": 3, "label": "SNS 검색"}
+
+
+def test_voc_item_skips_new_channels_the_plan_left_out(client, fakes):
+    """고르지 않은 채널(틱톡·유튜브·지식iN)은 부르지 않는다. P2-8 이전 계획은 지식iN을 계속 찾는다."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "voc", "브랜드A")
+    with SessionLocal() as db:
+        row = db.get(ResearchItem, it["id"])
+        row.channels = ["community", "naver_blog", "x_search", "threads_search"]  # P2-8 이전에 만든 계획
+        db.commit()
+    research.PROVIDERS["search"] = lambda queries, **kw: CallResult(data={"id": "s", "results": []}, cost_usd=0.005)
+    seen_kinds = []
+    naver = research.PROVIDERS["naver_search"]
+    research.PROVIDERS["naver_search"] = lambda kind, q, **kw: (seen_kinds.append(kind), naver(kind, q, **kw))[1]
+    ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
+    assert "tiktok_search_keyword" not in fakes.calls and "youtube_search" not in fakes.calls
+    assert "kin" in seen_kinds
 
 
 def test_voc_item_reports_access_cause_when_every_post_is_login_walled(client, fakes):

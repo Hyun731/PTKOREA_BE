@@ -1,0 +1,87 @@
+{
+ "success": true,
+ "credits_charged": 1,
+ "videos": [
+  {
+   "type": "video",
+   "id": "wgOJOka9A7A",
+   "url": "https://www.youtube.com/watch?v=wgOJOka9A7A",
+   "title": "더 이상 고민하지마세요! 샘소나이트백팩 한번에 몰아보기!",
+   "thumbnail": "https://i.ytimg.com/vi/wgOJOka9A7A/hq720.jpg?sqp=-oaymwEnCNAFEJQDSFryq4qpAxkIARUAAIhCGAHYAQHiAQoIGBACGAY4AUAB&rs=AOn4CLCMoxClsaGk_6iV2GwzrW09_4aYoA",
+   "channel": {
+    "id": "UCmRWreDnTJ1WT9dP4YcqNBQ",
+    "title": "솔직한 리뷰",
+    "handle": "reivewer",
+    "thumbnail": "https://yt3.ggpht.com/y9JyyoQdOvWFWQYFjth3lG-X6v_ySQmQZE-Kq94PoPsb89FuUPak2NBlpf11oguHb3fIb2ee=s68-c-k-c0x00ffffff-no-rj"
+   },
+   "viewCountText": "11,655 views",
+   "viewCountInt": 11655,
+   "publishedTimeText": "2 years ago",
+   "publishedTime": "2024-11-11T14:37:14.010Z",
+   "lengthText": "1:32",
+   "lengthSeconds": 92,
+   "badges": []
+  },
+  {
+   "type": "video",
+   "id": "lIfu0dEoxj0",
+   "url": "https://www.youtube.com/watch?v=lIfu0dEoxj0",
+   "title": "샘소나이트백팩] 추천 순위 Best5 (이 제품이면 충분합니다! 2026년 핫템 순위)",
+   "thumbnail": "https://i.ytimg.com/vi/lIfu0dEoxj0/hq720.jpg?sqp=-oaymwFBCNAFEJQDSFryq4qpAzMIARUAAIhCGAHYAQHiAQoIGBACGAY4AUAB8AEB-AH-CYAC0AWKAgwIABABGGMgYyhjMA8=&rs=AOn4CLAwXv52gmxOoeKuSh0FKJ-YwsMjWQ",
+   "channel": {
+    "id": "UCCEPC-WEcVEmSlB1U7TV34g",
+    "title": "리뷰탐험대",
+    "handle": "reviewerunit",
+    "thumbnail": "https://yt3.ggpht.com/NDS3QblvZJVilmv7_sMuWTv0Lx8VJ87YE8Cf3I1ujh-QtieFbiLiOAdzCtPItyJ6oleRPeZ1DA=s68-c-k-c0x00ffffff-no-rj"
+   },
+   "viewCountText": "901 views",
+   "viewCountInt": 901,
+   "publishedTimeText": "5 months ago",
+   "publishedTime": "2026-06-11T14:37:14.010Z",
+   "lengthText": "0:36",
+   "lengthSeconds": 36,
+   "badges": []
+  },
+  {
+   "type": "video",
+   "id": "8bHENDVy43U",
+   "url": "https://www.youtube.com/watch?v=8bHENDVy43U",
+   "title": "쌤소나이트 캐리어 고르는 법 - 쌤소나이트 3종 리뷰 그리고 직구",
+   "thumbnail": "https://i.ytimg.com/vi/8bHENDVy43U/hq720.jpg?sqp=-oaymwEnCNAFEJQDSFryq4qpAxkIARUAAIhCGAHYAQHiAQoIGBACGAY4AUAB&rs=AOn4CLBYdmU_rWg7AJgcpe69XO_ElHkd6w",
+   "channel": {
+    "id": "UC5aTgTLl-clrwBiwYbPidWg",
+    "title": "직구정보통",
+    "handle": "lukeplus_deals",
+    "thumbnail": "https://yt3.ggpht.com/ytc/AIdro_nlYwLgvVd4GDuaPGit7_nNXsppw92fbm-IhpTvZjm-hw=s68-c-k-c0x00ffffff-no-rj"
+   },
+   "viewCountText": "20,490 views",
+   "viewCountInt": 20490,
+   "publishedTimeText": "3 years ago",
+   "publishedTime": "2023-11-11T14:37:14.010Z",
+   "lengthText": "10:33",
+   "lengthSeconds": 633,
+   "badges": []
+  }
+ ],
+ "channels": [],
+ "playlists": [],
+ "shorts": [
+  {
+   "type": "short",
+   "id": "efoLLCGOKy4",
+   "url": "https://www.youtube.com/watch?v=efoLLCGOKy4",
+   "title": "10년차 직장인이 강추하는 여행용 캐리어 추천🧳 #쌤소나이트 #파라럭스",
+   "viewCountText": "136K",
+   "viewCountInt": 136000
+  },
+  {
+   "type": "short",
+   "id": "JF7CIKzNcLI",
+   "url": "https://www.youtube.com/watch?v=JF7CIKzNcLI",
+   "title": "This carry-on is the answer for all your travels‼️ (Samsonite PARALUX)",
+   "viewCountText": "122K",
+   "viewCountInt": 122000
+  }
+ ],
+ "continuationToken": "tok"
+}

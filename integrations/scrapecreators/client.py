@@ -431,3 +431,51 @@ def youtube_channel_shorts(*, channel_id: Optional[str] = None, handle: Optional
                        "comments": _int(v.get("commentCountInt")),
                        "published_at": str(v.get("publishDate") or "")[:10] or None})
     return _result(data, {"shorts": shorts, "continuation_token": data.get("continuationToken")})
+
+
+# ---------------------------------------------------------------- P2-8 소비자 원문용 키워드 검색
+# 필드 이름은 2026-11-11 실제 응답(샘소나이트)으로 확인했다(tests/fixtures/scrapecreators/*_search.json).
+
+def tiktok_search_keyword(query: str, *, region: Optional[str] = "KR", cursor: Optional[str] = None,
+                          transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/tiktok/search/keyword — 공개 영상 30개 한 쪽. region=KR이어도 해외 영상이 섞여
+    오므로 한국어 여부는 부르는 쪽이 거른다. 본문은 영상 설명(desc)이다."""
+    params: dict[str, Any] = {"query": query}
+    if region:
+        params["region"] = region
+    if cursor:
+        params["cursor"] = cursor
+    data = _get("/tiktok/search/keyword", params, transport)
+    posts = []
+    for row in data.get("search_item_list") or []:
+        a = row.get("aweme_info") or row
+        text = (a.get("desc") or "").strip()
+        url = _strip_query(a.get("url") or a.get("share_url"))
+        if not text or not url:
+            continue
+        author = a.get("author") or {}
+        st = a.get("statistics") or {}
+        posts.append({"url": url, "text": text, "posted_at": _ts_date(a.get("create_time")),
+                      "author": author.get("unique_id"), "followers": _int(author.get("follower_count")),
+                      "views": _int(st.get("play_count")), "likes": _int(st.get("digg_count")),
+                      "comments": _int(st.get("comment_count")), "region": a.get("region"),
+                      "sponsored": bool(a.get("is_ad") or a.get("is_paid_partnership"))})
+    cursor_out = data.get("cursor")
+    return _result(data, {"posts": posts, "cursor": str(cursor_out) if cursor_out else None,
+                          "has_more": bool(data.get("has_more"))})
+
+
+def youtube_search(query: str, *, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
+    """GET /v1/youtube/search — 일반 영상과 쇼츠. 게시일(publishedTime)은 '2년 전' 같은 표시에서 나온
+    근사값이고 쇼츠에는 아예 없다. 설명은 오지 않아 제목만 있다 — 댓글은 따로 부른다."""
+    data = _get("/youtube/search", {"query": query}, transport)
+    videos = []
+    for v in [*(data.get("videos") or []), *(data.get("shorts") or [])]:
+        url, title = v.get("url"), (v.get("title") or "").strip()
+        if not url or not title:
+            continue
+        ch = v.get("channel") or {}
+        videos.append({"url": url, "title": title, "posted_at": (v.get("publishedTime") or "")[:10] or None,
+                       "author": ch.get("title") or ch.get("handle"), "views": _int(v.get("viewCountInt")),
+                       "is_short": v.get("type") == "short"})
+    return _result(data, {"videos": videos})
