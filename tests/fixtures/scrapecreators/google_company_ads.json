@@ -1,0 +1,49 @@
+{
+ "success": true,
+ "credits_remaining": 21871,
+ "credits_charged": 1,
+ "ads": [
+  {
+   "advertiserId": "AR12586396129010122753",
+   "creativeId": "CR14045960646235783169",
+   "format": "video",
+   "adUrl": "https://adstransparency.google.com/advertiser/AR12586396129010122753/creative/CR14045960646235783169",
+   "advertiserName": "쌤소나이트코리아(주)",
+   "imageUrl": null,
+   "firstShown": "2026-11-10T02:29:26.000Z",
+   "lastShown": "2026-11-11T14:24:34.000Z"
+  },
+  {
+   "advertiserId": "AR12586396129010122753",
+   "creativeId": "CR17644336748504809473",
+   "format": "image",
+   "adUrl": "https://adstransparency.google.com/advertiser/AR12586396129010122753/creative/CR17644336748504809473",
+   "advertiserName": "쌤소나이트코리아(주)",
+   "imageUrl": "https://tpc.googlesyndication.com/archive/simgad/4433857998090233743",
+   "firstShown": "2026-11-10T02:25:38.000Z",
+   "lastShown": "2026-11-11T14:18:14.000Z"
+  },
+  {
+   "advertiserId": "AR12586396129010122753",
+   "creativeId": "CR09611803261287792641",
+   "format": "text",
+   "adUrl": "https://adstransparency.google.com/advertiser/AR12586396129010122753/creative/CR09611803261287792641",
+   "advertiserName": "쌤소나이트코리아(주)",
+   "imageUrl": "https://tpc.googlesyndication.com/archive/simgad/15359452921607683494",
+   "firstShown": "2024-12-18T07:57:28.000Z",
+   "lastShown": "2026-11-11T08:19:51.000Z"
+  },
+  {
+   "advertiserId": "AR12586396129010122753",
+   "creativeId": "CR10187858457009324033",
+   "format": "image",
+   "adUrl": "https://adstransparency.google.com/advertiser/AR12586396129010122753/creative/CR10187858457009324033",
+   "advertiserName": "쌤소나이트코리아(주)",
+   "imageUrl": "https://tpc.googlesyndication.com/archive/simgad/1107602307401826380",
+   "firstShown": "2026-11-01T18:58:21.000Z",
+   "lastShown": "2026-11-11T07:35:40.000Z"
+  }
+ ],
+ "cursor": "CgoAP7zms5FaXSO%2FEhDjx9WX7T%2F5fBNeFyUAAAAAGgn8%2BHRT%2BPK%2FgHs%3D",
+ "number_of_ads_estimate": 78
+}

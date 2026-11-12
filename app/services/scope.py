@@ -36,6 +36,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "commerce_review": {"commerce_review"},
     "search": {"search_naver", "naver_mentions", "naver_blog_types"},
     "voc": {"community", "naver_blog", "x_search", "threads_search", "tiktok_search", "youtube_search", "naver_kin"},
+    "ad_library": {"ad_library"},
 }
 
 # subject: self | competitor | benchmark | market — whom one research item looks at, per self brand.
@@ -114,9 +115,11 @@ ITEMS: list[dict] = [
      "templates": ["M1"], "channels": ["web", "report"], "default_channels": ["web"], "period": "inherit",
      "output": "이슈마다 기관·일자·영향 1줄"},
     {"id": "3-5", "part": "competitor", "group": "경쟁사", "title": "경쟁사 포지셔닝 (3C 비교)",
-     "question": "경쟁사 {entity}의 타깃 공략 방식·포지셔닝·미디어 믹스", "subject": "competitor", "collector": None,
-     "channels": ["web", "tvcf", "youtube"], "default_channels": ["web"], "period": "inherit",
-     "output": "경쟁사마다 Customer·Competitor·Company 각 1~2줄"},
+     # P2-9: 포지셔닝의 근거로 경쟁사 광고 소재(공개 광고 라이브러리)를 자동으로 모은다 — 소재 수·유형 비중.
+     "question": "경쟁사 {entity}의 타깃 공략 방식·포지셔닝·미디어 믹스", "subject": "competitor",
+     "collector": "ad_library", "channels": ["ad_library", "web", "tvcf", "youtube"], "default_channels": ["ad_library"],
+     "period": "inherit",
+     "output": "경쟁사마다 Customer·Competitor·Company 각 1~2줄 + 광고 소재 수·유형 비중(제품·셀럽·크리에이터·할인·브랜드 필름)"},
     {"id": "3-6", "part": "competitor", "group": "경쟁사", "title": "경쟁사 BRAND 페이지",
      "question": "경쟁사 {entity}의 슬로건·TVC 카피·공식 문구, 비주얼, 소비자가 읽은 메시지", "subject": "competitor",
      "collector": None, "channels": ["web", "instagram", "youtube", "commerce_review", "community"],

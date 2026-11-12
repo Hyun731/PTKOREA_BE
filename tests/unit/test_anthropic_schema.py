@@ -19,3 +19,15 @@ def test_api_schema_drops_unsupported_constraints_but_keeps_property_names():
 
 def test_voc_schema_goes_out_without_max_items():
     assert "maxItems" not in str(api_schema(VOC_SCHEMA))
+
+
+def test_user_content_puts_known_images_before_the_text():
+    from integrations.anthropic.client import user_content
+
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 10
+    jpg = b"\xff\xd8\xff" + b"0" * 10
+    assert user_content("글") == "글"
+    out = user_content("글", [png, b"not-an-image", jpg])
+    assert [b["type"] for b in out] == ["image", "image", "text"]
+    assert out[0]["source"]["media_type"] == "image/png" and out[1]["source"]["media_type"] == "image/jpeg"
+    assert user_content("글", [b"nope"]) == "글"

@@ -52,8 +52,35 @@ def api_schema(schema: Any) -> Any:
     return out
 
 
+def image_media_type(data: bytes) -> Optional[str]:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return None
+
+
+def user_content(user: str, images: Optional[list[bytes]] = None) -> Any:
+    """글만 있으면 문자열 그대로, 이미지가 있으면 이미지 블록들 뒤에 글 — 알 수 없는 형식의 이미지는 뺀다."""
+    if not images:
+        return user
+    import base64
+    blocks: list[dict] = []
+    for data in images:
+        media = image_media_type(data)
+        if media:
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": media,
+                                                       "data": base64.b64encode(data).decode("ascii")}})
+    return [*blocks, {"type": "text", "text": user}] if blocks else user
+
+
 def structured(system: str, user: str, schema: dict, *, max_tokens: int = 8000, effort: str = "medium",
-               client: Optional[Any] = None) -> CallResult:
+               client: Optional[Any] = None, images: Optional[list[bytes]] = None) -> CallResult:
+    """images: 글과 함께 볼 이미지(광고 소재 등) — 순서대로 붙고, 글에서 '이미지 n'으로 가리킨다."""
     import anthropic
     model = model_id()
     c = client or _client()
@@ -62,7 +89,7 @@ def structured(system: str, user: str, schema: dict, *, max_tokens: int = 8000, 
             model=model,
             max_tokens=max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": user_content(user, images)}],
             output_config={"effort": effort, "format": {"type": "json_schema", "schema": api_schema(schema)}},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",

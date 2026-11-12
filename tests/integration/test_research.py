@@ -310,6 +310,31 @@ class Fakes:
         self._hit("youtube_search")
         return CallResult(data={"videos": []}, cost_usd=0.002)
 
+    # P2-9 광고 라이브러리: 기본은 아무것도 찾지 못함 — 전용 테스트가 덮어쓴다.
+    def facebook_ad_companies(self, query, **kw):
+        self._hit("facebook_ad_companies")
+        return CallResult(data={"pages": []}, cost_usd=0.002)
+
+    def facebook_ad_search(self, query, country=None, cursor=None, **kw):
+        self._hit("facebook_ad_search")
+        return CallResult(data={"ads": [], "cursor": None, "total": 0}, cost_usd=0.002)
+
+    def facebook_company_ads(self, page_id, country=None, cursor=None, **kw):
+        self._hit("facebook_company_ads")
+        return CallResult(data={"ads": [], "cursor": None, "total": 0}, cost_usd=0.002)
+
+    def tiktok_ad_library_search(self, query, cursor=None, **kw):
+        self._hit("tiktok_ad_library_search")
+        return CallResult(data={"ads": [], "cursor": None, "has_more": False}, cost_usd=0.002)
+
+    def google_ad_advertisers(self, query, **kw):
+        self._hit("google_ad_advertisers")
+        return CallResult(data={"advertisers": []}, cost_usd=0.002)
+
+    def google_company_ads(self, advertiser_id, region=None, cursor=None, **kw):
+        self._hit("google_company_ads")
+        return CallResult(data={"ads": [], "cursor": None, "total": 0}, cost_usd=0.002)
+
     def youtube_channel_videos(self, channel_id=None, handle=None, continuation_token=None, **kw):
         self._hit("youtube_channel_videos")
         videos = [{"id": "v1", "url": "https://youtube.com/watch?v=v1", "title": "영상1", "views": 1000,
@@ -432,7 +457,10 @@ def fakes(monkeypatch):
                               facebook_profile_posts=f.facebook_profile_posts, twitter_profile=f.twitter_profile,
                               twitter_user_tweets=f.twitter_user_tweets, threads_profile=f.threads_profile,
                               threads_user_posts=f.threads_user_posts, tiktok_search_keyword=f.tiktok_search_keyword,
-                              youtube_search=f.youtube_search)
+                              youtube_search=f.youtube_search, facebook_ad_companies=f.facebook_ad_companies,
+                              facebook_company_ads=f.facebook_company_ads, facebook_ad_search=f.facebook_ad_search,
+                              tiktok_ad_library_search=f.tiktok_ad_library_search,
+                              google_ad_advertisers=f.google_ad_advertisers, google_company_ads=f.google_company_ads)
     aliases.STRUCTURED.clear()
     aliases.STRUCTURED.append(f.structured)
     industry.STRUCTURED.clear()
@@ -2169,6 +2197,155 @@ def test_voc_item_skips_new_channels_the_plan_left_out(client, fakes):
     ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)
     assert "tiktok_search_keyword" not in fakes.calls and "youtube_search" not in fakes.calls
     assert "kin" in seen_kinds
+
+
+def _set_competitor_alias(client, pid, entity, alias):
+    proj = ok(client.get(f"/v1/projects/{pid}"))
+    brands = proj["config"]["brands"]
+    brands[0]["entity_aliases"] = {**(brands[0].get("entity_aliases") or {}), entity: [alias]}
+    ok(client.patch(f"/v1/projects/{pid}", json={"base_version": proj["version"], "changes": {"brands": brands}}))
+    return ok(client.get(f"/v1/projects/{pid}/research-plan"))
+
+
+def test_ad_library_item_counts_creatives_and_classifies_types_as_one_candidate_card(client, fakes, monkeypatch):
+    """P2-9: 3-5 경쟁사 포지셔닝 — 메타(한국 페이지)·구글(국내 광고주)·틱톡(유럽분)의 기간 안 소재를 모아
+    소재 카드 하나와 소재 수·유형 비중 Fact를 후보로 만든다. 카드를 채택하면 수치도 함께 채택된다."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    monkeypatch.setattr(research, "AD_SHARE_MIN_N", 3)  # 이 테스트의 표본은 3건
+    plan = _set_competitor_alias(client, pid, "경쟁X", "RivalX")
+    it = item(plan, "ad_library", "경쟁X")
+    assert it["scope_id"] == "3-5" and [c["id"] for c in it["channels"]] == ["ad_library"]
+
+    def facebook_ad_companies(query, **kw):
+        fakes._hit("facebook_ad_companies")
+        return CallResult(data={"pages": [
+            {"page_id": "1", "name": "RivalX", "country": None, "likes": 900000, "ig_username": "rivalx",
+             "alias": "rivalx", "verified": True},
+            {"page_id": "2", "name": "RivalX Korea", "country": None, "likes": 5000, "ig_username": "rivalx_korea",
+             "alias": "RivalXKorea", "verified": False},
+            {"page_id": "3", "name": "Other Brand", "country": "KR", "likes": 1, "ig_username": None, "alias": "",
+             "verified": False}]}, cost_usd=0.002)
+
+    seen_pages = []
+
+    def facebook_company_ads(page_id, country=None, cursor=None, **kw):
+        fakes._hit("facebook_company_ads")
+        seen_pages.append((page_id, country))
+        ad = lambda i, group, text, start="2026-05-01", img=True: {
+            "id": i, "group": group, "url": f"https://www.facebook.com/ads/library?id={i}", "advertiser": "RivalX Korea",
+            "format": "image", "text": text, "image_url": f"https://img.example.com/{i}.jpg" if img else None,
+            "landing": None, "start": start, "end": None, "active": True}
+        return CallResult(data={"ads": [ad("a1", "g1", "11월 특가 40% 할인"), ad("a2", "g1", "11월 특가 40% 할인"),
+                                        ad("a3", "g3", "가벼운 캐리어 신제품"), ad("a4", "g4", "옛날 광고", start="2019-01-01")],
+                                "cursor": None, "total": 4}, cost_usd=0.002)
+
+    def google_ad_advertisers(query, **kw):
+        fakes._hit("google_ad_advertisers")
+        assert query == "경쟁X"  # 구글은 한글 이름으로 찾는다
+        return CallResult(data={"advertisers": [{"advertiser_id": "AR1", "name": "경쟁X코리아(주)", "region": "KR",
+                                                 "ads_estimate": 50},
+                                                {"advertiser_id": "AR9", "name": "무관한 회사", "region": "KR",
+                                                 "ads_estimate": 500}]}, cost_usd=0.002)
+
+    def google_company_ads(advertiser_id, region=None, cursor=None, **kw):
+        fakes._hit("google_company_ads")
+        assert advertiser_id == "AR1" and region == "KR"
+        return CallResult(data={"ads": [{"id": "CR1", "group": "CR1", "url": "https://adstransparency.google.com/x/CR1",
+                                         "advertiser": "경쟁X코리아(주)", "format": "video", "text": "",
+                                         "image_url": "https://img.example.com/cr1.jpg", "start": "2026-04-01",
+                                         "end": "2026-06-01"}], "cursor": None, "total": 1}, cost_usd=0.002)
+
+    def tiktok_ad_library_search(query, **kw):
+        fakes._hit("tiktok_ad_library_search")
+        return CallResult(data={"ads": [{"id": "t1", "group": "t1", "url": "https://library.tiktok.com/ads/detail/?ad_id=t1",
+                                         "advertiser": "RivalX Europe", "format": "video", "text": "Borse", "image_url": None,
+                                         "start": "2026-05-01", "end": "2026-05-09"},
+                                        {"id": "t2", "group": "t2", "url": "https://library.tiktok.com/ads/detail/?ad_id=t2",
+                                         "advertiser": "Someone Else", "format": "video", "text": "x", "image_url": None,
+                                         "start": "2026-05-01", "end": "2026-05-09"}],
+                                "cursor": None, "has_more": False}, cost_usd=0.002)
+
+    seen_images = []
+
+    def structured(system, user, schema, **kw):
+        if set(schema["properties"]) == {"ads"}:
+            fakes._hit("ad_classify")
+            seen_images.append(len(kw.get("images") or []))
+            rows = []
+            for no, line in enumerate(user.split("<ads>\n")[1].split("\n</ads>")[0].split("\n"), start=1):
+                rows.append({"no": no, "type": "discount" if "할인" in line else "product"})
+            return CallResult(data={"ads": rows}, cost_usd=0.01)
+        return fakes.structured(system, user, schema, **kw)
+
+    research.PROVIDERS.update(facebook_ad_companies=facebook_ad_companies, facebook_company_ads=facebook_company_ads,
+                              google_ad_advertisers=google_ad_advertisers, google_company_ads=google_company_ads,
+                              tiktok_ad_library_search=tiktok_ad_library_search, structured=structured)
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "succeeded", res
+    assert fakes.calls["facebook_ad_search"] == 1  # 한글 이름 광고 검색에 없으면 영문 페이지 검색으로
+    assert seen_pages == [("2", "KR")]  # 한국 페이지를 고르고 국내 게재 광고만
+    assert res["ads"] == {"meta": 2, "google": 1, "tiktok": 1}  # 같은 소재 묶음은 한 번, 기간 밖·다른 광고주는 뺌
+    assert res["out_of_period"] == 1 and res["classified"] == 3 and seen_images == [3]
+
+    mats = [m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "ad_library"]
+    assert len(mats) == 1
+    card = mats[0]
+    assert card["review_status"] == "candidate" and card["entity"] == "경쟁X" and card["scope_id"] == "3-5"
+    assert "할인·혜택 33.3%" in card["excerpt"] and "제품 중심 66.7%" in card["excerpt"]
+    assert len(card["assets"]) == 3 and all(a["review_status"] == "candidate" for a in card["assets"])
+    facts = {(f["metric"], tuple(sorted((f.get("dims") or {}).items()))): f for f in card["facts"]}
+    count_meta = facts[("ad_creative_count", (("platform", "meta"),))]
+    assert count_meta["value"] == "2" and count_meta["verification_status"] == "candidate"
+    share = facts[("ad_creative_type_share", (("n", "3"), ("type", "discount")))]
+    assert share["value"] == "33.3" and share["unit"] == "percent"
+
+    ok(client.patch(f"/v1/materials/{card['id']}/review", json={"status": "accepted"}))
+    out = ok(client.post(f"/v1/projects/{pid}/materials/accept-all"))
+    card = next(m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "ad_library")
+    assert card["review_status"] == "accepted"
+
+
+def test_ad_library_item_finds_the_meta_page_through_korean_ad_search(client, fakes):
+    """한글 이름으로 국내 게재 광고를 검색해, 이름이 맞는 광고주 페이지를 고른다(다른 광고주 광고는 뺀다)."""
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "ad_library", "경쟁X")
+    ad = lambda i, page, name: {"id": i, "group": i, "url": f"https://www.facebook.com/ads/library?id={i}",
+                                "page_id": page, "advertiser": name, "format": "image", "text": f"{name} 신상",
+                                "image_url": None, "landing": None, "start": "2026-05-01", "end": None, "active": True}
+
+    def facebook_ad_search(query, country=None, **kw):
+        fakes._hit("facebook_ad_search")
+        assert query == "경쟁X" and country == "KR"
+        return CallResult(data={"ads": [ad("s1", "P1", "경쟁X 공식"), ad("s2", "P1", "경쟁X 공식"),
+                                        ad("s3", "P2", "다른 가게")], "cursor": None, "total": 3}, cost_usd=0.002)
+
+    pages = []
+
+    def facebook_company_ads(page_id, country=None, cursor=None, **kw):
+        fakes._hit("facebook_company_ads")
+        pages.append(page_id)
+        return CallResult(data={"ads": [ad("s1", "P1", "경쟁X 공식"), ad("c9", "P1", "경쟁X 공식")], "cursor": None,
+                                "total": 2}, cost_usd=0.002)
+
+    research.PROVIDERS.update(facebook_ad_search=facebook_ad_search, facebook_company_ads=facebook_company_ads)
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert pages == ["P1"] and "facebook_ad_companies" not in fakes.calls
+    assert res["ads"] == {"meta": 3}  # s1·s2(검색) + c9(페이지), 겹친 s1은 한 번
+
+
+def test_ad_library_item_without_any_ads_says_so(client, fakes):
+    pid, plan = setup_project(client)
+    clear_cache()
+    it = item(plan, "ad_library", "경쟁X")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
+    assert res["status"] == "failed" and res["errors"][0]["code"] == "NO_MATERIAL"
+    assert set(res["platform_notes"]) == {"meta", "google"}  # 플랫폼마다 왜 비었는지 남긴다
+    assert fakes.calls["google_ad_advertisers"] == 1 and "google_company_ads" not in fakes.calls
 
 
 def test_voc_item_reports_access_cause_when_every_post_is_login_walled(client, fakes):

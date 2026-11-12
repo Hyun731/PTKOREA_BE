@@ -1,0 +1,558 @@
+{
+ "success": true,
+ "credits_remaining": 21863,
+ "credits_charged": 1,
+ "searchResults": [
+  {
+   "ad_archive_id": "1801852364398427",
+   "collation_count": null,
+   "collation_id": null,
+   "is_active": true,
+   "page_id": "140996759295005",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "140996759295005",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/TheNorthFaceKR/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "노스페이스 (The North Face)",
+    "page_profile_picture_url": "https://example.invalid/x.jpg",
+    "event": null,
+    "caption": "thenorthfacekorea.co.kr",
+    "cta_text": "Shop now",
+    "cards": [],
+    "body": {
+     "text": "오리지널 눕시와의 1대1 승부로 복원력과 퀄리티를 증명한\n노스페이스 리사이클 눕시!\n\n지금 바로 만나보세요"
+    },
+    "cta_type": "SHOP_NOW",
+    "display_format": "IMAGE",
+    "link_description": null,
+    "link_url": "https://www.thenorthfacekorea.co.kr/event/view/eventCategoryNF/93320?utm_source=meta&utm_medium=paid_meta&utm_campaign=TNF_C_DA_IG_PM_027&utm_content=027_IN02_event&utm_term=pbk_60year",
+    "images": [
+     {
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     }
+    ],
+    "page_categories": [
+     "Product/service"
+    ],
+    "page_like_count": 134680,
+    "title": null,
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "노스페이스 (The North Face)",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "INSTAGRAM"
+   ],
+   "start_date": 1794124800,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=1801852364398427",
+   "start_date_string": "2026-11-08T08:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  },
+  {
+   "ad_archive_id": "1170162189291637",
+   "collation_count": null,
+   "collation_id": null,
+   "is_active": true,
+   "page_id": "140996759295005",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "140996759295005",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/TheNorthFaceKR/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "노스페이스 (The North Face)",
+    "page_profile_picture_url": "https://example.invalid/x.jpg",
+    "event": null,
+    "caption": "thenorthfacekorea.co.kr",
+    "cta_text": "Shop now",
+    "cards": [],
+    "body": {
+     "text": "오리지널 눕시와의 1대1 승부로 복원력과 퀄리티를 증명한\n노스페이스 리사이클 눕시!\n\n지금 바로 만나보세요"
+    },
+    "cta_type": "SHOP_NOW",
+    "display_format": "IMAGE",
+    "link_description": null,
+    "link_url": "https://www.thenorthfacekorea.co.kr/event/view/eventCategoryNF/93320?utm_source=meta&utm_medium=paid_meta&utm_campaign=TNF_C_DA_IG_PM_027&utm_content=027_IN02_event&utm_term=pbk_60year",
+    "images": [
+     {
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     }
+    ],
+    "page_categories": [
+     "Product/service"
+    ],
+    "page_like_count": 134680,
+    "title": null,
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "노스페이스 (The North Face)",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "INSTAGRAM"
+   ],
+   "start_date": 1794124800,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=1170162189291637",
+   "start_date_string": "2026-11-08T08:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  },
+  {
+   "ad_archive_id": "1915885779820773",
+   "collation_count": 1,
+   "collation_id": "1100630112606109",
+   "is_active": true,
+   "page_id": "997458163452943",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "997458163452943",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/61552419507403/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "아워로그",
+    "page_profile_picture_url": "",
+    "event": null,
+    "caption": "musinsa.com",
+    "cta_text": "See details",
+    "cards": [
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     },
+     {
+      "body": " ",
+      "cta_type": "SEE_DETAILS",
+      "caption": "musinsa.com",
+      "link_description": " ",
+      "link_url": "https://www.musinsa.com/content/1566622125264402112",
+      "title": "월간 랭킹 : 10월 판매 TOP 브랜드",
+      "cta_text": "See Details",
+      "video_hd_url": null,
+      "video_preview_image_url": null,
+      "video_sd_url": null,
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": "https://example.invalid/x.jpg",
+      "resized_image_url": "https://example.invalid/x.jpg",
+      "watermarked_resized_image_url": ""
+     }
+    ],
+    "body": {
+     "text": "#광고\n올겨울 아우터 뭐 입지? 무신사 인기 브랜드 TOP 6 🧥\n찬바람이 불기 시작하면서 슬슬 겨울 아우터를 준비할 시기! \n아직 어떤 브랜드를 선택할지 고민이라면 주목해 보세요👀\n\n무신사 10월 랭킹에서 주목받은 인기 브랜드들을 모아봤습니다\n아메스의 새로운 라인으로 1위를 차지한 무신사 스탠다드부터 \n세련된 실루엣의 무신사 스탠다드 우먼, 빈티지한 감성의 아디다스, 기능성과 스타일을 모두 잡은 노스페이스와 나이키까지!\n\n특히 배우 박보검의 캐주얼한 패딩 스타일링부터 감각적인 겨울 아우터 룩까지, 브랜드마다 서로 다른 매력을 보여주는데요.\n\n올겨울 여러분의 선택은 어떤 브랜드인가요? 🖤\n\n🏆 무신사 10월 랭킹 TOP 5\n1위 무신사 스탠다드\n2위 무신사 스탠다드 우먼\n3위 아디다스\n4위 노스페이스\n5위 나이키\n\n에디터 │ 조제경\n브랜드 │ @musinsa.official"
+    },
+    "cta_type": "SEE_DETAILS",
+    "display_format": "CAROUSEL",
+    "link_description": null,
+    "link_url": "https://www.musinsa.com/content/1566622125264402112",
+    "images": [],
+    "page_categories": [
+     "Magazine"
+    ],
+    "page_like_count": 16,
+    "title": "아워로그",
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "아워로그",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "FACEBOOK",
+    "INSTAGRAM",
+    "AUDIENCE_NETWORK",
+    "WHATSAPP",
+    "THREADS"
+   ],
+   "start_date": 1794211200,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=1915885779820773",
+   "start_date_string": "2026-11-09T08:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  },
+  {
+   "ad_archive_id": "1868211830844274",
+   "collation_count": 2,
+   "collation_id": "2265810887341462",
+   "is_active": true,
+   "page_id": "980424561822716",
+   "page_is_deleted": false,
+   "snapshot": {
+    "branded_content": null,
+    "page_id": "980424561822716",
+    "page_is_deleted": false,
+    "page_profile_uri": "https://www.facebook.com/61586656343121/",
+    "root_reshared_post": null,
+    "byline": null,
+    "disclaimer_label": null,
+    "page_name": "The North Face White Label",
+    "page_profile_picture_url": "https://example.invalid/x.jpg",
+    "event": null,
+    "caption": "thenorthfacekorea.co.kr",
+    "cta_text": "Shop now",
+    "cards": [
+     {
+      "body": "애니가 입은 그 다운, 궁금하다면\n볼륨감은 그대로, 착용감은 더 가볍게\n경량 원단으로 새로워진 프로젝트 다운 V2\n\n#화이트라벨 #WHITELABEL\n#노스페이스 #THENORTHFACE\n#ノースフェイス #北面 #겨울패딩 #올데프패딩 #프로젝트다운 #노스페이스패딩",
+      "cta_type": "SHOP_NOW",
+      "caption": "",
+      "link_description": null,
+      "link_url": "https://www.thenorthfacekorea.co.kr/product/NJ1DS87J?utm_source=meta&utm_medium=paid_meta_va&utm_campaign=wl_c_va_ig_pm_026&utm_content=026_in02_down&utm_term=an",
+      "title": null,
+      "cta_text": "Shop Now",
+      "video_hd_url": "https://example.invalid/x.jpg",
+      "video_preview_image_url": "https://example.invalid/x.jpg",
+      "video_sd_url": "https://example.invalid/x.jpg",
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": null,
+      "resized_image_url": null,
+      "watermarked_resized_image_url": null
+     },
+     {
+      "body": "애니가 입은 그 다운, 궁금하다면\n볼륨감은 그대로, 착용감은 더 가볍게\n경량 원단으로 새로워진 프로젝트 다운 V2\n\n#화이트라벨 #WHITELABEL\n#노스페이스 #THENORTHFACE\n#ノースフェイス #北面 #겨울패딩 #올데프패딩 #프로젝트다운 #노스페이스패딩",
+      "cta_type": "SHOP_NOW",
+      "caption": "",
+      "link_description": null,
+      "link_url": "https://www.thenorthfacekorea.co.kr/product/NJ1DS87J?utm_source=meta&utm_medium=paid_meta_va&utm_campaign=wl_c_va_ig_pm_026&utm_content=026_in02_down&utm_term=an",
+      "title": null,
+      "cta_text": "Shop Now",
+      "video_hd_url": "https://example.invalid/x.jpg",
+      "video_preview_image_url": "https://example.invalid/x.jpg",
+      "video_sd_url": "https://example.invalid/x.jpg",
+      "watermarked_video_hd_url": null,
+      "watermarked_video_sd_url": null,
+      "image_crops": [],
+      "original_image_url": null,
+      "resized_image_url": null,
+      "watermarked_resized_image_url": null
+     }
+    ],
+    "body": {
+     "text": "애니가 입은 그 다운, 궁금하다면\n볼륨감은 그대로, 착용감은 더 가볍게\n경량 원단으로 새로워진 프로젝트 다운 V2\n\n#화이트라벨 #WHITELABEL\n#노스페이스 #THENORTHFACE\n#ノースフェイス #北面 #겨울패딩 #올데프패딩 #프로젝트다운 #노스페이스패딩"
+    },
+    "cta_type": "SHOP_NOW",
+    "display_format": "DCO",
+    "link_description": null,
+    "link_url": "https://www.thenorthfacekorea.co.kr/product/NJ1DS87J?utm_source=meta&utm_medium=paid_meta_va&utm_campaign=wl_c_va_ig_pm_026&utm_content=026_in02_down&utm_term=an",
+    "images": [],
+    "page_categories": [
+     "Clothing (Brand)",
+     "Design & Fashion"
+    ],
+    "page_like_count": 130,
+    "title": null,
+    "videos": [],
+    "is_reshared": false,
+    "extra_links": [],
+    "extra_texts": [],
+    "extra_images": [],
+    "extra_videos": [],
+    "country_iso_code": null,
+    "brazil_tax_id": null,
+    "additional_info": null,
+    "ec_certificates": []
+   },
+   "has_user_reported": false,
+   "report_count": null,
+   "menu_items": [],
+   "state_media_run_label": null,
+   "page_name": "The North Face White Label",
+   "impressions_with_index": {
+    "impressions_text": null,
+    "impressions_index": -1
+   },
+   "gated_type": "ELIGIBLE",
+   "categories": [
+    "UNKNOWN"
+   ],
+   "is_aaa_eligible": false,
+   "contains_digital_created_media": false,
+   "reach_estimate": null,
+   "currency": "",
+   "spend": null,
+   "end_date": 1794384000,
+   "publisher_platform": [
+    "INSTAGRAM"
+   ],
+   "start_date": 1793084400,
+   "contains_sensitive_content": false,
+   "total_active_time": null,
+   "regional_regulation_data": {
+    "finserv": {
+     "is_deemed_finserv": false,
+     "is_limited_delivery": false
+    },
+    "tw_anti_scam": {
+     "is_limited_delivery": false
+    }
+   },
+   "hide_data_status": "NONE",
+   "fev_info": null,
+   "ad_id": null,
+   "targeted_or_reached_countries": [],
+   "url": "https://www.facebook.com/ads/library?id=1868211830844274",
+   "start_date_string": "2026-10-27T07:00:00.000Z",
+   "end_date_string": "2026-11-11T08:00:00.000Z"
+  }
+ ],
+ "searchResultsCount": 494,
+ "cursor": "AQHT7G1VGt7L53evaQpOtCX68t3JavTpeFMJHyQT6pzY1_dI6KgQRD5X_mo78M4f5g2Z"
+}
