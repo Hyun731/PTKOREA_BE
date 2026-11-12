@@ -103,12 +103,19 @@ def _providers():
 
 
 class RunState:
-    """Per-run caps shared by parallel item workers."""
+    """Per-run caps shared by parallel item workers.
 
-    def __init__(self):
+    The run-level caps grow with the number of items in the run: a full plan started with one click
+    (60+ items) used to hit the fixed 60-query / 150-page backstop after about ten items and fail the
+    rest. Per-item caps and RUN_BUDGET_USD still bound the cost."""
+
+    def __init__(self, items: int = 1, influencer_items: int = 1):
         self.queries = 0
         self.pages = 0
         self.posts = 0
+        self.max_queries = max(MAX_QUERIES_PER_RUN, MAX_QUERIES_PER_ITEM * items)
+        self.max_pages = max(MAX_PAGES_PER_RUN, MAX_PAGES_PER_ITEM * items)
+        self.max_posts = MAX_POSTS_PER_RUN * max(1, influencer_items)
         self.lock = threading.Lock()
 
 
@@ -475,10 +482,10 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
            "errors": []}
     cap = (scope.setting_for(core_project(project), item.scope_id) or {}).get("max_items") or MAX_NEW_MATERIALS_PER_ITEM
     with state.lock:
-        queries = build_queries(item, project)[:MAX_QUERIES_PER_ITEM][: max(0, MAX_QUERIES_PER_RUN - state.queries)]
+        queries = build_queries(item, project)[:MAX_QUERIES_PER_ITEM][: max(0, state.max_queries - state.queries)]
         state.queries += len(queries)
     if not queries:
-        out["errors"].append({"code": "LIMIT", "message": f"실행당 검색 질의 한도({MAX_QUERIES_PER_RUN})에 도달했습니다"})
+        out["errors"].append({"code": "LIMIT", "message": f"실행당 검색 질의 한도({state.max_queries})에 도달했습니다"})
         return out
     results = _search_windows(ledger, p, item, queries)
     if item.section_id == "issue":  # P4-3: 소식·이슈는 뉴스가 먼저 — 웹 검색 결과와 번갈아 둔다(페이지 한도 안에 둘 다)
@@ -501,7 +508,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             other = [n for n in core_project(project).brand(item.brand_id).names_for(item.entity)[1:3]]
             with state.lock:
                 extra = [f"{n} {w} {_year(item)}" for n in other for w in ("캠페인", "콜라보", "팝업")][:MAX_QUERIES_PER_ITEM]
-                extra = extra[: max(0, MAX_QUERIES_PER_RUN - state.queries)]
+                extra = extra[: max(0, state.max_queries - state.queries)]
                 state.queries += len(extra)
             if extra:
                 results, dropped = _named(_search_windows(ledger, p, item, extra), names)
@@ -548,7 +555,7 @@ def run_web_item(db: Session, ledger: RunLedger, project: Project, item: Researc
         if len(to_fetch) >= MAX_PAGES_PER_ITEM:
             break
         with state.lock:
-            if state.pages >= MAX_PAGES_PER_RUN:
+            if state.pages >= state.max_pages:
                 break
             state.pages += 1
         to_fetch.append((src, m))
@@ -929,11 +936,11 @@ def run_influencer_item(db: Session, ledger: RunLedger, project: Project, item: 
     today = date.today().isoformat()
     for url in urls:
         with state.lock:
-            full = state.posts >= MAX_POSTS_PER_RUN
+            full = state.posts >= state.max_posts
             if not full:
                 state.posts += 1
         if full:
-            out["errors"].append({"code": "LIMIT", "message": "실행당 게시물 한도(40)에 도달했습니다"})
+            out["errors"].append({"code": "LIMIT", "message": f"실행당 게시물 한도({state.max_posts})에 도달했습니다"})
             break
         platform = platform_of(url)
         if platform is None:
@@ -2504,7 +2511,8 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
     force = bool(job.params.get("force"))
     ledger = RunLedger(db, project_id, job_id)
     ai_enabled = settings.provider_configured("anthropic")
-    state = RunState()
+    sections = [i.section_id for i in db.scalars(select(ResearchItem).where(ResearchItem.id.in_(item_ids)))]
+    state = RunState(items=len(sections), influencer_items=sections.count("influencer"))
     bind = db.get_bind()
 
     def work(iid: str) -> tuple[str, dict]:
