@@ -317,7 +317,9 @@ def _chart_title(ctx: QuantContext, fact_ids: list[str]) -> list[Part]:
     facts = _facts(ctx, fact_ids)
     names = list(dict.fromkeys(metric_label(f) for f in facts))
     unit = {"percent": "(%)", "count": "(건)"}.get(facts[0].unit, "") if facts else ""
-    return [T(" · ".join(names[:2]) + unit)]
+    # Metric labels may include product names such as "6종 패키지". Treat labels as names and
+    # reserve plain text for the unit so QC only requires binding for actual numeric claims.
+    return [N(" · ".join(names[:2])), T(unit)]
 
 
 def claim_page(ctx: QuantContext, claim: DiagnosisClaim, materials: list[CaseMaterial], n: int) -> Optional[SlideSpec]:

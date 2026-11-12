@@ -89,7 +89,9 @@ def footnote(ctx: QuantContext, fact_ids: list[str], *extra: list[Part]) -> Bloc
         parts += [T(" · 측정 "), D(measured)]
     names = source_names(ctx, fact_ids)
     if names:
-        parts += [T(" · " + " · ".join(names))]
+        # Source titles can legitimately contain digits (campaign names, article headlines). They are
+        # metadata, not an analytical claim, so keep them typed instead of triggering UNBOUND_NUMBER.
+        parts += [T(" · "), M(" · ".join(names), "source")]
     return footnote_block([P(*parts)])
 
 

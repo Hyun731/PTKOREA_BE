@@ -92,6 +92,8 @@ CHAPTERS: dict[str, tuple[str, str, str, str]] = {
     "competitor": ("2", "경쟁사 분석", "Competitor", "시장 · 검색 경쟁 · 경쟁사와 벤치마크 사례"),
     "customer": ("3", "소비자 분석", "Customer", "인식 · 구매 여정"),
     "summary": ("4", "종합", "Insight", "인사이트 · SWOT · 문제·솔루션"),
+    "diagnosis": ("1", "브랜드 진단", "Diagnosis", "진단 · 경쟁 구도 · 근거 · 실행 제안"),
+    "conclusion": ("2", "결론", "Conclusion", "브랜드별 이탈 구간 · 제안 · 종합"),
     "appendix": ("A", "Appendix", "Appendix", "출처"),
 }
 CHAPTER_ORDER = list(CHAPTERS)
@@ -308,6 +310,8 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         """Pages about one self brand (`part`), or about all of them with `part` None. `which`: "all",
         "shared" (only the pages that set every self brand side by side) or "own" (all the others)."""
         def on(template: str) -> bool:
+            if project.report_profile == "diagnosis" and multi:
+                return template in enabled and which != "shared"
             return template in enabled and (which == "all" or (template in SIDE_BY_SIDE) == (which == "shared"))
 
         if on("1-6"):
@@ -748,8 +752,122 @@ def _used_sources(by_template: dict[str, list[SlideSpec]], materials: list[CaseM
     return out
 
 
+DIAGNOSIS_MAIN_ORDER = {
+    "D1": 10, "D2": 20, "D3": 30, "OW-CMP": 40, "3-1": 50, "C2": 60,
+    "MK1": 70, "DM1": 71, "PL1": 72, "CS1": 73, "D4": 80, "D5": 90,
+}
+DIAGNOSIS_CONCLUSION_ORDER = {"D6": 10, "INSIGHT": 20, "SWOT": 30, "PROBLEM": 40, "SOLUTION": 50}
+APPENDIX_RELATED = {
+    "2-1": "OW-CMP", "2-2": "D2", "2-4": "D2", "2-5": "D2",
+    "2-8a": "D3", "2-8b": "D3", "2-8c": "D3", "2-8d": "D3", "MN1": "D3", "SH1": "DM1",
+    "TR1": "DM1", "BL1": "CS1", "VC1": "CS1", "PP1": "CS1", "5-1": "CS1", "5-2": "CS1",
+    "M1": "MK1", "M2": "D3", "C1": "C2", "CM1": "D3", "CM2": "D3",
+}
+
+
+def _slide_family(slide: SlideSpec, families) -> Optional[str]:
+    return next((key for key in sorted(families, key=len, reverse=True)
+                 if slide.slide_id == key or slide.slide_id.startswith(key + "-")), None)
+
+
+def _slide_brand(project: Project, slide: SlideSpec) -> Optional[str]:
+    if slide.brand_id:
+        return slide.brand_id
+    for brand in project.brands:
+        if slide.slide_id.endswith(f"-{brand.id}") or f"-{brand.id}-" in slide.slide_id:
+            return brand.id
+    return project.brands[0].id if len(project.brands) == 1 else None
+
+
+def _related_page(project: Project, slide: SlideSpec, main_pages: list[SlideSpec]) -> Optional[SlideSpec]:
+    family = _slide_family(slide, APPENDIX_RELATED)
+    target = APPENDIX_RELATED.get(family or "")
+    if not target:
+        return None
+    brand_id = _slide_brand(project, slide)
+    candidates = [page for page in main_pages if _slide_family(page, {target}) == target]
+    return next((page for page in candidates if _slide_brand(project, page) == brand_id), candidates[0] if candidates else None)
+
+
+def _assemble_diagnosis(project: Project, pages: list[SlideSpec], enabled: set[str], generated_on: date,
+                        synthetic: bool) -> list[SlideSpec]:
+    """P5-3 diagnosis narrative: claims first, supporting factbook pages in the appendix."""
+    buckets: dict[str, list[tuple[int, int, SlideSpec]]] = {"exec": [], "overview": [], "conclusion": [], "appendix": []}
+    for brand in project.brands:
+        buckets[f"diagnosis:{brand.id}"] = []
+    main_sections = [f"diagnosis:{brand.id}" for brand in project.brands]
+
+    for position, slide in enumerate(pages):
+        family = _slide_family(slide, {*DIAGNOSIS_MAIN_ORDER, *DIAGNOSIS_CONCLUSION_ORDER,
+                                       *APPENDIX_RELATED, "ES", "1-1", "A-source"})
+        if family == "ES":
+            section, rank = "exec", position
+        elif family == "1-1":
+            section, rank = "overview", position
+        elif family in DIAGNOSIS_CONCLUSION_ORDER:
+            section, rank = "conclusion", DIAGNOSIS_CONCLUSION_ORDER[family]
+        elif family in DIAGNOSIS_MAIN_ORDER:
+            brand_id = _slide_brand(project, slide)
+            section = f"diagnosis:{brand_id}" if brand_id else main_sections[0]
+            rank = DIAGNOSIS_MAIN_ORDER[family]
+        else:
+            section, rank = "appendix", position
+            slide.page_role = "appendix"
+        slide.chapter = section
+        buckets.setdefault(section, []).append((rank, position, slide))
+
+    for section in buckets:
+        buckets[section].sort(key=lambda row: (row[0], row[1]))
+    pages_by_section = {section: [row[2] for row in buckets[section]] for section in buckets}
+    index_sections = [section for section in [*main_sections, "conclusion", "appendix"] if pages_by_section[section]]
+    shown = _shown_numbers(index_sections)
+    labels = {section: chapter_label(project, section) for section in index_sections}
+
+    content = [*pages_by_section["exec"], *pages_by_section["overview"]]
+    for section in [*main_sections, "conclusion"]:
+        section_pages = pages_by_section[section]
+        if not section_pages:
+            continue
+        if "divider" in enabled:
+            content.append(_divider(section, shown[section], labels[section], section_pages))
+        content.extend(section_pages)
+    content.extend(pages_by_section["appendix"])
+
+    out: list[Optional[SlideSpec]] = []
+    if "cover" in enabled:
+        out.append(_cover(project, generated_on, synthetic))
+    has_index = "index" in enabled and bool(index_sections)
+    if has_index:
+        out.append(None)
+    out.extend(content)
+    if "end" in enabled:
+        out.append(_end())
+    for number, slide in enumerate(out, start=1):
+        if slide is not None:
+            slide.page_no = number
+    if has_index:
+        out[1 if "cover" in enabled else 0] = _index(project, index_sections, shown, labels, pages_by_section,
+                                                       page_no=2 if "cover" in enabled else 1)
+
+    finished = [slide for slide in out if slide is not None]
+    main_pages = [slide for slide in finished if (slide.chapter or "").startswith("diagnosis:")]
+    for slide in finished:
+        if slide.chapter == "appendix":
+            related = _related_page(project, slide, main_pages)
+            if related and related.page_no:
+                slide.blocks.append(text_block("related_page", "caption", Region(x=984, y=24, w=248, h=22),
+                                               [P(T("관련 본문  "), M(f"p.{related.page_no}", "page"))],
+                                               spec="caption", align="r", valign="m", color="white"))
+        if slide.page_role in ("content", "recap", "appendix", "index"):
+            _korean_breadcrumb(slide, shown, labels)
+            slide.blocks = [*chrome_blocks(_chip(slide), slide.page_no), *slide.blocks]
+    return finished
+
+
 def _assemble(project: Project, pages: list[SlideSpec], enabled: set[str], generated_on: date,
               synthetic: bool) -> list[SlideSpec]:
+    if project.report_profile == "diagnosis":
+        return _assemble_diagnosis(project, pages, enabled, generated_on, synthetic)
     order = [*CHAPTER_ORDER[:2], *(f"{ch}:{b.id}" for b in project.brands for ch in BRAND_CHAPTERS),
              *CHAPTER_ORDER[2:]]
     pages_by_section = {ch: [s for s in pages if s.chapter == ch] for ch in order}
