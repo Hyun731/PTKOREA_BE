@@ -28,8 +28,8 @@ from sqlalchemy.orm import Session
 from app.services.insights import _plain_errors, _to_parts, check_headline
 from core.composition.build import BuildInputs
 from core.composition.chrome import PartFactory
-from core.composition.formatters import UNIT_FORMATTER, format_value
-from core.metrics.derived import POLARITY_LABEL, TOPIC_LABEL, DerivedInputs, derive, measured_on
+from core.composition.diagnosis import METRIC_LABEL, fact_dims as _dims, fact_month as _when, formatter_for
+from core.metrics.derived import TOPIC_LABEL, DerivedInputs, derive, measured_on
 from core.metrics.engine import MetricsResult, compute
 from core.quality.qc import FORBIDDEN_WORDS, OVERCLAIMS, self_brands_in
 from core.rules.config import RulesConfig
@@ -37,7 +37,7 @@ from core.rules.engine import run_rules
 from core.schemas.diagnosis import (
     PILLARS, STAGES, CdjRow, Diagnosis, DiagnosisChart, DiagnosisClaim, DiagnosisVersion, FunnelStage, Proposal,
 )
-from core.schemas.facts import DerivedFact, Fact
+from core.schemas.facts import DerivedFact
 from core.schemas.project import Brand
 from core.schemas.slidespec import Headline, Paragraph
 
@@ -54,26 +54,6 @@ KEEP_VERSIONS = 20  # 브랜드마다 남기는 버전 수(활성 버전은 항�
 # 규칙 엔진·지표 계산이 만든 값 중 진단에 쓸 만한 것(순위·플래그 같은 보조값은 뺀다)
 DERIVED_KEEP = {"search_share", "share_gap", "target_share_diff", "engagement_rate", "like_view_rate",
                 "ad_view_share", "gap_reduction", "owned_uploads_monthly"}
-# 프롬프트와 화면에 쓰는 지표 이름(없으면 metric 그대로)
-METRIC_LABEL = {
-    "search_share": "검색 점유", "share_gap": "검색 점유 격차", "target_share_diff": "타겟 검색 점유 차이",
-    "search_group_sum": "검색 지수 합", "search_index_monthly": "월별 검색 지수", "engagement_rate": "참여율",
-    "like_view_rate": "조회 대비 좋아요", "ad_view_share": "광고 추정 조회 비중", "gap_reduction": "격차 변화",
-    "owned_followers": "공식 계정 팔로워", "owned_posts_monthly": "월 게시 수", "owned_videos_monthly": "월 업로드",
-    "owned_likes_median": "게시물당 좋아요(중앙값)", "owned_reactions_median": "게시물당 반응(중앙값)",
-    "owned_comments_median": "게시물당 댓글(중앙값)", "owned_views_avg": "평균 조회수", "owned_views_median": "조회수(중앙값)",
-    "mention_total": "언급량", "blog_type_share": "블로그 문서 유형 비중", "voc_negative_rate": "소비자 원문 부정 비율",
-    "voc_topic_share": "원문 주제 비중", "voc_path_share": "인식 경로 비중", "comment_sentiment_rate": "댓글 감성 비율",
-    "pain_point_count": "페인 포인트 원문 수", "review_count": "리뷰 수", "review_rating": "리뷰 평점",
-    "shop_click_index": "쇼핑 클릭 지수", "shop_peak_lift": "성수기 상승폭", "shop_click_share": "쇼핑 클릭 비중",
-    "market_size": "시장 규모", "market_cagr": "연평균 성장률", "macro_indicator": "거시 지표",
-    "purchase_factor_share": "구매 결정 요인 비중", "creator_followers": "크리에이터 팔로워", "post_likes": "게시물 좋아요",
-    "post_comments": "게시물 댓글", "post_views": "게시물 조회수", "views": "조회수", "likes": "좋아요",
-    "comments": "댓글", "followers": "팔로워",
-}
-SKIP_DIMS = {"scale_id", "n", "quote", "period", "keyword_group"}
-DIM_LABEL = {"topic": TOPIC_LABEL, "polarity": POLARITY_LABEL}
-
 SEGMENTS = {"type": "array", "items": {
     "type": "object", "additionalProperties": False, "required": ["text", "fact_ref", "accent"],
     "properties": {"text": {"type": "string"}, "fact_ref": {"anyOf": [{"type": "string"}, {"type": "null"}]},
@@ -185,41 +165,11 @@ def metrics_for(inputs: BuildInputs, cfg: RulesConfig) -> MetricsResult:
     return compute(inputs.project, [*inputs.facts, *derived], inputs.posts, cfg)
 
 
-def formatter_for(f) -> str:
-    unit = (f.unit or "").lower()
-    if unit == "percent":
-        return "pct_given" if isinstance(f, Fact) and f.source not in ("derived", "synthetic_fixture") else "share"
-    fmt = UNIT_FORMATTER.get(unit, "int")
-    try:
-        format_value(fmt, f.value)
-    except (KeyError, TypeError, ValueError, ArithmeticError):
-        return "int"
-    return fmt
-
-
 def _usable(f) -> bool:
     if isinstance(f, DerivedFact):
         return (f.metric in DERIVED_KEEP and f.confidence != "missing" and isinstance(f.value, (Decimal, int))
                 and not isinstance(f.value, bool))
     return f.usable and f.conflict_key is None
-
-
-def _dims(f) -> dict[str, str]:
-    raw = f.dims if isinstance(f, Fact) else {k: v for k, v in (f.parameters or {}).items() if isinstance(v, str)}
-    out = {}
-    for k, v in raw.items():
-        if k in SKIP_DIMS or v in (None, ""):
-            continue
-        out[k] = DIM_LABEL.get(k, {}).get(str(v), str(v))
-    return out
-
-
-def _when(f) -> Optional[str]:
-    """Time position of a monthly value ('2026-03'), for time-series charts."""
-    if isinstance(f, Fact):
-        return f.dims.get("month") or (f.period_end.strftime("%Y-%m") if f.period_start.month == f.period_end.month
-                                       and f.period_start.year == f.period_end.year else None)
-    return None
 
 
 def _series_key(f) -> str:

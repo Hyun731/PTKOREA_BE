@@ -13,7 +13,9 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Callable, Optional, Union
 
-from core.composition import axes, cases, commerce, compare, customer, demand, overview, owned, quant, synthesis
+from core.composition import (
+    axes, cases, commerce, compare, customer, demand, diagnosis, overview, owned, quant, synthesis,
+)
 from core.composition.chrome import (
     D, M, N, P, PERIOD, PartFactory, T, chrome_blocks, headline_blocks, insight_blocks, lead_block, synthetic_badge,
     text_block, title_block,
@@ -57,6 +59,7 @@ TEMPLATE_SECTION.update({
     "SH1": "search_trend",
     # P4-4 리서치 5대 축
     "MK1": "campaign", "DM1": "search_trend", "PL1": "campaign", "CS1": "voc", "5-3": "voc", "5-4": "voc",
+    "D1": "recap", "D2": "recap", "D3": "recap", "D4": "recap", "D5": "recap", "D6": "recap",
 })  # P3 비교·차트 장
 TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타겟·채널별 캠페인 매트릭스", "2-1": "채널 인벤토리",
                   "2-2": "운영 공백 분석", "2-4": "브랜드별 상위 게시물", "2-5": "YouTube 채널 성과",
@@ -76,6 +79,8 @@ TEMPLATE_LABEL.update({
     "SH1": "품목별 쇼핑 수요·성수기",
     "MK1": "시장 규모·성장", "DM1": "품목별 수요·시즌", "PL1": "정책·규제", "CS1": "소비자 인사이트",
     "5-3": "구매 여정", "5-4": "구매 상황 지도",
+    # P5-2 진단 템플릿
+    "D1": "진단 요약", "D2": "강점·약점 진단", "D3": "경쟁 구도", "D4": "CDJ 시사점", "D5": "활동 제안", "D6": "결론",
 })
 SECTION_ORDER = ["overview", "owned", "search", "influencer", "campaign", "voc", "recap", "appendix"]
 # The deck reads as the 3C table of contents (팩트북 표준 목차): chapter → (number, label, index group, divider text).
@@ -108,7 +113,10 @@ TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2":
 TEMPLATE_CHAPTER.update({"OW-CMP": "company", "MN1": "competitor", "BL1": "customer", "VC1": "customer",
                          "PP1": "customer", "SH1": "competitor",
                          "MK1": "competitor", "DM1": "competitor", "PL1": "competitor", "CS1": "customer",
-                         "5-3": "customer", "5-4": "customer"})
+                         "5-3": "customer", "5-4": "customer",
+                         # P5-2 진단(덱 순서 전환 P5-3 전까지는 경쟁 구도는 경쟁사 장, 나머지는 종합 장에 둔다)
+                         "D1": "summary", "D2": "summary", "D3": "competitor", "D4": "summary", "D5": "summary",
+                         "D6": "summary"})
 # P3 비교·차트 장은 같은 자료를 쓰는 기존 장이 켜져 있으면 함께 켜진다(따로 켜도 된다).
 FOLLOWS = {"OW-CMP": "2-1",
            # P4-4 5대 축: 시장 자료(M1)가 켜지면 시장 규모·정책 장, 검색 추이(TR1)가 켜지면 수요 장,
@@ -116,9 +124,9 @@ FOLLOWS = {"OW-CMP": "2-1",
            "MK1": "M1", "PL1": "M1", "DM1": "TR1", "CS1": "5-1"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
 PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "MK1", "DM1", "PL1", "M1", "M2",
-              "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "C1c", "C2c", "C1b", "C2b", "CS1", "5-3", "5-4",
-              "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "INSIGHT", "SWOT",
-              "PROBLEM", "SOLUTION", "A-source"]
+              "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "D3", "C1c", "C2c", "C1b", "C2b", "CS1", "5-3", "5-4",
+              "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "D1", "D2", "INSIGHT", "SWOT",
+              "PROBLEM", "SOLUTION", "D4", "D5", "D6", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
 CASE_GROUPS = [("self", "company", "C1", "C2", "Campaign", "캠페인 사례"),
                ("competitor", "competitor", "C1c", "C2c", "Competitor", "경쟁사 사례"),
@@ -463,6 +471,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                 data = synth.get({"5-3": "journey", "5-4": "situation"}[key])
                 if data and (s := page_fn(data)):
                     slot(key, key, [s], "", part=part)
+            # P5-2 진단 템플릿: 진단 플래너(P5-1)가 쓴 브랜드만 — 쓴 적 없으면 빈 슬롯도 만들지 않는다.
+            diag = diagnosis.parse(inputs.diagnosis.get(brand_id)) if brand_id else None
+            if diag is not None:
+                _diagnosis_pages(c, diag, mats, slot, part)
 
     if not multi:
         brand_part(ctx, inputs.materials, inputs.owned_posts, None)
@@ -478,6 +490,9 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                         findings=[f for f in findings if f.brand_id == b.id])
             brand_part(c, mats, [o for o in inputs.owned_posts if o.brand_id == b.id], b.id, "own")
         _market_by_category(ctx, inputs.materials, enabled, slot, badge, metrics)
+    diagnoses = {bid: d for bid, raw in inputs.diagnosis.items() if (d := diagnosis.parse(raw)) is not None}
+    if diagnoses and (s := diagnosis.conclusion_page(ctx, diagnoses)):
+        slot("D6", "D6", [s], "")  # 결론: 자사 브랜드를 나란히(순위·점수 없음), 브랜드 구간 밖
     if "A-source" in enabled:
         srcs = _used_sources(by_template, inputs.materials)
         slot("A-source", "A-source", cases.source_pages(srcs, []), "사용한 출처 없음")
@@ -500,6 +515,23 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                     template_version=project.template_version, synthetic_data=synthetic, slides=ordered, plan=plan,
                     input_fingerprint=fingerprint(inputs))
     return BuildResult(deck, metrics, findings, assets, sources)
+
+
+def _diagnosis_pages(c: quant.QuantContext, diag, mats: list[CaseMaterial], slot: Callable,
+                     part: Optional[str]) -> None:
+    """One self brand's diagnosis pages (P5-2): D1 요약, D2 주장마다, D3 경쟁 구도, D4 CDJ, D5 활동 제안."""
+    if s := diagnosis.summary_page(c, diag):
+        slot("D1", "D1", [s], "", part=part)
+    for n, claim in enumerate(diag.shown_claims()):
+        if s := diagnosis.claim_page(c, claim, mats, n):
+            slot(s.slide_id, "D2", [s], "", label=f"{s.title}", key="D2", part=part)
+    self_names = frozenset(b.name for b in c.project.brands)
+    if s := diagnosis.competition_page(c, mats, self_names):
+        slot("D3", "D3", [s], "", part=part)
+    if s := diagnosis.cdj_page(c, diag):
+        slot("D4", "D4", [s], "", part=part)
+    if s := diagnosis.actions_page(c, diag):
+        slot("D5", "D5", [s], "", part=part)
 
 
 def _case_roles(project: Project) -> dict[str, str]:
@@ -647,7 +679,7 @@ def _apply_headlines(slides: list[SlideSpec], inputs: BuildInputs, pf: PartFacto
             set_headline(s, Headline.coerce(inputs.lead_overrides[s.slide_id]), pf)
             s.needs_review = False
             continue
-        w = ai.get(s.slide_id)
+        w = ai.get(s.slide_id) if s.template_id not in diagnosis.OWN_HEADLINE else None  # the claim is the headline
         if w and w.get("fp") == body_fingerprint(s) and _facts_known(w, pf):
             set_headline(s, Headline.coerce({"claim": w["claim"], "evidence": w.get("evidence") or []}), pf)
             s.needs_review = False
@@ -679,7 +711,7 @@ def _apply_page_insights(slides: list[SlideSpec], inputs: BuildInputs, pf: PartF
         if s.slide_id in inputs.insight_overrides:
             _set_page_insights(s, inputs.insight_overrides[s.slide_id], pf)
             continue
-        writing = ai.get(s.slide_id)
+        writing = ai.get(s.slide_id) if s.template_id not in diagnosis.OWN_INSIGHTS else None
         if writing and writing.get("fp") == body_fingerprint(s) and _facts_known(writing, pf):
             _set_page_insights(s, writing.get("insights") or [], pf)
 
@@ -784,7 +816,9 @@ CHIPS = {"overview": "OVERVIEW", "owned": "OWNED", "search": "SEARCH", "influenc
         "recap": "RECAP", "appendix": "APPENDIX"}
 
 
-SYNTHESIS_CHIP = {"ES": "SUMMARY", "SWOT": "SWOT", "INSIGHT": "INSIGHT", "PROBLEM": "PROBLEM", "SOLUTION": "SOLUTION"}
+SYNTHESIS_CHIP = {"ES": "SUMMARY", "SWOT": "SWOT", "INSIGHT": "INSIGHT", "PROBLEM": "PROBLEM", "SOLUTION": "SOLUTION",
+                  "D1": "DIAGNOSIS", "D2": "DIAGNOSIS", "D3": "COMPETITION", "D4": "CDJ", "D5": "ACTION",
+                  "D6": "CONCLUSION"}
 
 
 def _chip(slide: SlideSpec) -> str:
