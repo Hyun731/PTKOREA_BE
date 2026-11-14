@@ -37,6 +37,8 @@ PTK_PROFILES=tunnel,monitoring  # tunnel 또는 https + 선택적으로 monitori
 GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=<긴 무작위 문자열>
 GRAFANA_ROOT_URL=http://localhost:3001
+# 선택: Discord 서버의 Incoming Webhook URL
+DISCORD_ALERT_WEBHOOK_URL=...
 # tunnel일 때
 NGROK_AUTHTOKEN=...
 NGROK_DOMAIN=...
@@ -112,6 +114,6 @@ docker run --rm --network ptk_default -v /tmp/dev.db:/src/dev.db:ro \
 `monitoring` 프로필은 API의 보호된 `/metrics`를 15초마다 수집하고 `PTK Service Overview` 대시보드를 자동 설치합니다.
 Prometheus와 Grafana 포트는 서버의 localhost에만 열립니다. 외부에 공개하려면 Grafana 인증을 유지한 채 별도 게이트웨이 주소를 사용하고, Prometheus는 공개하지 않습니다.
 
-기본 경보 규칙은 API 5xx 비율 5% 초과와 작업 실패입니다. 현재는 Prometheus에 경보 상태만 기록하며, Discord·Slack 전달은 Alertmanager 단계에서 추가합니다.
+기본 경보 규칙은 API 5xx 비율 5% 초과와 작업 실패입니다. Alertmanager는 localhost `9093`에서 동작하며, `DISCORD_ALERT_WEBHOOK_URL`이 있으면 Discord로 발생·해제 알림을 보냅니다. 값이 없으면 경보 상태만 보관하고 외부로 전송하지 않습니다.
 
 자동 롤백은 이미지만 되돌립니다. 마이그레이션은 되돌리지 않으므로, 칸을 지우거나 이름을 바꾸는 마이그레이션은 새 코드와 옛 코드가 둘 다 동작하게 나눠서 넣어 주세요.
