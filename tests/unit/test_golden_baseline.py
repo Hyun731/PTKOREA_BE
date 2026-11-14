@@ -71,3 +71,13 @@ def test_strict_rejects_empty_fact_and_claim_ledgers(tmp_path):
     load_golden_baseline(target)
     with pytest.raises(GoldenBaselineError, match="has no records"):
         load_golden_baseline(target, strict=True)
+
+
+def test_strict_rejects_pending_slide_ledgers(tmp_path):
+    target = tmp_path / "baseline"
+    shutil.copytree(FIXTURE, target)
+    slides = (target / "slides.csv").read_text()
+    (target / "slides.csv").write_text(slides.replace(",complete,complete", ",pending,complete", 1))
+    load_golden_baseline(target)
+    with pytest.raises(GoldenBaselineError, match="incomplete slide ledgers"):
+        load_golden_baseline(target, strict=True)
