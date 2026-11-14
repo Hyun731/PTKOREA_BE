@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "baseline_id": "synthetic-luggage-2026-v1",
+  "title": "Synthetic luggage factbook baseline",
+  "version": "v1",
+  "received_on": "2026-10-01",
+  "effective_start": "2026-01-01",
+  "effective_end": "2026-09-30",
+  "brands": ["Brand Alpha", "Brand Beta", "Brand Gamma"],
+  "slide_count": 4,
+  "source_files": [
+    {
+      "role": "factbook",
+      "filename": "synthetic-factbook.pdf",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "page_count": 4
+    },
+    {
+      "role": "requirements",
+      "filename": "synthetic-requirements.docx",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}
