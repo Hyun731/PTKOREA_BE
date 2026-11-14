@@ -46,6 +46,17 @@ python -m tools.validate_golden_baseline /absolute/path/to/private-baseline
 python -m tools.validate_golden_baseline /absolute/path/to/private-baseline --strict
 ```
 
+After generating an outline, measure balanced brand/page coverage and claim overlap without moving the private data
+into Git:
+
+```bash
+python -m tools.evaluate_golden_gap /absolute/path/to/private-baseline outline.json \
+  --brand-alias "Brand Alpha=Alpha"
+```
+
+Repeat `--brand-alias` when generated section names use localized or abbreviated brand names. The output reports
+per-brand page coverage, lexical claim coverage, missing slots, and unassigned generated slides.
+
 The validator checks:
 
 - file presence and row schemas
