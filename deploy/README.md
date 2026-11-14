@@ -46,6 +46,7 @@ NGROK_DOMAIN=...
 
 ngrok 고정 도메인은 한 번에 한 곳에서만 열 수 있습니다. 서버로 옮길 때 PC의 터널(`docker compose --profile tunnel`)은 먼저 내려 주세요.
 기존 `PTK_PROFILE=tunnel`도 계속 지원합니다. Grafana·Prometheus를 켜려면 `PTK_PROFILES`에 `monitoring`을 추가합니다.
+`PTK_PROFILES`가 없는 기존 서버는 배포 시 기존 `PTK_PROFILE`에 `monitoring`을 자동으로 추가합니다. Grafana 비밀번호가 없으면 서버의 `.env`에 무작위 값으로 한 번 생성하며 로그에는 값을 출력하지 않습니다.
 
 ## 3. GitHub 러너 등록 (한 번)
 
