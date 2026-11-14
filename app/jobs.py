@@ -17,6 +17,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.errors import ApiError
 from app.models import Job, new_id, utcnow
+from app.observability import current_request_id, observe_job_finished, observe_job_started
 
 log = logging.getLogger("jobs")
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="job")  # research runs may overlap
@@ -44,7 +45,9 @@ def create_job(db: Session, project_id: str, project_version: int, kind: str, pa
                                                Job.idempotency_key == idempotency_key))
         if existing:
             return existing, False
-    job = Job(id=new_id("JOB"), project_id=project_id, project_version=project_version, kind=kind, params=params,
+    request_id = current_request_id()
+    stored_params = {**params, **({"_request_id": request_id} if request_id else {})}
+    job = Job(id=new_id("JOB"), project_id=project_id, project_version=project_version, kind=kind, params=stored_params,
               idempotency_key=idempotency_key)
     db.add(job)
     db.commit()
@@ -63,12 +66,17 @@ def dispatch(job_id: str) -> None:
 
 def run_job(job_id: str) -> None:
     db = SessionLocal()
+    metric_kind: Optional[str] = None
+    metric_started: Optional[float] = None
+    final_state = "failed"
     try:
         job = db.get(Job, job_id)
         if job is None or job.state in ("cancelled", "succeeded"):
             return
         job.state, job.started_at, job.attempts = "running", utcnow(), job.attempts + 1
         db.commit()
+        metric_kind = job.kind
+        metric_started = observe_job_started(job.kind, job.attempts)
 
         def progress(pct: int):
             job.progress = max(0, min(100, pct))
@@ -78,6 +86,7 @@ def run_job(job_id: str) -> None:
             result = HANDLERS[job.kind](db, job, progress)
             db.refresh(job)
             if job.state == "cancelled":
+                final_state = "cancelled"
                 return
             job.state, job.result, job.progress = "succeeded", result or {}, 100
         except JobFailure as exc:
@@ -97,7 +106,10 @@ def run_job(job_id: str) -> None:
         if job.state in ("failed", "cancelled"):
             release_items(db, job, job.error_message or "조사가 끝나지 못했습니다. 다시 실행하세요")
         db.commit()
+        final_state = job.state
     finally:
+        if metric_kind is not None and metric_started is not None:
+            observe_job_finished(metric_kind, final_state, metric_started)
         db.close()
 
 
