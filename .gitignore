@@ -9,6 +9,7 @@ var/
 # API keys and the backend token
 .env
 .env*.local
+deploy/monitoring/secrets/
 .claude/
 # Copied from templates/fonts before building the standalone renderer image
 infra/render/fonts/

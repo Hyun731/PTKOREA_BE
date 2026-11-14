@@ -47,6 +47,15 @@ if [ "$MONITORING" = "1" ]; then
   umask 077
   mkdir -p monitoring/secrets
   printf '%s' "$BACKEND_TOKEN_VALUE" > monitoring/secrets/backend_token
+  DISCORD_WEBHOOK="$(grep -E '^DISCORD_ALERT_WEBHOOK_URL=' .env | tail -n1 | cut -d= -f2- || true)"
+  DISCORD_WEBHOOK="${DISCORD_WEBHOOK#\"}"
+  DISCORD_WEBHOOK="${DISCORD_WEBHOOK%\"}"
+  : > monitoring/secrets/discord_webhook
+  if [ -n "$DISCORD_WEBHOOK" ]; then
+    printf '%s' "$DISCORD_WEBHOOK" > monitoring/secrets/discord_webhook
+    cp monitoring/alertmanager/alertmanager-discord.yml monitoring/alertmanager/alertmanager.yml
+    echo "enabled Discord alert delivery"
+  fi
 fi
 
 PREV_IMAGE="$(cat current_image 2>/dev/null || true)"
@@ -63,6 +72,7 @@ monitoring_healthy() {
   [ "$MONITORING" = "0" ] && return 0
   for _ in $(seq 1 120); do
     if curl -fsS http://127.0.0.1:9090/-/ready >/dev/null 2>&1 \
+      && curl -fsS http://127.0.0.1:9093/-/ready >/dev/null 2>&1 \
       && curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
       return 0
     fi
@@ -73,6 +83,9 @@ monitoring_healthy() {
 
 compose "$NEW_IMAGE" pull api
 compose "$NEW_IMAGE" up -d --remove-orphans
+if [ "$MONITORING" = "1" ]; then
+  compose "$NEW_IMAGE" up -d --force-recreate alertmanager
+fi
 
 if healthy && monitoring_healthy; then
   echo "$NEW_IMAGE" > current_image
@@ -84,7 +97,7 @@ fi
 echo "new image unhealthy; recent logs:" >&2
 compose "$NEW_IMAGE" logs --tail 80 api >&2 || true
 if [ "$MONITORING" = "1" ]; then
-  compose "$NEW_IMAGE" logs --tail 80 prometheus grafana >&2 || true
+  compose "$NEW_IMAGE" logs --tail 80 prometheus alertmanager grafana >&2 || true
 fi
 if [ -n "$PREV_IMAGE" ]; then
   echo "rolling back to $PREV_IMAGE" >&2

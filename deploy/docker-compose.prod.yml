@@ -69,7 +69,20 @@ services:
       - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
       - ./monitoring/secrets/backend_token:/run/secrets/backend_token:ro
       - prometheusdata:/prometheus
-    depends_on: [api]
+    depends_on: [api, alertmanager]
+    restart: unless-stopped
+
+  alertmanager:
+    profiles: [monitoring]
+    image: prom/alertmanager:v0.35.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports: ["127.0.0.1:9093:9093"]
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/secrets/discord_webhook:/run/secrets/discord_webhook:ro
+      - alertmanagerdata:/alertmanager
     restart: unless-stopped
 
   grafana:
@@ -94,3 +107,4 @@ volumes:
   caddydata:
   prometheusdata:
   grafanadata:
+  alertmanagerdata:
