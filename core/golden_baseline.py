@@ -21,6 +21,7 @@ SourceType = Literal["internal_report", "public_api", "public_web", "direct_coun
 Verification = Literal["customer_approved", "source_checked", "needs_review"]
 ClaimKind = Literal["headline", "evidence", "insight", "conclusion", "recommendation"]
 SlideSection = Literal["front", "brand", "market", "owned", "competitor", "summary", "end"]
+LedgerStatus = Literal["pending", "complete", "not_applicable"]
 
 
 class BaselineSourceFile(BaseModel):
@@ -92,6 +93,8 @@ class BaselineSlide(BaseModel):
     slide_type: str = Field(min_length=1)
     headline: str = ""
     template_candidate: str = ""
+    fact_status: LedgerStatus = "pending"
+    claim_status: LedgerStatus = "pending"
 
 
 class BaselineFact(BaseModel):
@@ -281,6 +284,10 @@ def load_golden_baseline(directory: str | Path, *, strict: bool = False) -> Gold
             issues.append(f"claims.csv: {claim.claim_id} references facts from another brand {foreign_facts}")
 
     if strict:
+        pending_pages = [slide.page for slide in slides
+                         if slide.fact_status == "pending" or slide.claim_status == "pending"]
+        if pending_pages:
+            issues.append(f"strict validation: incomplete slide ledgers {pending_pages}")
         if not facts:
             issues.append("strict validation: facts.csv has no records")
         if not claims:

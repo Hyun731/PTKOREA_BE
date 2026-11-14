@@ -25,7 +25,7 @@ private-baseline/
 
 `baseline.json` fixes the baseline ID, version, effective period, brands, slide count, and source file hashes. It stores metadata only; source files remain outside the directory used by Git.
 
-`slides.csv` maps every page exactly once. Page numbers must cover `1..slide_count` without gaps.
+`slides.csv` maps every page exactly once. Page numbers must cover `1..slide_count` without gaps. `fact_status` and `claim_status` are `pending`, `complete`, or `not_applicable`; strict validation blocks every remaining `pending` page.
 
 `facts.csv` stores numeric evidence. Derived facts require a calculation. Source URLs are optional, but when present they must use HTTP or HTTPS.
 
