@@ -155,6 +155,20 @@ def operating_gap_page(ctx: QuantContext) -> Optional[SlideSpec]:
                      title="운영 공백 분석", blocks=blocks, needs_review=True, is_data=True)
 
 
+def operating_gap_state(ctx: QuantContext) -> str:
+    """Return whether 2-2 has a gap, is proven unnecessary, or still lacks input."""
+    missing_input = False
+    for brand in ctx.project.brands:
+        facts = [fact for fact in ctx.metrics.registry.facts.values()
+                 if fact.brand_id == brand.id and fact.entity == brand.name
+                 and fact.metric == "owned_posts_by_month" and fact.dims.get("channel") == "instagram"]
+        if not facts:
+            missing_input = True
+        elif any(fact.value == 0 for fact in facts):
+            return "has_gap"
+    return "needs_input" if missing_input else "not_applicable"
+
+
 def top_posts_page(project: Project, owned_posts: list[OwnedPostRef]) -> Optional[SlideSpec]:
     """2-4: 브랜드별 상위 게시물. Instagram 좋아요 기준 상위 3개 — YouTube는 2-5(미구현)에서
     따로 다룰 몫이라 여기엔 안 섞는다. 이미지가 채택(accepted)된 게시물만 패널에 들어간다: 그

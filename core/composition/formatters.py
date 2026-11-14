@@ -88,6 +88,19 @@ def fmt_days(value: int) -> str:
     return f"{int(value)}일"
 
 
+def fmt_years(value: Decimal) -> str:
+    normalized = format(Decimal(value).normalize(), "f")
+    return f"{normalized}년"
+
+
+def fmt_groups(value: int) -> str:
+    return f"{int(value)}개 그룹"
+
+
+def fmt_score(value: Decimal) -> str:
+    return f"{format(Decimal(value).normalize(), 'f')}점"
+
+
 def fmt_posts(value: int) -> str:
     return f"{int(value)}건"
 
@@ -166,6 +179,9 @@ FORMATTERS: dict[str, Callable] = {
     "count": fmt_count_unit,
     "times": fmt_times,
     "days": fmt_days,
+    "years": fmt_years,
+    "groups": fmt_groups,
+    "score": fmt_score,
     "rating": fmt_rating,
 }
 
@@ -182,4 +198,5 @@ def format_value(formatter: str, value, partial: bool = False) -> Optional[str]:
 
 # Default formatter by derived unit, used when a manual fact is inserted into text.
 UNIT_FORMATTER = {"percent": "pct_given", "pp": "pp", "count": "int", "rank": "rank", "months": "months",
-                  "index": "index", "krw": "krw", "rating": "rating", "usd": "usd"}
+                  "index": "index", "krw": "krw", "rating": "rating", "usd": "usd", "score": "score",
+                  "ratio": "times", "days": "days", "years": "years", "group": "groups"}

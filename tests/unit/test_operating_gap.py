@@ -38,7 +38,17 @@ def test_operating_gap_absent_when_no_zero_month():
     result = build_deck(BuildInputs(project=cfg, facts=facts, materials=[], generated_on=date(2026, 10, 12)))
     assert not any(s.slide_id == "2-2" for s in result.deck.slides)
     slot = next(p for p in result.deck.plan if p.slot_id == "2-2")
+    assert slot.readiness == "omitted"
+    assert "자동 생략" in slot.reason
+
+
+def test_operating_gap_stays_missing_without_monthly_input():
+    project, _, _ = load_fixture()
+    cfg = project.model_copy(update={"enabled_slides": ["2-2"]})
+    result = build_deck(BuildInputs(project=cfg, facts=[], materials=[], generated_on=date(2026, 10, 12)))
+    slot = next(p for p in result.deck.plan if p.slot_id == "2-2")
     assert slot.readiness == "needs_input"
+    assert "확인할 수 없습니다" in slot.reason
 
 
 def test_three_month_operating_gap_is_merged_as_thin():

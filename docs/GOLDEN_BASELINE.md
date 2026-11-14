@@ -71,11 +71,13 @@ python -m tools.import_golden_baseline /absolute/path/to/private-baseline \
 ```
 
 Add `--apply` only after reviewing the unsupported-fact report. The importer creates deterministic, accepted
-source/material/claim rows and only converts facts whose units fit the application's manual fact contract.
-Unsupported units and negative values remain explicit in the report instead of being silently coerced. Re-running
-the same import is idempotent. Claims that reference unsupported facts or still contain unbound digits are imported
-as pending, so they cannot introduce unsupported numbers into a generated deck. Always use a copied database for
-evaluation before changing a live project.
+source/material/claim rows and only converts facts whose units fit the application's manual fact contract. Supported
+units include counts, KRW/USD amounts, percentages, percentage points, ranks, scores, ratios, days, months, years, and
+group counts. Directional percentages, percentage points, and scores may be negative; naturally non-negative units
+remain guarded. Unsupported or project-level facts remain explicit in the report instead of being silently coerced.
+Re-running the same import is idempotent. Claims that reference unsupported facts or still contain unbound digits are
+imported as pending, so they cannot introduce unsupported numbers into a generated deck. Always use a copied database
+for evaluation before changing a live project.
 
 The validator checks:
 

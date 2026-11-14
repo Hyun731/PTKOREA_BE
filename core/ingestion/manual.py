@@ -13,7 +13,23 @@ from core.decimalx import canonical_decimal, parse_decimal
 from core.ingestion.csv_import import content_hash, fact_id_from_hash
 from core.schemas.facts import MANUAL_METRICS, Fact
 
-UNIT_ALIASES = {"count": "count", "krw": "krw", "percent": "percent", "rank": "rank"}
+UNIT_ALIASES = {
+    "count": "count",
+    "krw": "krw",
+    "usd": "usd",
+    "percent": "percent",
+    "pp": "pp",
+    "rank": "rank",
+    "score": "score",
+    "ratio": "ratio",
+    "days": "days",
+    "months": "months",
+    "years": "years",
+    "group": "group",
+}
+
+NON_NEGATIVE_UNITS = {"count", "krw", "usd", "rank", "ratio", "days", "months", "years", "group"}
+INTEGER_UNITS = {"count", "rank", "days", "months", "group"}
 
 
 def make_manual_fact(*, brand_id: str, entity: str, metric: str, value, measured_at: date, source: str,
@@ -26,11 +42,11 @@ def make_manual_fact(*, brand_id: str, entity: str, metric: str, value, measured
     v = parse_decimal(value) if not isinstance(value, Decimal) else value
     if v is None:
         raise ValueError("값이 비어 있습니다")
-    if v < 0:
-        raise ValueError("음수 값은 허용되지 않습니다")
     unit = MANUAL_METRICS[metric]
-    if unit == "count" and v != v.to_integral_value():
-        raise ValueError("건수 지표는 정수여야 합니다")
+    if v < 0 and unit in NON_NEGATIVE_UNITS:
+        raise ValueError("음수 값은 허용되지 않습니다")
+    if unit in INTEGER_UNITS and v != v.to_integral_value():
+        raise ValueError(f"{unit} 지표는 정수여야 합니다")
     start = period_start or measured_at
     end = period_end or measured_at
     dims = dims or {}

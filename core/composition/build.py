@@ -11,7 +11,7 @@ import json
 import math
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Callable, Optional, Union
+from typing import Callable, Literal, Optional, Union
 
 from core.composition import (
     axes, cases, commerce, compare, customer, demand, diagnosis, overview, owned, quant, synthesis,
@@ -256,7 +256,8 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
 
     def slot(slot_id: str, template: str, slides: list[SlideSpec], missing_reason: str, brand_id: Optional[str] = None,
              label: Optional[str] = None, chapter: Optional[str] = None, key: Optional[str] = None,
-             part: Optional[str] = None, density: Optional[dict[str, int]] = None):
+             part: Optional[str] = None, density: Optional[dict[str, int]] = None,
+             empty_readiness: Literal["needs_input", "omitted"] = "needs_input"):
         """`part`: the self brand whose section this slot sits in (several self brands only)."""
         base = slot_id
         if part:
@@ -297,7 +298,7 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                 built.append((PAGE_ORDER.index(key or template), len(built), s))
         else:
             plan.append(SlotPlan(slot_id=slot_id, section_id=TEMPLATE_SECTION[template], template_id=template,
-                                 brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness="needs_input",
+                                 brand_id=brand_id, label=label or TEMPLATE_LABEL[template], readiness=empty_readiness,
                                  reason=missing_reason))
 
     # Order matters: leads are assigned to the first page that can show a finding.
@@ -326,8 +327,11 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
                  "경쟁사 공식 계정 수치 없음(설정에서 경쟁사 공식 계정 확인 후 수집·확인 필요)", part=part)
         if on("2-2"):
             s = owned.operating_gap_page(c)
+            gap_state = owned.operating_gap_state(c)
             slot("2-2", "2-2", [s] if s else [],
-                 "공백 구간(자체 게시 0건 달) 없음 — 해당 사항 없으면 생략 처리, 2-1 데이터 미확보면 2-1부터 확인", part=part)
+                 "공백 구간(자체 게시 0건 달)이 없어 해당 장표를 자동 생략했습니다" if gap_state == "not_applicable"
+                 else "월별 자체 게시 데이터가 없어 운영 공백 여부를 확인할 수 없습니다",
+                 part=part, empty_readiness="omitted" if gap_state == "not_applicable" else "needs_input")
         if on("2-4"):
             s = owned.top_posts_page(c.project, owned_posts)
             slot("2-4", "2-4", [s] if s else [], "이미지가 채택된 상위 게시물 없음", part=part)

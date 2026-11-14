@@ -28,8 +28,23 @@ UNIT_METRICS = {
     "%": "percent",
     "krw": "amount_krw",
     "원": "amount_krw",
+    "usd": "amount_usd",
+    "달러": "amount_usd",
+    "pp": "percentage_point",
     "rank": "rank",
     "위": "rank",
+    "score": "score",
+    "점": "score",
+    "ratio": "ratio",
+    "배": "ratio",
+    "days": "duration_days",
+    "일": "duration_days",
+    "months": "duration_months",
+    "개월": "duration_months",
+    "years": "duration_years",
+    "년": "duration_years",
+    "group": "group_count",
+    "그룹": "group_count",
 }
 
 SECTION_MAP = {
@@ -157,8 +172,6 @@ def _validate_brand_mapping(baseline: GoldenBaseline, project: Project, mapping:
 
 
 def _metric_for(fact: BaselineFact) -> tuple[Optional[str], Optional[str]]:
-    if fact.value < 0:
-        return None, "negative values are not supported by manual facts"
     unit = fact.unit.strip().lower()
     if fact.metric in MANUAL_METRICS:
         expected = MANUAL_METRICS[fact.metric]
@@ -184,6 +197,18 @@ def _number_candidates(fact: BaselineFact) -> list[str]:
     if fact.unit.strip().lower() in {"krw", "원"} and value == value.to_integral_value():
         integer = int(value)
         candidates.update({f"{integer}원", f"{integer:,}원"})
+    suffixes = {
+        "usd": ["달러"],
+        "score": ["점"],
+        "ratio": ["배"],
+        "days": ["일"],
+        "months": ["개월"],
+        "years": ["년"],
+        "group": ["개 그룹", "그룹"],
+        "pp": ["pp"],
+    }
+    for suffix in suffixes.get(fact.unit.strip().lower(), []):
+        candidates.add(f"{trimmed}{suffix}")
     return sorted((candidate for candidate in candidates if candidate), key=len, reverse=True)
 
 
