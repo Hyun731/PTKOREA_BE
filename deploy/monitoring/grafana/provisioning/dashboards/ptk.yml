@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PTK
+    orgId: 1
+    folder: PTK
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

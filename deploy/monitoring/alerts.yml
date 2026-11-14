@@ -1,0 +1,20 @@
+groups:
+  - name: ptk-api
+    rules:
+      - alert: PtkApiHighErrorRate
+        expr: |
+          sum(rate(ptk_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(ptk_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: PTK API 5xx rate is above 5%
+      - alert: PtkJobFailure
+        expr: increase(ptk_jobs_finished_total{state="failed"}[10m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A PTK background job failed

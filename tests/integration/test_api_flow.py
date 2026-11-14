@@ -282,6 +282,7 @@ def test_backend_token_required_when_set(client, monkeypatch):
     assert client.get("/v1/meta", headers={"X-Backend-Token": "wrong"}).status_code == 401
     assert client.get("/openapi.json").status_code == 401
     assert client.get("/v1/meta", headers={"X-Backend-Token": "s3cret"}).status_code == 200
+    assert client.get("/v1/meta", headers={"Authorization": "Bearer s3cret"}).status_code == 200
     assert client.get("/healthz").status_code == 200
 
 
