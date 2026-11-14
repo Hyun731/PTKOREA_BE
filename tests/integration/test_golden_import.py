@@ -41,16 +41,16 @@ def test_imports_accepted_inputs_idempotently(client):
         first = import_golden_input_plan(db, project, plan)
         second = import_golden_input_plan(db, project, plan)
         assert first["sources_created"] == first["materials_created"] == 3
-        assert first["facts_created"] == 2
+        assert first["facts_created"] == 3
         assert first["claims_created"] == 3
         assert second["sources_created"] == second["materials_created"] == 0
         assert second["facts_created"] == second["claims_created"] == 0
         assert db.scalar(select(func.count()).select_from(Source).where(Source.project_id == project.id)) == 3
         assert db.scalar(select(func.count()).select_from(Material).where(Material.project_id == project.id)) == 3
-        assert db.scalar(select(func.count()).select_from(FactRow).where(FactRow.project_id == project.id)) == 2
+        assert db.scalar(select(func.count()).select_from(FactRow).where(FactRow.project_id == project.id)) == 3
         assert db.scalar(select(func.count()).select_from(Claim).where(Claim.project_id == project.id)) == 3
         inputs = load_inputs(db, project)
         assert all(fact.verification_status == "eligible" for fact in inputs.facts)
         assert all(material.review_status == "accepted" for material in inputs.materials)
         assert sum(len(material.claims) for material in inputs.materials) == 3
-        assert sum(claim.review_status == "accepted" for material in inputs.materials for claim in material.claims) == 2
+        assert sum(claim.review_status == "accepted" for material in inputs.materials for claim in material.claims) == 3

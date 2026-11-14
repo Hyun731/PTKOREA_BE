@@ -25,8 +25,16 @@ MANUAL_METRICS = {
     "followers": "count",
     "count": "count",
     "amount_krw": "krw",
+    "amount_usd": "usd",
     "percent": "percent",
+    "percentage_point": "pp",
     "rank": "rank",
+    "score": "score",
+    "ratio": "ratio",
+    "duration_days": "days",
+    "duration_months": "months",
+    "duration_years": "years",
+    "group_count": "group",
 }
 
 
