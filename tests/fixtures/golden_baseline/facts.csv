@@ -1,0 +1,4 @@
+baseline_id,fact_id,brand,slide_page,metric,value,unit,period_start,period_end,measured_on,source_name,source_type,source_url,calculation,evidence_page,verification
+synthetic-luggage-2026-v1,F-MARKET-001,Brand Alpha,2,market_growth,6.2,percent,2026-01-01,2026-09-30,2026-09-30,Synthetic market report,public_web,https://example.com/market,,2,source_checked
+synthetic-luggage-2026-v1,F-AWARE-001,Brand Alpha,3,aided_awareness,48,percent,2026-07-01,2026-07-31,2026-08-01,Synthetic tracker,customer_provided,,,3,customer_approved
+synthetic-luggage-2026-v1,F-GAP-001,Brand Alpha,4,awareness_gap,12,pp,2026-07-01,2026-07-31,2026-08-01,Synthetic calculation,derived,,60 - 48,4,source_checked

@@ -1,0 +1,4 @@
+baseline_id,claim_id,brand,slide_page,kind,text,fact_ids,evidence_page,verification
+synthetic-luggage-2026-v1,C-MARKET-001,Brand Alpha,2,headline,Category demand increased,F-MARKET-001,2,source_checked
+synthetic-luggage-2026-v1,C-OWNED-001,Brand Alpha,3,insight,Awareness is strong but conversion needs work,F-AWARE-001,3,customer_approved
+synthetic-luggage-2026-v1,C-CONCLUSION-001,Brand Alpha,4,conclusion,Turn trust into advocacy,F-AWARE-001;F-GAP-001,4,customer_approved
