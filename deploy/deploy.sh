@@ -15,7 +15,8 @@ cd "$PTK_DIR"
 [ -f .env ] || { echo "missing $PTK_DIR/.env" >&2; exit 1; }
 PROFILE_LIST="$(grep -E '^PTK_PROFILES=' .env | tail -n1 | cut -d= -f2- || true)"
 if [ -z "$PROFILE_LIST" ]; then
-  PROFILE_LIST="$(grep -E '^PTK_PROFILE=' .env | tail -n1 | cut -d= -f2- || true)"
+  LEGACY_PROFILE="$(grep -E '^PTK_PROFILE=' .env | tail -n1 | cut -d= -f2- || true)"
+  PROFILE_LIST="${LEGACY_PROFILE:+$LEGACY_PROFILE,}monitoring"
 fi
 PROFILE_ARGS=()
 MONITORING=0
@@ -38,7 +39,11 @@ if [ "$MONITORING" = "1" ]; then
   BACKEND_TOKEN_VALUE="${BACKEND_TOKEN_VALUE%\"}"
   GRAFANA_PASSWORD="$(grep -E '^GRAFANA_ADMIN_PASSWORD=' .env | tail -n1 | cut -d= -f2- || true)"
   [ -n "$BACKEND_TOKEN_VALUE" ] || { echo "monitoring requires BACKEND_TOKEN" >&2; exit 1; }
-  [ -n "$GRAFANA_PASSWORD" ] || { echo "monitoring requires GRAFANA_ADMIN_PASSWORD" >&2; exit 1; }
+  if [ -z "$GRAFANA_PASSWORD" ]; then
+    GRAFANA_PASSWORD="$(openssl rand -hex 24)"
+    printf '\nGRAFANA_ADMIN_PASSWORD=%s\n' "$GRAFANA_PASSWORD" >> .env
+    echo "generated GRAFANA_ADMIN_PASSWORD in $PTK_DIR/.env"
+  fi
   umask 077
   mkdir -p monitoring/secrets
   printf '%s' "$BACKEND_TOKEN_VALUE" > monitoring/secrets/backend_token
@@ -54,10 +59,22 @@ healthy() {
   return 1
 }
 
+monitoring_healthy() {
+  [ "$MONITORING" = "0" ] && return 0
+  for _ in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:9090/-/ready >/dev/null 2>&1 \
+      && curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 compose "$NEW_IMAGE" pull api
 compose "$NEW_IMAGE" up -d --remove-orphans
 
-if healthy; then
+if healthy && monitoring_healthy; then
   echo "$NEW_IMAGE" > current_image
   docker image prune -f >/dev/null
   echo "deployed $NEW_IMAGE"
@@ -66,6 +83,9 @@ fi
 
 echo "new image unhealthy; recent logs:" >&2
 compose "$NEW_IMAGE" logs --tail 80 api >&2 || true
+if [ "$MONITORING" = "1" ]; then
+  compose "$NEW_IMAGE" logs --tail 80 prometheus grafana >&2 || true
+fi
 if [ -n "$PREV_IMAGE" ]; then
   echo "rolling back to $PREV_IMAGE" >&2
   compose "$PREV_IMAGE" up -d api
