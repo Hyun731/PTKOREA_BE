@@ -26,7 +26,7 @@ CAUSES = {
 # Slot template -> the research section that feeds it.
 SECTION = {"1-6": "campaign", "C1": "campaign", "C2": "campaign", "M1": "market", "M2": "market_kpi",
            "3-1": "influencer", "2-1": "owned", "2-2": "owned", "2-4": "owned", "2-5": "owned",
-           "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
+           "5-1": "voc", "5-2": "voc", "TR1": "search_trend", "CR1": "commerce_review", "CM1": "commerce_review", "CM2": "commerce_review",
            "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search", "OW-CMP": "owned",
            # P4-4 5대 축
            "MK1": "market", "PL1": "market", "DM1": "search_trend", "CS1": "voc"}
@@ -36,6 +36,7 @@ FACT_METRICS: dict[str, tuple[str, ...]] = {
                "owned_reactions_median", "owned_comments_median", "owned_views_avg", "owned_views_median"),
     "MK1": ("market_size", "market_cagr", "macro_indicator"),  # P4-1 시장 수치
     "DM1": ("shop_click_index", "shop_peak_lift", "shop_click_share"),
+    "CR1": ("commerce_best_rank", "commerce_ranked_items", "commerce_top_reviews", "commerce_top_likes"),
 }
 UPLOAD: set[str] = set()  # 검색 점유(2-8a~d)는 네이버 데이터랩으로 자동 수집한다(P2-1) — 업로드 전용 장표 없음
 

@@ -67,7 +67,8 @@ def classify_reviews(reviews: list[dict], ledger: RunLedger) -> dict[tuple[str, 
     user = f"<reviews>\n{listing}\n</reviews>"
     try:
         res = ledger.call("anthropic", "commerce_keywords", {"n": len(reviews)}, 0.02,
-                          lambda: _structured()(KEYWORD_SYSTEM, user, KEYWORD_SCHEMA, max_tokens=2000),
+                          lambda: _structured()(KEYWORD_SYSTEM, user, KEYWORD_SCHEMA, max_tokens=2000, light=True,
+                                                   effort="low"),
                           cache_days=None)
     except ProviderError:
         return {}
@@ -109,19 +110,104 @@ def _fetch_reviews(ledger: RunLedger, platform: str, module, product_id: str) ->
                        ).data["reviews"]
 
 
+def _auto_skus(ledger: RunLedger, brand, entity: str) -> list[tuple[str, dict]]:
+    """[(플랫폼, 상품)] — 무신사·29CM에서 그 브랜드의 후기가 가장 많은 상품(데이터가 고른 대표 SKU).
+    브랜드를 못 찾거나 막히면 그 플랫폼만 빠진다."""
+    from app.services import commerce_rank as cr
+
+    out: list[tuple[str, dict]] = []
+    for platform in ("musinsa", "29cm"):
+        try:
+            hit = cr.resolve(ledger, platform, brand, entity)
+            if not hit:
+                continue
+            code, name = hit
+            if platform == "musinsa":
+                goods = cr._call(ledger, "musinsa_brand_goods", {"brand": code, "size": cr.TOP_GOODS},
+                                 lambda: cr._p("musinsa_brand_goods")(code, size=cr.TOP_GOODS))
+            else:
+                goods = [g for g in cr._call(ledger, "29cm_brand_search", {"q": name},
+                                             lambda: cr._p("29cm_search")(name), cache_days=7) if g["brand"] == code]
+            goods = [g for g in goods if g["review_count"]]
+            if goods:
+                out.append((platform, max(goods, key=lambda g: g["review_count"])))
+        except ProviderError:
+            continue
+    return out
+
+
+def _add_snapshot(db: Session, project: Project, item: ResearchItem, role: str, data: dict, fallback_name: str,
+                  today: date, out: dict) -> Optional[ReviewSnapshot]:
+    data["measured_at"] = today  # 파서는 측정일을 모른다 — 검증 전에 수집 시점을 채운다
+    bad = commerce.validate_snapshot(data)
+    if bad:
+        out["errors"].append({"code": "INVALID_SNAPSHOT", "message": f"{fallback_name}({data.get('platform')}): {bad}"})
+        return None
+    platform = data["platform"]
+    snap = ReviewSnapshot(id=new_id("REV"), project_id=project.id, brand_id=item.brand_id, entity=item.entity,
+                          role=role, platform=platform, product_name=data["product_name"] or fallback_name,
+                          product_url=data["product_url"], access_status=data["access_status"],
+                          reason=data.get("reason"), rating=data.get("rating"),
+                          rating_scale=data.get("rating_scale") or commerce.DEFAULT_SCALE.get(platform, 5.0),
+                          review_count=data.get("review_count"), measured_at=today)
+    db.add(snap)
+    db.commit()
+    out["created"] += 1
+    out["snapshots"] += 1
+    return snap
+
+
+def _keywords(db: Session, ledger: RunLedger, snap: ReviewSnapshot, reviews: list[dict], out: dict) -> None:
+    sponsored = [r for r in reviews if r["sponsored"]]
+    snap.sponsored_count = len(sponsored)
+    organic = [r for r in reviews if not r["sponsored"] and r.get("text")]
+    groups = classify_reviews(organic, ledger)
+    for (sentiment, keyword), info in groups.items():
+        quotes = [{"text": organic[i]["text"][:300], "posted_at": organic[i]["posted_at"]}
+                 for i in info["indices"][:3] if organic[i].get("posted_at")]
+        kw_data = {"sentiment": sentiment, "keyword": keyword, "sample_size": len(info["indices"]),
+                  "method": METHOD_NOTE, "quotes": quotes, "blocks_purchase": info["blocks_purchase"]}
+        bad = commerce.validate_keyword(kw_data)
+        if bad:
+            out.setdefault("dropped", []).append(f"{keyword}: {bad}")
+            continue
+        db.add(ReviewKeyword(id=new_id("RK"), snapshot_id=snap.id, sentiment=sentiment, keyword=keyword,
+                             sample_size=kw_data["sample_size"], method=METHOD_NOTE, quotes=quotes,
+                             blocks_purchase=info["blocks_purchase"]))
+        out["keywords"] += 1
+    db.commit()
+
+
 def run_commerce_item(db: Session, ledger: RunLedger, project: Project, item: ResearchItem) -> dict:
-    """item.entity(자사 브랜드 또는 경쟁사)의 확정된 대표 상품마다, 연동된 플랫폼을 전부 돌며
-    평점·리뷰를 모은다(플랫폼별로 한 행 — group_key()가 정한 단위, 서로 합치지 않는다)."""
+    """item.entity(자사 브랜드 또는 경쟁사)의 리뷰를 모은다(플랫폼별로 한 행 — group_key()가 정한 단위,
+    서로 합치지 않는다).
+    - 무신사·29CM: 사람이 대표 상품을 고르지 않아도 브랜드의 후기가 가장 많은 상품을 데이터가 고른다.
+    - 확정된 대표 상품이 있으면(신제품 대 기존 주력 비교 등) 그 상품을 연동된 플랫폼 전부에서 더 본다."""
     core = core_project(project)
     brand = core.brand(item.brand_id)
     products = brand.hero_products_for(item.entity)
     out: dict = {"created": 0, "snapshots": 0, "keywords": 0, "errors": []}
-    if not products:
-        out["errors"].append({"code": "NO_PRODUCT", "message":
-                              f"{item.entity}의 확정된 대표 상품이 없습니다 — 브랜드 설정에서 확인하세요"})
-        return out
     role = "self" if item.entity == brand.name else "competitor"
     today = date.today()
+    auto = _auto_skus(ledger, brand, item.entity)
+    for platform, g in auto:
+        module = PLATFORM_MODULES[platform]
+        if platform == "musinsa":
+            data = _fetch_product(ledger, platform, module, g["id"])
+            if data.get("access_status") != "ok":  # 상품 페이지가 막혀도 목록 값은 있다
+                data = {"platform": platform, "product_name": g["name"], "product_url": g["url"],
+                        "access_status": "ok", "rating": g.get("rating"), "rating_scale": 5.0,
+                        "review_count": g["review_count"]}
+        else:
+            data = {"platform": platform, "product_name": g["name"], "product_url": g["url"], "access_status": "ok",
+                    "rating": g.get("rating"), "rating_scale": 5.0, "review_count": g["review_count"]}
+        snap = _add_snapshot(db, project, item, role, data, g["name"], today, out)
+        if snap is not None and snap.access_status == "ok":
+            _keywords(db, ledger, snap, _fetch_reviews(ledger, platform, module, g["id"]), out)
+    if not products and not auto:
+        out["errors"].append({"code": "NO_PRODUCT", "message":
+                              f"{item.entity}: 무신사·29CM에서 브랜드 상품을 찾지 못했고 확정된 대표 상품도 없습니다"})
+        return out
     for product in products:
         for platform, module in PLATFORM_MODULES.items():
             found, blocked = _search(ledger, platform, module, product.name)
@@ -136,43 +222,7 @@ def run_commerce_item(db: Session, ledger: RunLedger, project: Project, item: Re
                 out["created"] += 1
                 continue
             data = _fetch_product(ledger, platform, module, found["id"])
-            data["measured_at"] = today  # 파서는 측정일을 모른다 — 검증 전에 수집 시점을 채운다
-            bad = commerce.validate_snapshot(data)
-            if bad:
-                out["errors"].append({"code": "INVALID_SNAPSHOT", "message": f"{product.name}({platform}): {bad}"})
-                continue
-            snap = ReviewSnapshot(id=new_id("REV"), project_id=project.id, brand_id=item.brand_id, entity=item.entity,
-                                  role=role, platform=data["platform"],
-                                  product_name=data["product_name"] or product.name, product_url=data["product_url"],
-                                  access_status=data["access_status"], reason=data.get("reason"),
-                                  rating=data.get("rating"),
-                                  rating_scale=data.get("rating_scale") or commerce.DEFAULT_SCALE.get(platform, 5.0),
-                                  review_count=data.get("review_count"), measured_at=today)
-            db.add(snap)
-            # 커밋해 쓰기 잠금을 바로 풀어준다 — ledger.call()이 리뷰·키워드 분류마다 별도 커넥션으로
-            # commit하는데, 여기서 플러시만 하고 열어 두면 같은 sqlite 파일에 "database is locked"가 난다.
-            db.commit()
-            out["created"] += 1
-            out["snapshots"] += 1
-            if data["access_status"] != "ok":
-                continue
-            reviews = _fetch_reviews(ledger, platform, module, found["id"])
-            sponsored = [r for r in reviews if r["sponsored"]]
-            snap.sponsored_count = len(sponsored)
-            organic = [r for r in reviews if not r["sponsored"] and r.get("text")]
-            groups = classify_reviews(organic, ledger)
-            for (sentiment, keyword), info in groups.items():
-                quotes = [{"text": organic[i]["text"][:300], "posted_at": organic[i]["posted_at"]}
-                         for i in info["indices"][:3] if organic[i].get("posted_at")]
-                kw_data = {"sentiment": sentiment, "keyword": keyword, "sample_size": len(info["indices"]),
-                          "method": METHOD_NOTE, "quotes": quotes, "blocks_purchase": info["blocks_purchase"]}
-                bad = commerce.validate_keyword(kw_data)
-                if bad:
-                    out.setdefault("dropped", []).append(f"{keyword}: {bad}")
-                    continue
-                db.add(ReviewKeyword(id=new_id("RK"), snapshot_id=snap.id, sentiment=sentiment, keyword=keyword,
-                                     sample_size=kw_data["sample_size"], method=METHOD_NOTE, quotes=quotes,
-                                     blocks_purchase=info["blocks_purchase"]))
-                out["keywords"] += 1
-            db.commit()
+            snap = _add_snapshot(db, project, item, role, data, product.name, today, out)
+            if snap is not None and snap.access_status == "ok":
+                _keywords(db, ledger, snap, _fetch_reviews(ledger, platform, module, found["id"]), out)
     return out
