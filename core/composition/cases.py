@@ -13,7 +13,8 @@ from typing import Callable, Optional
 from urllib.parse import unquote, urlparse
 
 from core.composition.chrome import (
-    D, L, N, P, PartFactory, T, circled, footnote_block, insight_blocks, lead_block, text_block, title_block,
+    D, L, N, P, PartFactory, T, circled, footnote_block, headline_blocks, insight_blocks, lead_block, text_block,
+    title_block,
 )
 from core.composition.formatters import UNIT_FORMATTER
 from core.composition.measure import PX_PER_PT, height_at, line_count, text_width
@@ -525,6 +526,51 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
                                blocks=blocks, asset_ids=[m.asset.id], source_ids=[m.source.id], needs_review=False,
                                is_data=True))
     return pages
+
+
+def report_evidence_pages(materials: list[CaseMaterial], pf: PartFactory, badge: list[Block],
+                          prefix: str = "C2R") -> list[SlideSpec]:
+    """Text-only evidence pages for accepted reports that do not have a usable image."""
+    rows = [m for m in materials if m.review_status == "accepted" and m.source.source_type == "report" and not m.asset
+            and any(c.review_status == "accepted" for c in m.claims)]
+    slides: list[SlideSpec] = []
+    for n, material in enumerate(rows, start=1):
+        claims = [claim for claim in material.claims if claim.review_status == "accepted"]
+        lead = next((claim for claim in claims if claim.kind != "fact"), claims[0])
+        body_claims = [claim for claim in claims if claim is not lead]
+        paragraphs = [Paragraph(
+            parts=_claim_parts(claim, pf),
+            bullet="▸" if claim.kind == "fact" else "→",
+            color=None if claim.kind == "fact" else "navy",
+            bold=claim.kind != "fact",
+        ) for claim in body_claims]
+        paragraphs += _metric_lines(material, pf)
+        blocks: list[Block] = [title_block(
+            "Evidence", sub_parts=[N(material.entity or ""), T("  ·  승인 보고서 근거")],
+        )]
+        blocks += headline_blocks(
+            [P(*_claim_parts(lead, pf))],
+            [P(N(material.source.title))],
+        )
+        if paragraphs:
+            size, line = (14.0, 21.0)
+            if height_at(paragraphs, 1120, size, line) > 430:
+                size, line = (12.0, 18.0)
+            blocks.append(text_block("report_evidence", "body", Region(x=72, y=158, w=1120, h=430), paragraphs,
+                                     spec="card_body", size=size, line=line, editable=True))
+        source = [N(material.source.title)]
+        if material.source.published_at:
+            source += [T(" · "), D(material.source.published_at)]
+        if material.source.url:
+            source += [T(" · "), L("원문", material.source.url)]
+        blocks += [footnote_block([P(*source)]), *badge]
+        slides.append(SlideSpec(
+            slide_id=f"{prefix}-{n}", template_id="report_evidence.v1", page_role="content",
+            section_id="campaign", brand_id=material.brand_id, title=material.title, blocks=blocks,
+            source_ids=[material.source.id], needs_review=False, is_data=True,
+            parent_slide_id=prefix if n > 1 else None,
+        ))
+    return slides
 
 
 # ---------------------------------------------------------------- M1

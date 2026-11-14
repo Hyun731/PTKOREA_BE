@@ -57,6 +57,26 @@ python -m tools.evaluate_golden_gap /absolute/path/to/private-baseline outline.j
 Repeat `--brand-alias` when generated section names use localized or abbreviated brand names. The output reports
 per-brand page coverage, lexical claim coverage, missing slots, and unassigned generated slides.
 
+## Import preview
+
+Preview how a strict baseline maps into an existing project's accepted inputs before writing anything:
+
+```bash
+python -m tools.import_golden_baseline /absolute/path/to/private-baseline \
+  --database-url sqlite:////absolute/path/to/copied.db \
+  --project-id PRJ-example \
+  --brand-map "Brand Alpha=B1" \
+  --brand-map "Brand Beta=B2" \
+  --brand-map "Brand Gamma=B3"
+```
+
+Add `--apply` only after reviewing the unsupported-fact report. The importer creates deterministic, accepted
+source/material/claim rows and only converts facts whose units fit the application's manual fact contract.
+Unsupported units and negative values remain explicit in the report instead of being silently coerced. Re-running
+the same import is idempotent. Claims that reference unsupported facts or still contain unbound digits are imported
+as pending, so they cannot introduce unsupported numbers into a generated deck. Always use a copied database for
+evaluation before changing a live project.
+
 The validator checks:
 
 - file presence and row schemas

@@ -121,6 +121,39 @@ def test_case_detail_renders(tmp_path):
     assert out.exists()
 
 
+def test_report_without_image_becomes_text_evidence_page():
+    project, _, _ = load_fixture()
+    project = project.model_copy(update={"enabled_slides": ["C2"]})
+    brand = project.brands[0]
+    material = CaseMaterial(
+        id="EV-REPORT",
+        brand_id=brand.id,
+        entity=brand.name,
+        section_id="campaign",
+        title="승인된 시장 진단",
+        source=SourceRef(
+            id="SRC-REPORT",
+            title="합성 승인 보고서",
+            source_type="report",
+            published_at=DAY,
+        ),
+        claims=[
+            ClaimRef(id="CL-REPORT-1", kind="fact", parts=[Part(type="text", text="여행 수요가 회복 국면에 진입")],
+                     review_status="accepted"),
+            ClaimRef(id="CL-REPORT-2", kind="interpretation",
+                     parts=[Part(type="text", text="기능 신뢰를 반복 증명하는 콘텐츠가 필요")],
+                     review_status="accepted"),
+        ],
+        review_status="accepted",
+    )
+    result = build_deck(BuildInputs(project=project, facts=[], materials=[material], generated_on=DAY))
+    slide = next(s for s in result.deck.slides if s.template_id == "report_evidence.v1")
+    assert slide.brand_id == brand.id and slide.source_ids == ["SRC-REPORT"]
+    blocks = _blocks(slide)
+    assert "기능 신뢰" in "".join(p.plain() for p in blocks["lead_claim"].paragraphs)
+    assert "여행 수요" in "".join(p.plain() for p in blocks["report_evidence"].paragraphs)
+
+
 def test_ai_insight_cards_replace_rule_cards(tmp_path):
     """The build's P3-5 cards (or a person's) take the place of the rule cards on a case page."""
     from core.composition.build import body_fingerprint

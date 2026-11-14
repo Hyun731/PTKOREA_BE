@@ -369,7 +369,9 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             for b in c.project.brands:
                 slot(f"3-1-{b.id}", "3-1", quant.creator_pages(c, b.id), "기간 내 채택된 creator 게시물 없음", b.id,
                      f"크리에이터 게시물 · {b.name}", part=part)
-        campaign_ordered = _case_order(project, [m for m in mats if m.section_id == "campaign"])
+        campaign_ordered = _case_order(project, [
+            m for m in mats if m.section_id == "campaign" or m.source.source_type == "report"
+        ])
         roles = _case_roles(project)
         for role, chapter, card_id, detail_id, title_main, title_sub in CASE_GROUPS:
             campaign = [m for m in campaign_ordered if roles.get(m.entity or "", "self") == role]
@@ -379,25 +381,31 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
             if on("C1"):
                 # Case/market/source pages carry the synthetic badge only if their own facts are synthetic.
                 case_badge = badge if _uses_synthetic(campaign, metrics) else []
+                visual_campaign = [m for m in campaign if m.source.source_type != "report"]
                 # A person-picked case gets its own deep-dive slide instead of a grid card; the rest
                 # keep the existing grid untouched (QUALITY_BASELINE p54/p68 pin its exact card count).
-                featured = sorted((m for m in campaign if m.featured), key=lambda m: (m.order, m.id))
-                grid = [m for m in campaign if not m.featured]
+                featured = sorted((m for m in visual_campaign if m.featured), key=lambda m: (m.order, m.id))
+                grid = [m for m in visual_campaign if not m.featured]
                 # With C2 on, featured cases get their full detail page there instead (each case appears once).
                 spotlights = [] if "C2" in enabled and featured else [s for i, m in enumerate(featured)
                              if (s := cases.case_spotlight_page(m, pf, title_main=title_main, title_sub=title_sub,
                                                                 slide_id=f"{card_id}-spot{i + 1}", badge=case_badge))]
                 pages = spotlights + cases.case_pages(grid, pf, title_main=title_main, title_sub=title_sub, slide_prefix=card_id,
                                                       lead_for=_case_lead, badge=case_badge)
-                blocked = [f"{m.title}: {cases.eligible_case(m)}" for m in campaign if cases.eligible_case(m)]
-                reason = f"채택된 {what} 자료 없음" if not campaign else "사례 카드 조건 미충족 — " + "; ".join(blocked[:3])
+                blocked = [f"{m.title}: {cases.eligible_case(m)}" for m in visual_campaign if cases.eligible_case(m)]
+                reason = (f"채택된 {what} 자료 없음" if not visual_campaign
+                          else "사례 카드 조건 미충족 — " + "; ".join(blocked[:3]))
                 slot(card_id, "C1", pages, reason, label=f"{title_sub} 카드", chapter=chapter, key=card_id, part=part)
             if on("C2"):
-                detail_cases = campaign
-                if "C1" in enabled and any(m.featured for m in campaign):
-                    detail_cases = [m for m in campaign if m.featured]  # the rest are on the C1 grid
-                detail = cases.case_detail_pages(detail_cases, pf, badge if _uses_synthetic(detail_cases, metrics) else [],
-                                                 prefix=detail_id)
+                visual_campaign = [m for m in campaign if m.source.source_type != "report"]
+                report_cases = [m for m in campaign if m.source.source_type == "report"]
+                detail_cases = visual_campaign
+                if "C1" in enabled and any(m.featured for m in visual_campaign):
+                    detail_cases = [m for m in visual_campaign if m.featured]  # the rest are on the C1 grid
+                detail_badge = badge if _uses_synthetic(detail_cases, metrics) else []
+                detail = cases.case_detail_pages(detail_cases, pf, detail_badge, prefix=detail_id)
+                report_badge = badge if _uses_synthetic(report_cases, metrics) else []
+                detail += cases.report_evidence_pages(report_cases, pf, report_badge, prefix=f"{detail_id}-R")
                 slot(detail_id, "C2", detail, f"채택된 {what} 자료 없음 (이미지·근거 문장 채택 필요)", label=f"{title_sub} 상세",
                      chapter=chapter, key=detail_id, part=part)
         if not multi and (on("M1") or on("MK1") or on("PL1")):
