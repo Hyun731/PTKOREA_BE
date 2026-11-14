@@ -31,6 +31,7 @@ packaging==26.3
 pillow==12.3.0
 pluggy==1.6.0
 prompt_toolkit==3.0.53
+prometheus-client==0.26.0
 psycopg==3.3.6
 psycopg-binary==3.3.6
 pydantic==2.14.1

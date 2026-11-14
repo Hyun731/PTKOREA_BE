@@ -8,6 +8,8 @@ from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from app.observability import current_request_id
+
 
 class ApiError(Exception):
     def __init__(self, status: int, code: str, message: str, action: str = "", detail: Optional[Any] = None):
@@ -26,11 +28,13 @@ def stale_version(current: int, latest: Any = None) -> ApiError:
 
 async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
     return JSONResponse(status_code=exc.status, content={"error": {
-        "code": exc.code, "message": exc.message, "action": exc.action, "detail": jsonable_encoder(exc.detail)}})
+        "code": exc.code, "message": exc.message, "action": exc.action, "detail": jsonable_encoder(exc.detail),
+        "request_id": current_request_id() or None}})
 
 
 async def unhandled_handler(_: Request, exc: Exception) -> JSONResponse:
     import logging
-    logging.getLogger("api").exception("unhandled", exc_info=exc)
+    logging.getLogger("api").exception("unhandled request_id=%s", current_request_id() or "-", exc_info=exc)
     return JSONResponse(status_code=500, content={"error": {
-        "code": "INTERNAL", "message": "처리 중 오류가 발생했습니다", "action": "잠시 후 다시 시도하세요", "detail": None}})
+        "code": "INTERNAL", "message": "처리 중 오류가 발생했습니다", "action": "잠시 후 다시 시도하세요",
+        "detail": None, "request_id": current_request_id() or None}})

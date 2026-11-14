@@ -5,7 +5,7 @@ import json
 from datetime import timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -207,9 +207,14 @@ def _is_stuck(job: Job) -> bool:
 
 
 def job_out(j: Job) -> dict:
-    return {"id": j.id, "kind": j.kind, "state": j.state, "progress": j.progress, "attempts": j.attempts,
+    duration_ms = None
+    if j.started_at and j.finished_at:
+        duration_ms = max(0, int((j.finished_at - j.started_at).total_seconds() * 1000))
+    return {"id": j.id, "project_id": j.project_id, "kind": j.kind, "state": j.state,
+            "progress": j.progress, "attempts": j.attempts, "request_id": j.params.get("_request_id"),
             "result": j.result, "error_code": j.error_code, "error_message": j.error_message, "usage": j.usage,
-            "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at}
+            "created_at": j.created_at, "started_at": j.started_at, "finished_at": j.finished_at,
+            "duration_ms": duration_ms}
 
 
 def pending_review_count(db: Session, project_id: str) -> int:
@@ -358,6 +363,18 @@ def read_job(job_id: str, db: Session = Depends(get_db)):
     if j is None:
         raise not_found("작업")
     return job_out(j)
+
+
+@router.get("/jobs")
+def list_jobs(project_id: Optional[str] = None, state: Optional[str] = None,
+              limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db)):
+    query = select(Job)
+    if project_id:
+        query = query.where(Job.project_id == project_id)
+    if state:
+        query = query.where(Job.state == state)
+    query = query.order_by(Job.created_at.desc()).limit(limit)
+    return [job_out(job) for job in db.scalars(query)]
 
 
 @router.post("/jobs/{job_id}/cancel")
