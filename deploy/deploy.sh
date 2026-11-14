@@ -61,7 +61,7 @@ healthy() {
 
 monitoring_healthy() {
   [ "$MONITORING" = "0" ] && return 0
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 120); do
     if curl -fsS http://127.0.0.1:9090/-/ready >/dev/null 2>&1 \
       && curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
       return 0
