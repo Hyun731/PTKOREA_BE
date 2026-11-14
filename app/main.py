@@ -57,6 +57,9 @@ async def require_backend_token(request: Request, call_next):
         public = {"/healthz", "/health/live", "/health/ready"}
         if token and request.method != "OPTIONS" and request.url.path not in public:
             given = request.headers.get("x-backend-token", "")
+            authorization = request.headers.get("authorization", "")
+            if authorization.startswith("Bearer "):
+                given = authorization.removeprefix("Bearer ")
             if not hmac.compare_digest(given.encode(), token.encode()):
                 response = JSONResponse(status_code=401, content={"error": {
                     "code": "UNAUTHORIZED", "message": "인증되지 않은 요청입니다",

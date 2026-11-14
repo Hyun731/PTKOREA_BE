@@ -33,7 +33,10 @@ chmod 600 /opt/ptk/.env
 
 ```
 POSTGRES_PASSWORD=<긴 무작위 문자열>
-PTK_PROFILE=tunnel          # tunnel(ngrok 고정 도메인) | https(Caddy, 공인 IP 필요) | 비워 두면 내부 전용
+PTK_PROFILES=tunnel,monitoring  # tunnel 또는 https + 선택적으로 monitoring
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=<긴 무작위 문자열>
+GRAFANA_ROOT_URL=http://localhost:3001
 # tunnel일 때
 NGROK_AUTHTOKEN=...
 NGROK_DOMAIN=...
@@ -42,6 +45,7 @@ NGROK_DOMAIN=...
 ```
 
 ngrok 고정 도메인은 한 번에 한 곳에서만 열 수 있습니다. 서버로 옮길 때 PC의 터널(`docker compose --profile tunnel`)은 먼저 내려 주세요.
+기존 `PTK_PROFILE=tunnel`도 계속 지원합니다. Grafana·Prometheus를 켜려면 `PTK_PROFILES`에 `monitoring`을 추가합니다.
 
 ## 3. GitHub 러너 등록 (한 번)
 
@@ -98,5 +102,14 @@ docker run --rm --network ptk_default -v /tmp/dev.db:/src/dev.db:ro \
 | 로그 | `docker compose logs -f api` |
 | 특정 버전으로 되돌리기 | Actions에서 그 커밋으로 Re-run, 또는 `~/actions-runner/_work/.../deploy/deploy.sh ghcr.io/hyun731/ptkorea-be:<sha>` |
 | DB 백업 | `docker compose exec -T db pg_dump -U ptk ptk \| gzip > backup-$(date +%F).sql.gz` |
+| Grafana | 서버에서 `http://127.0.0.1:3001` (외부 공개 전에는 SSH/Teleport 포트포워딩 사용) |
+| Prometheus | 서버에서 `http://127.0.0.1:9090` |
+
+### 모니터링
+
+`monitoring` 프로필은 API의 보호된 `/metrics`를 15초마다 수집하고 `PTK Service Overview` 대시보드를 자동 설치합니다.
+Prometheus와 Grafana 포트는 서버의 localhost에만 열립니다. 외부에 공개하려면 Grafana 인증을 유지한 채 별도 게이트웨이 주소를 사용하고, Prometheus는 공개하지 않습니다.
+
+기본 경보 규칙은 API 5xx 비율 5% 초과와 작업 실패입니다. 현재는 Prometheus에 경보 상태만 기록하며, Discord·Slack 전달은 Alertmanager 단계에서 추가합니다.
 
 자동 롤백은 이미지만 되돌립니다. 마이그레이션은 되돌리지 않으므로, 칸을 지우거나 이름을 바꾸는 마이그레이션은 새 코드와 옛 코드가 둘 다 동작하게 나눠서 넣어 주세요.
