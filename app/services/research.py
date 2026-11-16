@@ -2652,8 +2652,14 @@ def run_research(db: Session, job: Job, progress: Callable[[int], None]) -> dict
                 elif item.section_id == "commerce_review":
                     # 무신사는 발급키가 없는 공개 경로라 provider_configured 확인이 필요 없다.
                     from app.services.commerce_collect import run_commerce_item
-                    r = run_commerce_item(s, ledger, project, item)
-                    made = r.get("created", 0)
+                    chans = set(item.channels or [])
+                    r = run_commerce_item(s, ledger, project, item) if "commerce_review" in chans or not chans else \
+                        {"created": 0, "errors": []}
+                    if "commerce_rank" in chans:  # 무신사 판매 랭킹·29CM 후기·찜 수(경쟁 비교 숫자)
+                        from app.services.commerce_rank import run_commerce_rank
+                        rk = run_commerce_rank(s, ledger, project, item)
+                        r = {**r, "facts": rk["facts"], "rank": rk, "errors": [*r.get("errors", []), *rk["errors"]]}
+                    made = r.get("created", 0) + r.get("facts", 0)
                 else:
                     r = {"errors": [{"code": "NOT_IN_STAGE", "message": "자동 수집 대상이 아닙니다"}]}
                     made = 0

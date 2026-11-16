@@ -480,6 +480,13 @@ def fakes(monkeypatch):
     hero_products.SEARCH.append(lambda qs, **kw: f.search(qs, **kw))
     commerce_collect.STRUCTURED.clear()
     commerce_collect.STRUCTURED.append(f.structured)
+    # 무신사·29CM 공개 목록(경쟁 지표·대표 SKU 자동 선정)은 기본으로 '입점 없음' — 실제 네트워크를 타지 않게.
+    from app.services import commerce_rank
+    commerce_rank.PROVIDERS.clear()
+    commerce_rank.PROVIDERS.update({
+        "musinsa_search": lambda kw, **k: [], "musinsa_brand_goods": lambda b, **k: [],
+        "musinsa_likes": lambda ids, **k: {}, "musinsa_rank_categories": lambda **k: {},
+        "musinsa_ranking": lambda *a, **k: [], "29cm_search": lambda kw, **k: []})
     industry_keywords.STRUCTURED.clear()
     industry_keywords.STRUCTURED.append(f.structured)
     industry_keywords.SEARCH.clear()
@@ -504,6 +511,7 @@ def fakes(monkeypatch):
     monkeypatch.setenv("RUN_BUDGET_USD", "5")
     yield f
     research.PROVIDERS.clear()
+    commerce_rank.PROVIDERS.clear()
     aliases.STRUCTURED.clear()
     industry.STRUCTURED.clear()
     official_accounts.STRUCTURED.clear()
@@ -1210,7 +1218,7 @@ def test_commerce_review_item_checks_every_platform_and_one_blocked_platform_doe
 
 
 def test_commerce_review_item_requires_a_confirmed_hero_product(client, fakes):
-    """대표 상품을 확정하지 않으면 수집하지 않는다(자동 채택 금지의 연장)."""
+    """무신사·29CM에서 브랜드를 못 찾았고 확정된 대표 상품도 없으면 리뷰를 모으지 않는다."""
     p = ok(client.post("/v1/projects", json={
         "name": "대표 상품 없음", "client": "고객", "period": {"start": "2026-01-01", "end": "2026-09-30"},
         "brands": [{"id": "B1", "name": "브랜드A", "competitors": ["경쟁X"], "industry": "패션"}]}), 201)

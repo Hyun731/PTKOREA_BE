@@ -133,3 +133,168 @@ def competitor_review_page(snapshots: list[ReviewSnapshotRef]) -> list[SlideSpec
         foot += [T("~"), D(dates[-1])]
     foot.append(T(" · 자사 대비 비교 문장은 쓰지 않음(경쟁사 간 불만만 나열)"))
     return _table_page("CM2", "경쟁사 리뷰 비교", lead, columns, rows, foot)
+
+
+# ---------------------------------------------------------------- CR1 커머스 경쟁 지표(판매 순위·후기·찜)
+
+AGE_BAND_LABEL = {"AGE_BAND_ALL": "전체", "AGE_BAND_MINOR": "19세 이하", "AGE_BAND_20": "20~24세",
+                  "AGE_BAND_25": "25~29세", "AGE_BAND_30": "30~34세", "AGE_BAND_35": "35~39세",
+                  "AGE_BAND_40": "40세 이상"}
+AGE_BAND_ORDER = list(AGE_BAND_LABEL)
+CR_MAX_ENTITIES = 5  # 자사 + 경쟁사 4
+
+
+def _rank_cell(ctx, best, count) -> TableCell:
+    from core.composition.chrome import P as _P
+    if best is None:
+        if count is None:
+            return TableCell(paragraphs=[_P(T("-", color="muted"))])
+        return TableCell(paragraphs=[_P(M("100위 밖", "rank_out", color="muted"))])
+    return TableCell(paragraphs=[_P(ctx.pf.fact(best, "rank", bold=True), T("  "), M("100위 안", "rank_scope"), T(" "),
+                                    ctx.pf.fact(count, "int", bold=False), T("개", color="muted"))])
+
+
+def market_rank_page(ctx) -> Optional[SlideSpec]:
+    """CR1: 자사와 경쟁사를 같은 잣대로 — 무신사 카테고리 월간 판매 순위(전체·키 타겟 연령대)와 브랜드 최다
+    후기 상품의 후기·찜 수. 자사 행·막대를 강조하고, 순위 격차를 아래 KPI 상자로 보인다."""
+    from core.composition.chrome import headline_blocks
+    from core.composition.compare import bar_item, facts_of, latest_by, single_brand, text
+    from core.composition.quant import _decorate, _panel_header
+    from core.composition.tokens import region
+    from core.schemas.slidespec import BarChartBlock, ShapeBlock
+
+    brand = single_brand(ctx)
+    if brand is None:
+        return None
+    entities = [brand.name, *brand.competitors][:CR_MAX_ENTITIES]
+    counts = facts_of(ctx, "commerce_ranked_items", brand.id, platform="musinsa")
+    bests = facts_of(ctx, "commerce_best_rank", brand.id, platform="musinsa")
+    cats = list(dict.fromkeys((f.dims["category"], f.dims.get("category_label", "")) for f in counts))
+    cnt = latest_by(counts, lambda f: (f.entity, f.dims["category"], f.dims["age_band"]))
+    best = latest_by(bests, lambda f: (f.entity, f.dims["category"], f.dims["age_band"]))
+    reviews = latest_by(facts_of(ctx, "commerce_top_reviews", brand.id, platform="musinsa"), lambda f: f.entity)
+    likes = latest_by(facts_of(ctx, "commerce_top_likes", brand.id, platform="musinsa"), lambda f: f.entity)
+    # 순위표가 비교가 되려면 자사 + 경쟁사 한 곳 이상이 같은 판에 있어야 한다
+    cats = [c for c in cats if sum(1 for e in entities if (e, c[0], "AGE_BAND_ALL") in cnt) >= 2][:2]
+    if not cats and len([e for e in entities if e in reviews]) < 2:
+        return None
+
+    body = region("body")
+    left_w = body.w * 0.58 if reviews else body.w
+    blocks: list[Block] = []
+    fact_ids: list[str] = []
+    y = body.y
+    kpis: list[tuple[str, object, str, object, str]] = []  # (라벨, 경쟁사 fact, 경쟁사명, 자사 fact|None, 자사명)
+    # 표 하나 = 머리 44 + 열 머리 30 + 행 36 × 브랜드 수. 두 카테고리가 본문에 다 들어갈 때만 둘 다 싣는다.
+    row_h = 36.0
+    fits, used = [], 0.0
+    for c in cats:
+        h = 44 + 30 + row_h * sum(1 for e in entities if (e, c[0], "AGE_BAND_ALL") in cnt) + 12
+        if fits and used + h > body.h:
+            break
+        fits.append(c)
+        used += h
+    cats = fits
+    for ci, (code, label) in enumerate(cats):
+        bands = [b for b in AGE_BAND_ORDER if any((e, code, b) in cnt for e in entities)]
+        ents = [e for e in entities if (e, code, "AGE_BAND_ALL") in cnt]
+        ents.sort(key=lambda e: (e != brand.name, best[(e, code, "AGE_BAND_ALL")].value
+                                 if (e, code, "AGE_BAND_ALL") in best else 10 ** 6))
+        blocks += _panel_header(f"rank{ci}_header", body.x, y, left_w,
+                                [T(f"무신사 {label} 월간 판매 순위 · 연령대별")])
+        columns = [TableColumn(key="who", label="브랜드", width=0.28)] + \
+                  [TableColumn(key=b, label=AGE_BAND_LABEL[b], width=0.72 / len(bands)) for b in bands]
+        rows = []
+        for e in ents:
+            mine = e == brand.name
+            cells = [TableCell(paragraphs=[P(N(e, bold=mine, color="red" if mine else None))],
+                               fill="highlight" if mine else None)]
+            for b in bands:
+                bf, cf = best.get((e, code, b)), cnt.get((e, code, b))
+                cell = _rank_cell(ctx, bf, cf)
+                if mine:
+                    cell.fill = "highlight"
+                cells.append(cell)
+                fact_ids += [f.id for f in (bf, cf) if f is not None]
+            rows.append(TableRow(cells=cells))
+        table_h = 30 + row_h * len(rows)
+        blocks.append(TableBlock(block_id=f"rank{ci}", region=Region(x=body.x, y=y + 44, w=left_w, h=table_h),
+                                 columns=columns, rows=rows, row_height=row_h, header_height=30, size=10,
+                                 header_size=9.5))
+        y += 44 + table_h + 12
+        # KPI: 키 타겟 연령대(없으면 전체)에서 1위 경쟁사 vs 자사
+        band = next((b for b in bands if b != "AGE_BAND_ALL"), "AGE_BAND_ALL")
+        comp = [(e, best[(e, code, band)]) for e in ents if e != brand.name and (e, code, band) in best]
+        if comp:
+            ce, cf = min(comp, key=lambda r: r[1].value)
+            sf = best.get((brand.name, code, band))
+            if sf is None or sf.value > cf.value:
+                kpis.append((f"{label} · {AGE_BAND_LABEL[band]}", cf, ce, sf, brand.name))
+
+    if reviews:
+        rx, rw = body.x + left_w + 28, body.w - left_w - 28
+        ents = [e for e in entities if e in reviews]
+        panels = [("rev", "최다 후기 상품 후기 수", reviews)] + ([("like", "그 상품 찜 수", likes)] if likes else [])
+        ph = body.h / len(panels)
+        for i, (key, title, src) in enumerate(panels):
+            py = body.y + i * ph
+            blocks += _panel_header(f"{key}_header", rx, py, rw, [T(f"무신사 {title}")])
+            items = [bar_item(ctx, e, e, src[e], "count", role="self" if e == brand.name else "other")
+                     for e in sorted((e for e in ents if e in src), key=lambda e: -src[e].value)]
+            chart = BarChartBlock(block_id=f"{key}_chart", region=Region(x=rx, y=py + 44, w=rw, h=ph - 52),
+                                  items=items, number_format='#,##0', unit="count", label_size=10, gap_width=45)
+            blocks.append(chart)
+            fact_ids += [it.fact_id for it in chart.bar_items()]
+
+    # 아래 KPI 상자: '경쟁사 N위 → 자사 M위(또는 순위 밖)'
+    kr = region("insights")
+    top_y = region("takeaway").y
+    if kpis:
+        n = min(3, len(kpis))
+        w = (kr.w - 16 * (n - 1)) / n
+        for i, (lab, cf, ce, sf, sn) in enumerate(kpis[:n]):
+            x = kr.x + i * (w + 16)
+            blocks.append(ShapeBlock(block_id=f"kpi{i}_box", region=Region(x=x, y=top_y + 8, w=w, h=110),
+                                     shape="rounded", fill="tint", line="panel_border"))
+            blocks.append(text(f"kpi{i}_label", Region(x=x + 14, y=top_y + 16, w=w - 28, h=20),
+                               [M(lab, "segment", bold=True, color="navy")], size=10))
+            parts: list[Part] = [N(ce), T(" "), ctx.pf.fact(cf, "rank", bold=True), T("  →  "), N(sn, color="red"),
+                                 T(" ")]
+            parts += [ctx.pf.fact(sf, "rank", bold=True)] if sf is not None else [T("순위 밖", bold=True, color="red")]
+            blocks.append(text(f"kpi{i}_value", Region(x=x + 14, y=top_y + 42, w=w - 28, h=40), parts, size=15))
+            blocks.append(text(f"kpi{i}_note", Region(x=x + 14, y=top_y + 86, w=w - 28, h=24),
+                               [T("무신사 월간 판매 순위 · 최고 순위 상품 기준", color="muted")], size=9))
+            fact_ids += [f.id for f in (cf, sf) if f is not None]
+
+    # 헤드라인: 가장 큰 순위 격차 하나, 근거 줄은 후기 수
+    claim: list[Part]
+    if kpis:
+        lab, cf, ce, sf, sn = kpis[0]
+        claim = [N(brand.name), T(", "), M(lab, "segment"), T(" 판매 순위에서 "), N(ce), T("에 "),
+                 T("밀린다", color="accent")]
+    else:
+        claim = [N(brand.name), T(" 판매 플랫폼 경쟁 지표 — 순위·후기·찜 수 비교")]
+    evidence: list[Paragraph] = []
+    if kpis:
+        lab, cf, ce, sf, sn = kpis[0]
+        evidence.append(P(N(ce), T(" "), ctx.pf.fact(cf, "rank"), T(" · "), N(sn), T(" "),
+                          *( [ctx.pf.fact(sf, "rank")] if sf is not None else [T("순위 밖")])))
+    if reviews and brand.name in reviews:
+        others = [(e, f) for e, f in reviews.items() if e != brand.name]
+        if others:
+            oe, of = max(others, key=lambda r: r[1].value)
+            evidence.append(P(T("최다 후기 상품 후기 수 "), N(brand.name), T(" "), ctx.pf.fact(reviews[brand.name], "int"),
+                              T("건 · "), N(oe), T(" "), ctx.pf.fact(of, "int"), T("건")))
+    head = headline_blocks([P(*claim)], evidence, region("lead"))
+    reg = ctx.metrics.registry.facts
+    measured = max((reg[f].measured_at for f in fact_ids if f in reg), default=None)
+    foot_parts: list[Part] = [T("*"), M("무신사 카테고리 랭킹 '전체' 탭 · 최근 30일(월간) · 성별 전체 · 상위 100위 안 브랜드 최고 순위 "
+                                        "상품(100위 안 상품 수 함께)", "method"),
+                              T(" · 후기·찜 수 = 브랜드 상품을 후기순으로 정렬한 첫 상품")]
+    if measured:
+        foot_parts += [T(" · 측정 "), D(measured)]
+    foot_parts += [T(" · "), M("무신사 공개 랭킹·상품 목록", "source")]
+    foot = footnote_block([P(*foot_parts)])
+    blocks = [title_block("Commerce", "판매 순위·후기 경쟁"), *head, *blocks, foot]
+    return SlideSpec(slide_id="CR1", template_id="commerce_rank.v1", page_role="content", section_id="commerce_review",
+                     title="판매 순위·후기 경쟁", blocks=_decorate(ctx, blocks), needs_review=True, is_data=True)

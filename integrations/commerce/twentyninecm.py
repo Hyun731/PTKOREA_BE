@@ -1,10 +1,10 @@
 """29CM 공개 상품·리뷰 페이지 (Phase 2 커머스 리뷰).
 
-실제로 확인한 것: 정직한 봇 식별(USER_AGENT, PTK-ResearchBot) 요청은 홈·검색을 포함한
-모든 경로에서 Cloudflare의 "Attention Required" 봇 차단 페이지(403)로 막힌다 — 특정
-엔드포인트만의 문제가 아니라 엣지(CDN) 단에서 걸러진다. 쿠키·세션을 유지하거나 브라우저를
-흉내 내 이 차단을 우회하려는 시도는 하지 않는다(핸드오프 원칙) — 막히면 그대로 접근
-불가로 남긴다.
+실제로 확인한 것(2026-11 재확인): 정직한 봇 식별(USER_AGENT, PTK-ResearchBot) 요청으로 홈과
+공개 상품 검색 API(search-api.29cm.co.kr)가 열린다 — 상품별 리뷰 수·평균 평점·찜(하트) 수가
+검색 결과에 그대로 있다(search_brand_goods). 예전(2026-10)에는 모든 경로가 Cloudflare 봇 차단(403)
+이었다. 쿠키·세션을 유지하거나 브라우저를 흉내 내 차단을 우회하려는 시도는 하지 않는다 — 다시
+막히면 그대로 접근 불가로 남긴다.
 확인하지 못한 것: 실제 상품·리뷰 페이지 구조. 아래 URL 패턴과 schema.org 파싱은 다른
 전자상거래 사이트의 통상적인 관례를 따른 추정이며, 접근이 가능해지면 다시 확인해야 한다.
 리뷰 원문 API는 전혀 확인하지 못해(사이트 전체가 막혀 있어 역공학 자체가 불가능) 만들지
@@ -67,3 +67,34 @@ def fetch_product(item_no: str, *, transport: Optional[httpx.BaseTransport] = No
 def fetch_reviews(item_no: str, *, transport: Optional[httpx.BaseTransport] = None) -> list[dict]:
     """공개 리뷰 API를 확인하지 못했다(사이트 전체가 봇 차단) — 항상 빈 목록."""
     return []
+
+
+SEARCH_API = "https://search-api.29cm.co.kr/api/v4/products"
+
+
+def parse_search(payload: dict) -> list[dict]:
+    """공개 상품 검색 API 응답 → 상품 행(리뷰 수·평균 평점·찜 수 포함)."""
+    rows = []
+    for g in payload.get("data") or []:
+        if not g.get("itemNo"):
+            continue
+        point = g.get("reviewAveragePoint")
+        count = int(g.get("reviewCount") or 0)
+        rows.append({"id": str(g["itemNo"]), "name": g.get("itemName") or "",
+                     "brand": str(g.get("frontBrandNo") or ""), "brand_name": g.get("frontBrandNameKor") or "",
+                     "brand_name_en": g.get("frontBrandNameEng") or "", "review_count": count,
+                     "rating": float(point) if count and isinstance(point, (int, float)) and point else None,
+                     "likes": int(g.get("heartCount") or 0), "url": PRODUCT_URL.format(item_no=g["itemNo"])})
+    return rows
+
+
+def search_brand_goods(keyword: str, *, limit: int = 100,
+                       transport: Optional[httpx.BaseTransport] = None) -> list[dict]:
+    """키워드 검색 결과 상품(최대 limit개) — 브랜드 거르기와 후기 순 정렬은 호출 쪽에서."""
+    with httpx.Client(timeout=15.0, follow_redirects=True, transport=transport,
+                      headers={"User-Agent": USER_AGENT}) as client:
+        r = _get(client, SEARCH_API, params={"keyword": keyword, "limit": limit, "offset": 0})
+        try:
+            return parse_search(r.json())
+        except ValueError:
+            raise ProviderError("SOURCE_UNAVAILABLE", "29CM 검색 응답을 읽지 못함")

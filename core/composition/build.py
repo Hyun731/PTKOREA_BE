@@ -47,7 +47,7 @@ SECTIONS: dict[str, tuple[str, str, str, str]] = {
 TEMPLATE_SECTION = {"1-1": "overview", "1-6": "overview", "2-1": "owned", "2-2": "owned", "2-4": "owned",
                     "2-5": "owned", "2-8a": "search", "2-8b": "search", "2-8c": "search", "2-8d": "search",
                     "3-1": "influencer", "C1": "campaign", "C2": "campaign", "M1": "campaign", "M2": "campaign",
-                    "TR1": "search_trend", "CM1": "commerce_review", "CM2": "commerce_review",
+                    "TR1": "search_trend", "CR1": "commerce_review", "CM1": "commerce_review", "CM2": "commerce_review",
                     "5-1": "voc", "5-2": "voc", "5-recap": "recap", "A-source": "appendix",
                     "ES": "recap", "INSIGHT": "recap", "SWOT": "recap", "PROBLEM": "recap", "SOLUTION": "recap"}
 TEMPLATE_SECTION.update({
@@ -66,7 +66,7 @@ TEMPLATE_LABEL = {"1-1": "브랜드·카테고리·타겟 매핑", "1-6": "타�
                   "2-8a": "브랜드명 검색 점유", "2-8b": "월별 검색 지수", "2-8c": "조합어 검색 점유",
                   "2-8d": "키 타겟 검색 점유", "3-1": "크리에이터 게시물", "C1": "캠페인 사례 카드", "C2": "사례 상세",
                   "M1": "시장·타겟 근거", "M2": "업종 KPI", "TR1": "검색 추이(Google Trends)",
-                  "CM1": "판매·리뷰 자산", "CM2": "경쟁사 리뷰 비교",
+                  "CR1": "판매 순위·후기 경쟁", "CM1": "판매·리뷰 자산", "CM2": "경쟁사 리뷰 비교",
                   "5-1": "소비자 인식 원문", "5-2": "브랜드 인식 경로",
                   "5-recap": "Recap", "A-source": "출처 표", "ES": "Executive Summary", "INSIGHT": "핵심 인사이트",
                   "SWOT": "SWOT", "PROBLEM": "문제 정의", "SOLUTION": "솔루션 방향"}
@@ -107,7 +107,7 @@ BRAND_CHAPTERS = ("company", "competitor", "customer", "summary", "exec")
 SIDE_BY_SIDE = {"1-1", "2-1", "2-2", "2-4", "2-5", "2-8a", "2-8b", "2-8c", "M1"}
 TEMPLATE_CHAPTER = {"1-1": "company", "1-6": "company", "2-1": "company", "2-2": "company", "2-4": "company",
                     "2-5": "company", "3-1": "company", "C1": "company", "C2": "company", "M1": "competitor",
-                    "M2": "competitor", "TR1": "competitor", "CM1": "company", "CM2": "competitor",
+                    "M2": "competitor", "TR1": "competitor", "CR1": "competitor", "CM1": "company", "CM2": "competitor",
                     "2-8a": "competitor", "2-8b": "competitor",
                     "2-8c": "competitor", "2-8d": "competitor", "5-1": "customer", "5-2": "customer",
                     "5-recap": "summary", "A-source": "appendix", "ES": "exec", "INSIGHT": "summary",
@@ -126,7 +126,7 @@ FOLLOWS = {"OW-CMP": "2-1",
            "MK1": "M1", "PL1": "M1", "DM1": "TR1", "CS1": "5-1"}
 # Order of pages inside the deck; case pages come per group (자사 → 경쟁사 → 벤치마크).
 PAGE_ORDER = ["ES", "1-1", "2-1", "OW-CMP", "2-2", "2-4", "2-5", "3-1", "C1", "C2", "1-6", "CM1", "MK1", "DM1", "PL1", "M1", "M2",
-              "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "TR1", "CM2", "D3", "C1c", "C2c", "C1b", "C2b", "CS1", "5-3", "5-4",
+              "2-8a", "2-8b", "2-8c", "2-8d", "MN1", "SH1", "TR1", "CR1", "CM2", "D3", "C1c", "C2c", "C1b", "C2b", "CS1", "5-3", "5-4",
               "BL1", "VC1", "PP1", "5-1", "5-2", "5-recap", "D1", "D2", "INSIGHT", "SWOT",
               "PROBLEM", "SOLUTION", "D4", "D5", "D6", "A-source"]
 # (key, role, chapter, card prefix, detail prefix, title_main, title_sub)
@@ -382,6 +382,10 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
         elif on("SH1"):
             s = demand.shopping_demand_page(c)
             slot("SH1", "SH1", [s] if s else [], "월별 쇼핑 클릭 지수가 4개 이상인 제품군 없음", part=part)
+        if on("CR1"):
+            s = commerce.market_rank_page(c)
+            slot("CR1", "CR1", [s] if s else [], "채택된 판매 순위·후기 수치 없음(자사 + 경쟁사 한 곳 이상 필요)",
+                 part=part)
         if on("3-1"):
             for b in c.project.brands:
                 slot(f"3-1-{b.id}", "3-1", quant.creator_pages(c, b.id), "기간 내 채택된 creator 게시물 없음", b.id,
@@ -776,7 +780,7 @@ def _used_sources(by_template: dict[str, list[SlideSpec]], materials: list[CaseM
 
 
 DIAGNOSIS_MAIN_ORDER = {
-    "D1": 10, "D2": 20, "D3": 30, "OW-CMP": 40, "3-1": 50, "C2": 60,
+    "D1": 10, "D2": 20, "D3": 30, "CR1": 35, "OW-CMP": 40, "3-1": 50, "C2": 60,
     "MK1": 70, "DM1": 71, "PL1": 72, "CS1": 73, "D4": 80, "D5": 90,
 }
 DIAGNOSIS_CONCLUSION_ORDER = {"D6": 10, "INSIGHT": 20, "SWOT": 30, "PROBLEM": 40, "SOLUTION": 50}

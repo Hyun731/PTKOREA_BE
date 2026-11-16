@@ -33,7 +33,7 @@ AUTO_CHANNELS: dict[str, set[str]] = {
     "market": {"web"},
     "market_kpi": {"web"},
     "search_trend": {"google_trends", "shopping_insight"},
-    "commerce_review": {"commerce_review"},
+    "commerce_review": {"commerce_review", "commerce_rank"},
     "search": {"search_naver", "naver_mentions", "naver_blog_types"},
     "voc": {"community", "naver_blog", "x_search", "threads_search", "tiktok_search", "youtube_search", "naver_kin"},
     # P4-3: 공개 웹으로 찾을 수 있는 이슈·포지셔닝·트렌드 항목 — 웹 기사(Perplexity)와 네이버 뉴스로 자료 카드를 만든다.
@@ -82,10 +82,12 @@ ITEMS: list[dict] = [
      "output": "캠페인마다 기간·대행사·모델·카피"},
     # Phase 2 커머스 리뷰: 리뷰 중심 업종에서만 기본으로 켠다(전자·뷰티·패션은 꺼도 감사 기록).
     {"id": "2-9", "part": "company", "group": "채널과 활동", "title": "커머스 리뷰",
-     "question": "{brand}·경쟁사({competitors}) 대표 상품의 판매 플랫폼 리뷰(평점·리뷰 수·긍정·부정 키워드)",
-     "subject": "self_and_competitor", "collector": "commerce_review", "templates": ["CM1", "CM2"],
-     "channels": ["commerce_review"], "default_channels": ["commerce_review"], "period": "inherit",
-     "period_hint": "최신 수집 시점 기준", "output": "플랫폼별 대표 상품 평점·리뷰 수 + 긍정·부정 키워드(원문 근거)"},
+     "question": "{brand}·경쟁사({competitors}) 판매 플랫폼 경쟁 지표(무신사 연령별 판매 순위, 브랜드 최다 후기 상품의 "
+                 "후기·찜 수)와 리뷰 키워드",
+     "subject": "self_and_competitor", "collector": "commerce_review", "templates": ["CR1", "CM1", "CM2"],
+     "channels": ["commerce_rank", "commerce_review"], "default_channels": ["commerce_rank", "commerce_review"],
+     "period": "inherit", "period_hint": "최신 수집 시점 기준(랭킹은 최근 30일)",
+     "output": "카테고리 월간 순위(전체·키 타겟 연령) + 최다 후기 상품 후기·찜 수 + 긍정·부정 키워드(원문 근거)"},
     {"id": "4-1", "part": "company", "group": "주요 이슈", "title": "긍정 이슈",
      "question": "{brand} 신규 기능·비전 발표·서비스 확장·수상·투자 소식", "subject": "self", "collector": "issue",
      "channels": ["web", "naver_news"], "period": 6, "period_hint": "최근 3~6개월, 최신순", "output": "이슈마다 제목·매체·일자·요약 2줄"},

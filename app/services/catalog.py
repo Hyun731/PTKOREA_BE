@@ -27,7 +27,7 @@ SECTIONS = [
      "data": "공식 통계·공시의 업종 지표(자사·경쟁사 최근 3년)", "default_window": "최근 3년"},
     {"id": "search_trend", "label": "검색 추이(Google Trends)", "templates": ["TR1"],
      "data": "Google Trends 공개 경로 — 카테고리·브랜드 키워드 상대 지수(0~100)·연관 검색어", "default_window": "최근 12개월"},
-    {"id": "commerce_review", "label": "커머스 리뷰", "templates": ["CM1", "CM2"],
+    {"id": "commerce_review", "label": "커머스 리뷰", "templates": ["CR1", "CM1", "CM2"],
      "data": "판매 플랫폼 공개 리뷰(무신사·29CM·올리브영·스마트스토어·쿠팡 자동 시도) — 대표 상품 평점·"
              "리뷰 수·긍정부정 키워드. 무신사 외에는 봇 차단으로 접근 불가가 흔함",
      "default_window": "최신 수집 시점"},
@@ -107,7 +107,9 @@ CHANNELS = {
     # 접근 불가가 흔하다 — 우회 없이 "접근 불가"로 남긴다.
     "commerce_review": {"label": "커머스 리뷰 (무신사·29CM·올리브영·스마트스토어·쿠팡 자동 시도)",
                         "support": "auto", "provider": "commerce"},
-    "commerce_rank": {"label": "커머스 랭킹", "support": "manual_only", "provider": None},
+    # 무신사 카테고리 월간 랭킹(연령대별)·브랜드 후기순 상품·찜 수, 29CM 공개 검색의 후기·찜 수(로그인 없음).
+    "commerce_rank": {"label": "커머스 경쟁 지표 (무신사 연령별 판매 순위·29CM 후기·찜 수)", "support": "auto",
+                      "provider": "commerce"},
     "app_review": {"label": "앱스토어·구글플레이 리뷰", "support": "manual_only", "provider": None},
     "report": {"label": "리서치·협회 리포트 (메조미디어·나스미디어·KOSIS)", "support": "manual_only", "provider": None},
     "upload": {"label": "내부 자료 업로드 (패널 조사·트래커·매체 리포트)", "support": "manual_only", "provider": None},
