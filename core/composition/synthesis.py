@@ -78,24 +78,29 @@ def es_page(es: dict, pf: Optional[PartFactory] = None) -> Optional[SlideSpec]:
     if not cols:
         return None
     n = len(cols)
-    w = {1: 520, 2: 520, 3: 372}[n]
-    gap = 32
+    w = {1: 1184, 2: 576, 3: 372}[n]
+    gap = {1: 0, 2: 32, 3: 32}[n]
     x0 = 640 - (n * w + (n - 1) * gap) / 2
     blocks: list[Block] = [title_block("Executive Summary", "핵심 요약")]
     if es.get("task"):
         blocks.append(lead_block([P(T(es["task"]))]))
     insights = (es.get("insights") or [])[:3]
+    summary_bottom = 132
     if insights:
-        summary_lines = [{"text": f"{it.get('title', '')} — {it.get('body', '')}", "ref": it.get("ref"),
-                          "fact_ref": it.get("fact_ref"), "source_url": it.get("source_url")} for it in insights]
-        summary_y, summary_h = 132, max(72, _body_h(summary_lines, 1152, 16))
-        blocks += [ShapeBlock(block_id="summary_bg", region=Region(x=48, y=summary_y, w=1184, h=summary_h),
-                              fill="pillar_body"),
-                   text_block("summary", "insight", Region(x=64, y=summary_y + 10, w=1152, h=summary_h - 20),
-                              [P(*_line_parts(line, pf), bullet=f"{i + 1}.") for i, line in enumerate(summary_lines)],
-                              spec="insight_body")]
+        sn = len(insights)
+        sg = 20 if sn > 1 else 0
+        sw = (1184 - sg * (sn - 1)) / sn
+        summary_lines = [{"text": it.get("body", ""), "ref": it.get("ref"), "fact_ref": it.get("fact_ref"),
+                          "source_url": it.get("source_url")} for it in insights]
+        # _panel reserves 24px inner padding; leave another line of slack for Office/LibreOffice
+        # font-width differences rather than shrinking the richer two-sentence summary.
+        sh = max(128, max(_body_h([line], sw - 32, 16) for line in summary_lines) + 12)
+        for i, (it, line) in enumerate(zip(insights, summary_lines)):
+            blocks += _panel(10 + i, 48 + i * (sw + sg), 132, sw, 48, sh, it.get("title", ""), [line],
+                             no=f"{i + 1}.", pf=pf)
+        summary_bottom = 132 + 48 + 8 + sh
     h = max(_body_h(lines, w - 32) for _, _, lines in cols)
-    y = max(225 if insights else TOP, _top(48 + 8 + h))
+    y = max(summary_bottom + 24 if insights else TOP, _top(48 + 8 + h))
     for i, (_, label, lines) in enumerate(cols):
         blocks += _panel(i, x0 + i * (w + gap), y, w, 48, h, label, lines, pf=pf)
     blocks.append(_note())
@@ -137,8 +142,10 @@ def _items_page(slide_id: str, template: str, heading: str, sub: str, title: str
         blocks.append(lead_block([P(T(data["lead"]))]))
     lines = [{"text": it.get("body", ""), "ref": it.get("ref"), "fact_ref": it.get("fact_ref"),
               "source_url": it.get("source_url")} for it in items]
-    h = max(_body_h([line], w - 32) for line in lines)
-    y = _top(60 + 8 + h)
+    h = max(132, max(_body_h([line], w - 32) for line in lines))
+    # A short recap row looks accidental when pinned directly under the header. Keep it in the
+    # visual center of the body band, while still moving upward when richer copy needs the room.
+    y = max(190, _top(60 + 8 + h))
     for i, (it, line) in enumerate(zip(items, lines)):
         blocks += _panel(i, x0 + i * (w + gap), y, w, 60, h, it.get("title", ""), [line], no=f"{i + 1}.", pf=pf)
     blocks.append(_note())

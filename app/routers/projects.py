@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from pathlib import Path
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.config import ROOT, settings
+from app.config import settings
 from app.db import get_db
 from app.errors import ApiError, not_found, stale_version
 from app.models import (
@@ -20,9 +19,8 @@ from app.models import (
 )
 from app.services.audit import audit
 from app.services import scope
-from app.services.catalog import CHANNELS, DEFAULT_SLIDES, SAMPLE_SLIDES, channel_status, comparison_window
+from app.services.catalog import CHANNELS, DEFAULT_SLIDES, channel_status, comparison_window
 from core.schemas.project import Project as CoreProject
-from core.schemas.project import load_project
 
 router = APIRouter()
 
@@ -284,27 +282,6 @@ def create_project(body: ProjectIn, db: Session = Depends(get_db), who: str = De
         db.commit()
     if _fill_industry_keywords(db, p):
         db.commit()
-    return project_out(db, p)
-
-
-@router.post("/projects/sample", status_code=201)
-def create_sample_project(db: Session = Depends(get_db), who: str = Depends(actor)):
-    """Demo project from the synthetic quantitative fixture (clearly labelled as synthetic)."""
-    raw = json.loads((ROOT / "tests/fixtures/quantitative_samples/project.json").read_text(encoding="utf-8"))
-    core = load_project(raw)
-    cfg = json.loads(core.model_dump_json())
-    cfg["enabled_slides"] = SAMPLE_SLIDES
-    cfg["section_windows"] = cfg["section_windows"] + [
-        {"section_id": "campaign", "label": "9M", "start": "2026-01-01", "end": "2026-09-30", "source": "user"}]
-    cfg["name"] = "샘플 · 브랜드A 진단 (합성 데이터)"
-    core = _validate(cfg)
-    p = Project(id=new_id("PRJ"), name=core.name, client=core.client, config=json.loads(core.model_dump_json()),
-                owner=who, omitted_slots={}, lead_overrides={})
-    db.add(p)
-    db.flush()
-    _create_plan(db, p, core)
-    audit(db, p.id, "project", p.id, "create_sample", after=p.config, actor=who)
-    db.commit()
     return project_out(db, p)
 
 

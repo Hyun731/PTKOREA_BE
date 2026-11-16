@@ -8,6 +8,7 @@ Docs: https://apify.com/apify/instagram-hashtag-scraper
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,6 +18,12 @@ from integrations.base import CallResult, ProviderError, request_json
 
 ACTOR = os.environ.get("APIFY_ACTOR_ID") or "apify~instagram-hashtag-scraper"
 PRICE_PER_RESULT = 0.0023  # actor's published pay-per-result price (USD)
+
+
+def _hashtags(values: list[str]) -> list[str]:
+    """Convert brand names and aliases into hashtags accepted by Instagram/Apify."""
+    tags = [re.sub(r"[^\w]", "", value.strip().lstrip("#"), flags=re.UNICODE) for value in values]
+    return list(dict.fromkeys(tag for tag in tags if tag))
 
 
 def _token() -> str:
@@ -36,7 +43,7 @@ def _date(v) -> Optional[str]:
 
 
 def hashtag_posts(hashtags: list[str], *, per_tag: int = 60, transport: Optional[httpx.BaseTransport] = None) -> CallResult:
-    tags = [t.strip().lstrip("#") for t in hashtags if t.strip().lstrip("#")]
+    tags = _hashtags(hashtags)
     if not tags:
         raise ValueError("hashtags required")
     body = {"hashtags": tags, "resultsType": "posts", "resultsLimit": max(1, min(200, per_tag))}

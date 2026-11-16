@@ -683,7 +683,7 @@ def hide_screened(m: Material, reason: str) -> None:
 
 
 def extract_material(db: Session, ledger: RunLedger, project: Project, m: Material) -> dict:
-    """자료 하나의 요약·수치·문장 추출(비싼 모델) — 사람이 자료를 열거나 채택할 때 한 번만 부른다.
+    """자료 하나의 요약·수치·문장 추출(비싼 모델) — 사람이 해당 근거를 선택하거나 채택할 때 부른다.
     관련 없다고 판단되면 아직 검토 전인 자료는 목록에서 숨긴다. 이미 채택된 자료면 새 문장·수치도 함께 채택한다."""
     from app.services import adopt
 

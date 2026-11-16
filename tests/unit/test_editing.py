@@ -1,10 +1,9 @@
-"""Deck editor commands: ids kept, evidence rules held, scope respected, Mock planner produces real edits."""
+"""Deck editor commands: ids kept, evidence rules held and scope respected."""
 from datetime import date
 
 import pytest
 
 from core.composition.build import BuildInputs, build_deck
-from core.editing import mock
 from core.editing.commands import apply_commands
 from core.editing.scope import AreaIn, SelectionIn, resolve_target
 from core.editing.text import DeckVocabulary, TextEditError, from_tokens, to_tokens
@@ -87,28 +86,14 @@ def test_scope_selection_limits_targets(built):
     assert resolve_target(slides, s.slide_id, "deck", SelectionIn()).slide_ids == [x.slide_id for x in slides]
 
 
-def test_mock_planner_edits_the_canvas(built):
-    slides = built.deck.slides
-    s = next(x for x in slides if any(isinstance(b, TextBlock) and b.role == "lead" for b in x.blocks))
-    t = resolve_target(slides, s.slide_id, "slide", SelectionIn())
-    reply, cmds = mock.plan("제목 글씨를 키우고 파란색으로 바꿔줘", slides, t, s.slide_id)
-    res = apply_commands(slides, cmds)
-    lead = next(b for b in res.slides[slides.index(s)].blocks if getattr(b, "role", None) == "lead")
-    before = next(b for b in s.blocks if getattr(b, "role", None) == "lead")
-    assert res.applied and lead.color == "#1D4ED8" and lead.size > before.size and "파란색" in reply
-    reply, cmds = mock.plan("무슨 말인지 모를 요청", slides, t, s.slide_id)
-    assert cmds == [] and "Mock" in reply
-
-
 def test_speaker_notes_and_rename(built, tmp_path):
     from pptx import Presentation
     from core.rendering.pptx_renderer import render_deck
 
     slides = built.deck.slides
     s = next(x for x in slides if x.page_role == "content")
-    t = resolve_target(slides, s.slide_id, "slide", SelectionIn())
-    reply, cmds = mock.plan("발표 대본 써줘", slides, t, s.slide_id)
-    cmds.append({"op": "rename_slide", "slide_id": s.slide_id, "title": "새 이름"})
+    cmds = [{"op": "update_notes", "slide_id": s.slide_id, "text": "이번 장은 핵심 결과를 설명합니다.\n\n근거 기록"},
+            {"op": "rename_slide", "slide_id": s.slide_id, "title": "새 이름"}]
     res = apply_commands(slides, cmds)
     out = res.slides[slides.index(s)]
     assert out.speaker_notes.startswith("이번 장은") and out.title == "새 이름"

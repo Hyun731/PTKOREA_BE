@@ -6,6 +6,7 @@ from decimal import Decimal
 from app.db import SessionLocal
 from app.models import FactRow
 from core.ingestion.owned import owned_fact
+from tests.integration.fixture_api import create_fixture_project
 
 
 def ok(r, status=200):
@@ -14,7 +15,7 @@ def ok(r, status=200):
 
 
 def sample_project(client, slides=("2-1",)):
-    p = ok(client.post("/v1/projects/sample"), 201)
+    p = create_fixture_project(client)
     proj = ok(client.get(f"/v1/projects/{p['id']}"))
     enabled = proj["config"]["enabled_slides"] + [s for s in slides if s not in proj["config"]["enabled_slides"]]
     ok(client.patch(f"/v1/projects/{p['id']}", json={"base_version": proj["version"],

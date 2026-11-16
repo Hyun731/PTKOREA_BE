@@ -1,12 +1,17 @@
 """Stage 1 flow through the API: manual materials -> PPT, with review, stale and QC gates
 (PRD A05, A06, A11 partial, A13, A15, A16, A17; DEVELOPMENT_PLAN 단계 1 완료 조건)."""
 import io
+import json
 import os
 
+import pytest
 from PIL import Image
 from pptx import Presentation
 
+from integrations.base import CallResult
+from app.services import editor as editor_service
 from tests.integration.conftest import HAS_RENDER
+from tests.integration.fixture_api import FIXTURES, create_fixture_project, upload_fixture_batches
 
 
 def png_bytes(w=1600, h=900) -> bytes:
@@ -24,8 +29,43 @@ def ok(r, status=200):
     return r.json()
 
 
+def test_synthetic_fixture_upload_is_rejected(client):
+    project = create_fixture_project(client)
+    response = client.post(
+        f"/v1/projects/{project['id']}/imports",
+        data={"kind": "facts"},
+        files={"file": ("facts.csv", (FIXTURES / "facts.csv").read_bytes(), "text/csv")},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "SYNTHETIC_DATA_NOT_ALLOWED"
+
+
+@pytest.fixture
+def editor_ai(monkeypatch):
+    def structured(system, user, schema, **kwargs):
+        request = json.loads(user)
+        slide = request["slides"][0]
+        editable = slide["editable_element_ids"]
+        elements = slide["elements"]
+        target = next((e for e in elements if isinstance(editable, list) and e["id"] in editable), None)
+        target = target or next((e for e in elements if e.get("role") == "lead"), elements[0])
+        args = {"element_id": target["id"]}
+        if "파란" in request["request"]:
+            args["color"] = "#1D4ED8"
+        if "키워" in request["request"] or "키우" in request["request"]:
+            args["size"] = float(target.get("size") or 20) + 4
+        return CallResult(data={"reply": "요청한 요소를 수정했습니다.", "commands": [{
+            "op": "update_style", "slide_id": slide["slide_id"], "reason": "요청 반영", "args": json.dumps(args),
+        }]}, usage={"model": "test"}, cost_usd=0.001)
+
+    monkeypatch.setattr(editor_service, "ai_available", lambda: True)
+    editor_service.STRUCTURED[:] = [structured]
+    yield
+    editor_service.STRUCTURED.clear()
+
+
 def test_full_manual_flow(client):
-    p = ok(client.post("/v1/projects/sample"), 201)
+    p = create_fixture_project(client)
     pid = p["id"]
     plan = ok(client.get(f"/v1/projects/{pid}/research-plan"))
     sections = {(i["section_id"], i["role"]) for i in plan["items"]}
@@ -40,8 +80,8 @@ def test_full_manual_flow(client):
     assert r.status_code == 503 and r.json()["error"]["code"] == "PROVIDER_NOT_CONFIGURED"
 
     # CSV batches are candidates until accepted.
-    batches = ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201)
-    assert all(b["status"] == "candidate" and b["synthetic"] for b in batches[:1])
+    batches = upload_fixture_batches(client, pid)
+    assert all(b["status"] == "candidate" for b in batches[:1])
     sp = ok(client.get(f"/v1/projects/{pid}/slide-plan"))
     # 1-1 (브랜드 매핑) always generates — it reads only the project's own config, not accepted data.
     assert sp["counts"]["generated"] == 1
@@ -192,49 +232,55 @@ def test_posts_batch_replaces_only_same_brand(client):
     assert status == {b1: "replaced", b2: "accepted", b1_again: "accepted"}
 
 
-def test_deck_editor_copy_ai_and_export(client):
-    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+def test_deck_editor_copy_ai_and_export(client, editor_ai):
+    pid = create_fixture_project(client)["id"]
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     deck_id = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)["deck_id"]
     ed = ok(client.get(f"/v1/decks/{deck_id}/edit"))
-    assert not ed["edited"] and ed["slides"] and "mock" in ed["ai"]["modes"]
+    assert not ed["edited"] and ed["slides"] and ed["ai"]["available"]
     slides = ed["slides"]
     sid = next(s["slide_id"] for s in slides if s["page_role"] == "content" and any(b.get("role") == "lead" for b in s["blocks"]))
 
-    # Mock AI: commands are previewed (slides returned), nothing is saved until the editor saves.
+    # AI commands are previewed (slides returned), nothing is saved until the editor saves.
     out = ok(client.post(f"/v1/decks/{deck_id}/edit/ai", json={
-        "message": "제목 글씨를 키우고 파란색으로 바꿔줘", "slides": slides, "current_slide_id": sid, "scope": "slide", "mode": "mock"}))
-    assert out["mode"] == "mock" and out["applied"] and sid in out["changed"]
+        "message": "제목 글씨를 키우고 파란색으로 바꿔줘", "slides": slides, "current_slide_id": sid, "scope": "slide"}))
+    assert out["mode"] == "claude" and out["applied"] and sid in out["changed"]
     assert not ok(client.get(f"/v1/decks/{deck_id}/edit"))["edited"]
     # A selection scope keeps the AI inside the marked element.
     sel = ok(client.post(f"/v1/decks/{deck_id}/edit/ai", json={
         "message": "파란색으로 바꿔줘", "slides": slides, "current_slide_id": sid, "scope": "selection",
-        "selection": {"element_ids": {sid: ["lead_claim"]}}, "mode": "mock"}))
+        "selection": {"element_ids": {sid: ["lead_claim"]}}}))
     assert {a["element_id"] for a in sel["applied"]} == {"lead_claim"}
 
-    # Save the previewed slides; optimistic version; QC still holds numbers to evidence.
+    # Save the previewed slides; optimistic version; QC still identifies numbers without evidence.
     merged = [next((x for x in out["slides"] if x["slide_id"] == s["slide_id"]), s) for s in slides]
     saved = ok(client.put(f"/v1/decks/{deck_id}/edit", json={"base_version": ed["edit_version"], "slides": merged, "title": "편집본"}))
     assert client.put(f"/v1/decks/{deck_id}/edit", json={"base_version": ed["edit_version"], "slides": merged}).status_code == 409
-    bad = [dict(s) for s in merged]
+    removed_id = next(s["slide_id"] for s in merged if s["slide_id"] != sid)
+    bad = [dict(s) for s in merged if s["slide_id"] != removed_id]
     lead = next(b for b in next(s for s in bad if s["slide_id"] == sid)["blocks"] if b.get("role") == "lead")
     lead["paragraphs"] = [{"parts": [{"type": "text", "text": "조회 3배"}]}]
     qc = ok(client.post(f"/v1/decks/{deck_id}/edit/qc", json={"slides": bad}))
     assert any(i["code"] == "UNBOUND_NUMBER" and i["slide_id"] == sid for i in qc["issues"])
 
-    exp = ok(client.post(f"/v1/decks/{deck_id}/edit/export"), 201) if not saved["qc"]["blocks"] else None
-    if exp:
-        assert "report.pptx" in exp["files"]
-        r = client.get(f"/v1/exports/{exp['id']}/files/report.pptx")
-        assert r.status_code == 200 and len(r.content) > 10_000
+    # MVP policy: the finding stays visible, but it does not prevent exporting an editable draft.
+    saved_bad = ok(client.put(f"/v1/decks/{deck_id}/edit", json={
+        "base_version": saved["edit_version"], "slides": bad, "title": "확인 필요 편집본",
+    }))
+    assert saved_bad["qc"]["blocks"] > 0 and saved_bad["qc"]["export_blocks"] == 0
+    exp = ok(client.post(f"/v1/decks/{deck_id}/edit/export"), 201)
+    assert "report.pptx" in exp["files"] and exp["qc"]["review_required"]
+    r = client.get(f"/v1/exports/{exp['id']}/files/report.pptx")
+    assert r.status_code == 200 and len(r.content) > 10_000
+    assert len(Presentation(io.BytesIO(r.content)).slides) == len(bad)
     reset = ok(client.delete(f"/v1/decks/{deck_id}/edit"))
-    assert not reset["edited"] and reset["edit_version"] == saved["edit_version"] + 1
+    assert not reset["edited"] and reset["edit_version"] == saved_bad["edit_version"] + 1
 
 
-def test_editor_ai_log_apply_and_restore(client):
-    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+def test_editor_ai_log_apply_and_restore(client, editor_ai):
+    pid = create_fixture_project(client)["id"]
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     deck_id = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)["deck_id"]
     ed = ok(client.get(f"/v1/decks/{deck_id}/edit"))
@@ -245,10 +291,13 @@ def test_editor_ai_log_apply_and_restore(client):
         s = next(x for x in sl if x["slide_id"] == sid)
         return next(b for b in s["blocks"] if b.get("role") == "lead")
 
+    lead_id = lead(slides)["block_id"]
     out = ok(client.post(f"/v1/decks/{deck_id}/edit/ai", json={"message": "제목 파란색으로 바꿔줘", "slides": slides,
-                                                                "current_slide_id": sid, "scope": "slide", "mode": "mock"}))
+                                                                "current_slide_id": sid, "scope": "selection",
+                                                                "selection": {"element_ids": {sid: [lead_id]}}}))
+    assert {change["element_id"] for change in out["applied"]} == {lead_id}
     log = ok(client.get(f"/v1/decks/{deck_id}/edit/log"))
-    assert log[0]["id"] == out["log_id"] and log[0]["status"] == "proposed" and log[0]["mode"] == "mock"
+    assert log[0]["id"] == out["log_id"] and log[0]["status"] == "proposed" and log[0]["mode"] == "claude"
     merged = [next((x for x in out["slides"] if x["slide_id"] == s["slide_id"]), s) for s in slides]
     applied = ok(client.post(f"/v1/decks/{deck_id}/edit/log/{out['log_id']}/apply",
                              json={"base_version": ed["edit_version"], "slides_before": slides, "slides": merged}))
@@ -259,7 +308,7 @@ def test_editor_ai_log_apply_and_restore(client):
 
     # a cancelled proposal stays in the log but changes nothing
     out2 = ok(client.post(f"/v1/decks/{deck_id}/edit/ai", json={"message": "제목 키워줘", "slides": merged,
-                                                                 "current_slide_id": sid, "scope": "slide", "mode": "mock"}))
+                                                                 "current_slide_id": sid, "scope": "slide"}))
     ok(client.post(f"/v1/decks/{deck_id}/edit/log/{out2['log_id']}/cancel"))
 
     # go back to before the applied edit, then undo that restore
@@ -315,7 +364,7 @@ def test_scope_change_regenerates_plan_and_keeps_decisions(client):
 
 
 def test_accept_all_leaves_excluded_items_alone(client):
-    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
+    pid = create_fixture_project(client)["id"]
     items = ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"]
     ok(client.patch(f"/v1/research-items/{items[0]['id']}/review", json={"review_status": "excluded", "omission_reason": "불필요"}))
     assert ok(client.post(f"/v1/projects/{pid}/research-plan/accept-all"))["accepted"] == len(items) - 1
@@ -324,7 +373,7 @@ def test_accept_all_leaves_excluded_items_alone(client):
 
 
 def test_excluding_an_item_needs_no_reason(client):
-    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
+    pid = create_fixture_project(client)["id"]
     it = ok(client.get(f"/v1/projects/{pid}/research-plan"))["items"][0]
     out = ok(client.patch(f"/v1/research-items/{it['id']}/review", json={"review_status": "excluded"}))
     assert out["review_status"] == "excluded" and out["omission_reason"] == "사용자가 제외"

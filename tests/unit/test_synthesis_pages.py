@@ -76,12 +76,17 @@ def test_es_page_places_three_insights_above_three_c_panels():
     }
     slide = es_page(lines)
 
-    summary = slide.block("summary")
-    panel_heads = [block for block in _text_blocks(slide) if block.role == "panel_header"]
-    assert len(summary.paragraphs) == 3
-    assert [paragraph.bullet for paragraph in summary.paragraphs] == ["1.", "2.", "3."]
-    assert len(panel_heads) == 3
-    assert summary.region.y + summary.region.h < min(block.region.y for block in panel_heads)
+    summary_heads = [slide.block(f"panel{i}_head") for i in range(10, 13)]
+    summary_bodies = [slide.block(f"panel{i}_body") for i in range(10, 13)]
+    c_heads = [slide.block(f"panel{i}_head") for i in range(3)]
+    assert all(head.region.y == 132 for head in summary_heads)
+    assert all(body.region.y + body.region.h < min(head.region.y for head in c_heads) for body in summary_bodies)
+
+
+def test_es_single_3c_panel_uses_full_width():
+    slide = es_page({"company": [_line("자사 활동과 성과를 충분한 문장으로 설명한 핵심 요약")], "task": "과제"})
+    assert slide.block("panel0_head").region.w == 1184
+    assert slide.block("panel0_body").region.w == 1152
 
 
 def test_swot_page_is_two_by_two_and_stays_inside_body_band():

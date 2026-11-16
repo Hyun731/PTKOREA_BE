@@ -21,7 +21,7 @@ from app.services.deck import current_fingerprint, next_deck_version
 from app.services.inputs import load_inputs
 from app.storage import get_storage
 from core.composition.build import build_deck
-from core.quality.qc import run_qc, self_brand_names
+from core.quality.qc import EXPORT_BLOCK_CODES, run_qc, self_brand_names
 from core.schemas.project import Project as CoreProject
 from core.schemas.slidespec import Paragraph
 
@@ -47,7 +47,6 @@ def slide_plan(project_id: str, db: Session = Depends(get_db)):
         "findings": [{"id": f.id, "rule_id": f.rule_id, "brand_id": f.brand_id, "strength": str(f.strength),
                       "expression": f.allowed_expression} for f in result.findings],
         "metric_issues": [i.__dict__ for i in result.metrics.issues],
-        "synthetic_data": result.deck.synthetic_data,
         "fingerprint": result.deck.input_fingerprint,
     }
 
@@ -227,6 +226,7 @@ def pending_review_count(db: Session, project_id: str) -> int:
 
 class DeckBuildIn(BaseModel):
     confirm_pending: bool = False  # 확인 대기 자료가 있어도 그대로 만들기로 한 경우 true
+    collect_missing: bool = False  # 비용이 드는 누락 자료 재수집은 사람이 명시적으로 요청한 경우만
 
 
 @router.post("/projects/{project_id}/deck-builds", status_code=202)
@@ -258,7 +258,8 @@ def start_build(project_id: str, body: DeckBuildIn = DeckBuildIn(), db: Session 
     deck = Deck(id=new_id("DECK"), project_id=project_id, version=next_deck_version(db, project_id), status="building")
     db.add(deck)
     db.flush()
-    job, _ = create_job(db, project_id, p.version, "deck_build", {"deck_id": deck.id}, idempotency_key)
+    job, _ = create_job(db, project_id, p.version, "deck_build",
+                        {"deck_id": deck.id, "collect_missing": body.collect_missing}, idempotency_key)
     deck.job_id = job.id
     audit(db, project_id, "deck", deck.id, "build", actor=who)
     if pending:  # confirm_pending이었던 경우만 — 그대로 만들기로 한 결정을 감사 기록에 남긴다
@@ -272,9 +273,11 @@ def start_build(project_id: str, body: DeckBuildIn = DeckBuildIn(), db: Session 
 def deck_out(db: Session, d: Deck, include_spec: bool = True) -> dict:
     p = get_project(db, d.project_id)
     stale = d.status == "ready" and d.fingerprint != current_fingerprint(db, p)
+    review_required = bool(d.qc and d.qc.get("issues"))
     out = {"id": d.id, "version": d.version, "status": d.status, "qc": d.qc, "render_status": d.render_status,
            "render_message": d.render_message, "pages": len(d.preview_keys or []), "job_id": d.job_id,
-           "created_at": d.created_at, "stale": stale, "fingerprint": d.fingerprint}
+           "created_at": d.created_at, "stale": stale, "fingerprint": d.fingerprint,
+           "draft_status": "ready_with_review" if d.status == "ready" and review_required else d.status}
     if include_spec:
         out["spec"] = d.spec
     return out
@@ -317,9 +320,11 @@ def start_export(deck_id: str, db: Session = Depends(get_db), who: str = Depends
         raise ApiError(409, "INVALID_STATE", "덱 생성이 끝나지 않았습니다")
     if d.fingerprint != current_fingerprint(db, p):
         raise ApiError(409, "STALE_VERSION", "덱 생성 이후 자료·검토 상태가 바뀌었습니다", "초안을 다시 생성한 뒤 내보내세요")
-    if d.qc and d.qc.get("blocks"):
-        raise ApiError(409, "QC_BLOCKED", f"QC 차단 {d.qc['blocks']}건이 있어 내보낼 수 없습니다", "출력 화면의 차단 항목을 해결하세요",
-                       [i for i in d.qc["issues"] if i["severity"] == "block"])
+    export_blocks = (d.qc or {}).get("export_blocks", 0)
+    if export_blocks:
+        raise ApiError(409, "QC_BLOCKED", f"내보내기 차단 {export_blocks}건이 있어 내보낼 수 없습니다",
+                       "출력 화면의 차단 항목을 해결하세요",
+                       [i for i in d.qc["issues"] if i["code"] in EXPORT_BLOCK_CODES])
     if d.render_status != "ok":
         raise ApiError(409, "RENDER_FAILED", "실제 PPTX 렌더 미리보기가 없어 확정 출력을 막았습니다",
                        "렌더러(RENDER_BACKEND) 설정을 확인한 뒤 다시 생성하세요")
@@ -333,7 +338,9 @@ def start_export(deck_id: str, db: Session = Depends(get_db), who: str = Depends
 
 
 def export_out(e: Export) -> dict:
-    return {"id": e.id, "deck_id": e.deck_id, "deck_version": e.deck_version, "qc": {"blocks": e.qc["blocks"], "warns": e.qc["warns"]},
+    return {"id": e.id, "deck_id": e.deck_id, "deck_version": e.deck_version,
+            "qc": {"blocks": e.qc["blocks"], "warns": e.qc["warns"],
+                   "export_blocks": e.qc.get("export_blocks", 0), "review_required": e.qc.get("review_required", False)},
             "files": sorted(e.manifest), "generated_at": e.generated_at}
 
 

@@ -129,7 +129,8 @@ def _ensure_diagnosis(db: Session, project: Project, job: Job) -> dict:
 def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     project = db.get(Project, job.project_id)
     deck = db.get(Deck, job.params["deck_id"])
-    _recollect_missing(db, project, progress)
+    if job.params.get("collect_missing"):
+        _recollect_missing(db, project, progress)
     _extract_pending(db, project, job)
     writing = _write_slides(db, project, job, progress)
     synthesis = _ensure_synthesis(db, project)
@@ -162,7 +163,8 @@ def run_build(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
         deck.render_status, deck.render_message = "unavailable", str(exc)[:400]
     deck.status = "ready"  # only after the real-render preview exists (or is known unavailable)
     db.commit()
-    return {"deck_id": deck.id, "deck_version": deck.version, "qc_blocks": qc.blocks, "qc_warns": qc.warns,
+    return {"deck_id": deck.id, "deck_version": deck.version, "draft_status": "ready_with_review" if qc.issues else "ready",
+            "qc_blocks": qc.blocks, "qc_warns": qc.warns, "export_blocks": qc.export_blocks,
             "render_status": deck.render_status, "writing": writing, "synthesis": synthesis,
             "diagnosis": diagnosis}
 
@@ -185,8 +187,8 @@ def run_export(db: Session, job: Job, progress: Callable[[int], None]) -> dict:
     if json.loads(result.deck.model_dump_json()) != stored:
         raise JobFailure("RENDER_FAILED", "재현한 덱이 미리보기 버전과 다릅니다")
     qc = run_qc(result.deck, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(project.config))
-    if qc.blocks:
-        raise JobFailure("QC_BLOCKED", f"QC 차단 {qc.blocks}건 — 출력 화면에서 해결하세요")
+    if qc.export_blocks:
+        raise JobFailure("QC_BLOCKED", f"내보내기 차단 {qc.export_blocks}건 — 출력 화면에서 해결하세요")
     if deck.render_status != "ok":
         raise JobFailure("RENDER_FAILED", "실제 PPTX 렌더 미리보기를 확인할 수 없어 확정 출력을 막았습니다")
     progress(40)

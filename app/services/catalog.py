@@ -55,10 +55,6 @@ FRAMES = ["cover", "index", "divider", "end"]
 # explicitly (which handle is the brand's own account), not something every project has.
 DEFAULT_SLIDES = ["cover", "index", "divider", "1-1", "1-6", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "C2", "M1",
                  "5-recap", "A-source", "end"]
-# The synthetic sample ships its own search CSV, so it keeps the search slides on.
-SAMPLE_SLIDES = ["cover", "index", "divider", "1-1", "1-6", "2-8a", "2-8b", "2-8c", "2-8d", "3-1", "C1", "5-recap",
-                 "A-source", "end"]
-
 # Channel support must match what can actually be collected (MVP_SITE_REVIEW 6).
 CHANNELS = {
     # Full own-account history (2-1 채널 인벤토리), not the single-post/hashtag-discovery

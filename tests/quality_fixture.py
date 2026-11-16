@@ -187,7 +187,9 @@ def build_inputs(asset_dir: Path):
                            review_status="accepted"),
                   ClaimRef(id=f"CL-Q{i + 1:02d}b", kind="interpretation", parts=quoted_parts(impl),
                            evidence_ids=[ev], review_status="accepted")]
-        materials.append(CaseMaterial(id=ev, brand_id="B1", entity=entity, section_id="campaign", title=title,
+        related_brand_ids = [bid for bid, _, competitors, _, _ in BRANDS if entity in competitors]
+        materials.append(CaseMaterial(id=ev, brand_id="B1", related_brand_ids=related_brand_ids,
+                                      entity=entity, section_id="campaign", title=title,
                                       label=f"{entity} · {label}", source=src, activity_date=date.fromisoformat(day),
                                       asset=asset, metric_fact_ids=fact_ids, claims=claims, review_status="accepted",
                                       order=i))

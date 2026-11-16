@@ -55,7 +55,7 @@ def edit_out(db: Session, d, slides: Optional[list[SlideSpec]] = None) -> dict:
             "title": d.edit_title or f"{p.name}_v{d.version}", "edit_version": d.edit_version, "edited": d.edit_slides is not None,
             "edited_at": d.edited_at, "stale": d.fingerprint != current_fingerprint(db, p),
             "slides": [s.model_dump(mode="json") for s in slides], "qc": svc.qc_for(db, p, d, slides),
-            "ai": {"available": svc.ai_available(), "modes": ["claude", "mock"] if svc.ai_available() else ["mock"]}}
+            "ai": {"available": svc.ai_available()}}
 
 
 @router.get("/decks/{deck_id}/edit")
@@ -125,7 +125,6 @@ class AiIn(BaseModel):
     scope: Literal["selection", "slide", "deck"] = "slide"
     selection: SelectionIn = SelectionIn()
     history: list[dict] = []
-    mode: Literal["auto", "claude", "mock"] = "auto"
 
 
 @router.post("/decks/{deck_id}/edit/ai")
@@ -135,14 +134,14 @@ def ai_edit(deck_id: str, body: AiIn, db: Session = Depends(get_db), who: str = 
     slides = _slides(body.slides)
     if body.current_slide_id not in {s.slide_id for s in slides}:
         raise ApiError(422, "INVALID_INPUT", "현재 슬라이드가 덱에 없습니다")
-    if body.mode == "claude" and not svc.ai_available():
-        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "Anthropic 키·모델이 설정되지 않았습니다", "Mock 모드로 시도하세요")
+    if not svc.ai_available():
+        raise ApiError(503, "PROVIDER_NOT_CONFIGURED", "Anthropic 키·모델이 설정되지 않았습니다", "서버의 Anthropic 설정을 확인하세요")
     try:
         out = svc.plan_edit(db, p, d, slides=slides, current_slide_id=body.current_slide_id, scope=body.scope,
-                            selection=body.selection, message=body.message, history=body.history, mode=body.mode)
+                            selection=body.selection, message=body.message, history=body.history)
     except ProviderError as exc:
         status = {"BUDGET_EXCEEDED": 409, "RATE_LIMITED": 429}.get(exc.code, 502)
-        raise ApiError(status, exc.code, str(exc), "잠시 뒤 다시 시도하거나 Mock 모드를 쓰세요")
+        raise ApiError(status, exc.code, str(exc), "잠시 뒤 다시 시도하세요")
     log = EditLog(id=new_id("EL"), project_id=p.id, deck_id=d.id, kind="ai",
                   status="proposed" if out["applied"] else "cancelled", message=body.message, reply=out["reply"],
                   mode=out["mode"], scope=body.scope, slide_ids=sorted(out["changed"]),
