@@ -2,7 +2,8 @@
 
 The generated `Deck.spec` never changes. The editor copy (`Deck.edit_slides`) starts as a copy of
 it and is what the editor shows, saves and exports. QC runs on the copy with the same rules as a
-generated deck, so an edit cannot export a number without evidence.
+generated deck. Findings remain visible, but the MVP can still export an editable draft for a
+person to finish.
 """
 from __future__ import annotations
 
@@ -21,7 +22,6 @@ from app.services.inputs import load_inputs
 from app.storage import get_storage
 from core.composition.build import BuildResult, build_deck, fingerprint
 from core.composition.tokens import tokens
-from core.editing import mock
 from core.editing.commands import OPS, apply_commands
 from core.editing.scope import Scope, SelectionIn, Target, resolve_target, slide_context
 from core.editing.text import DeckVocabulary
@@ -210,22 +210,17 @@ def _clean(cmd: dict) -> dict:
 
 
 def plan_edit(db: Session, project: Project, deck: Deck, *, slides: list[SlideSpec], current_slide_id: str,
-              scope: Scope, selection: SelectionIn, message: str, history: list[dict], mode: str) -> dict:
+              scope: Scope, selection: SelectionIn, message: str, history: list[dict]) -> dict:
     target = resolve_target(slides, current_slide_id, scope, selection)
     vocab = DeckVocabulary(slides + base_slides(deck))
-    use_model = mode == "claude" or (mode == "auto" and ai_available())
-    usage = None
-    if use_model:
-        from app.services.ledger import RunLedger
-        ledger = RunLedger(db, project.id, f"EDIT-{deck.id}"[:40])
-        prompt = _model_prompt(slides, target, current_slide_id, message, history, vocab)
-        res = ledger.call("anthropic", "editor_edit", {"p": prompt}, 0.25,
-                          lambda: _structured()(SYSTEM, prompt, COMMAND_SCHEMA, max_tokens=6000, effort="medium"),
-                          cache_days=None)
-        reply, raw = res.data.get("reply", ""), [_clean(c) for c in res.data.get("commands", [])]
-        usage = {"cost_usd": res.cost_usd, **(res.usage or {})}
-    else:
-        reply, raw = mock.plan(message, slides, target, current_slide_id)
+    from app.services.ledger import RunLedger
+    ledger = RunLedger(db, project.id, f"EDIT-{deck.id}"[:40])
+    prompt = _model_prompt(slides, target, current_slide_id, message, history, vocab)
+    res = ledger.call("anthropic", "editor_edit", {"p": prompt}, 0.25,
+                      lambda: _structured()(SYSTEM, prompt, COMMAND_SCHEMA, max_tokens=6000, effort="medium"),
+                      cache_days=None)
+    reply, raw = res.data.get("reply", ""), [_clean(c) for c in res.data.get("commands", [])]
+    usage = {"cost_usd": res.cost_usd, **(res.usage or {})}
     allowed, out_of_scope = [], []
     for i, c in enumerate(raw):
         el = c.get("element") if c.get("op") == "add_element" else None
@@ -247,7 +242,7 @@ def plan_edit(db: Session, project: Project, deck: Deck, *, slides: list[SlideSp
     changed_ids = set(result.changed)
     preview = result.slides
     return {
-        "mode": "claude" if use_model else "mock",
+        "mode": "claude",
         "reply": reply,
         "scope": scope,
         "target": {"slide_ids": target.slide_ids,
@@ -271,9 +266,10 @@ def export_edited(db: Session, project: Project, deck: Deck) -> Export:
     result = build_context(db, project)
     spec = edited_deck(deck, slides)
     qc = run_qc(spec, result.metrics.registry, lambda aid: result.assets.get(aid), self_brand_names(project.config))
-    if qc.blocks:
-        raise ApiError(409, "QC_BLOCKED", f"검수 차단 {qc.blocks}건이 있어 내보낼 수 없습니다", "편집기의 검수 목록을 확인하세요",
-                       [i for i in qc.to_dict()["issues"] if i["severity"] == "block"])
+    if qc.export_blocks:
+        raise ApiError(409, "QC_BLOCKED", f"내보내기 차단 {qc.export_blocks}건이 있어 내보낼 수 없습니다",
+                       "편집기의 검수 목록을 확인하세요",
+                       [issue for issue in qc.to_dict()["issues"] if issue["code"] in {i.code for i in qc.export_blocking}])
     storage = get_storage()
     export_id = new_id("EXP")
     key_dir = f"exports/{project.id}/{export_id}"

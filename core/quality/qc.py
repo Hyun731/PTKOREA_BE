@@ -1,7 +1,8 @@
 """QC (PRD 12). Element-level binding checks, not string-set matching.
 
-block issues cannot be downgraded; warn issues are reviewable. Passing QC means the rule
-checks found nothing, not that every sentence is factually proven (DEVELOPMENT_PLAN 8).
+Severity is kept for editors and internal review. In the MVP, content-quality findings do not
+block a draft export: technical failures such as rendering or storage errors are handled outside
+QC. Passing QC means the rule checks found nothing, not that every sentence is factually proven.
 """
 from __future__ import annotations
 
@@ -22,6 +23,28 @@ from core.schemas.slidespec import (
 
 Severity = Literal["block", "warn"]
 FRAME_ROLES = {"cover", "index", "divider", "end"}
+
+# QC describes the quality of a usable draft. Export failures are reserved for technical errors
+# handled by the build/export jobs, so no current QC code prevents downloading an MVP draft.
+EXPORT_BLOCK_CODES: frozenset[str] = frozenset()
+
+REVIEW_ACTIONS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("images", "이미지 추가 권장", frozenset({"IMAGE_MISSING", "IMAGE_NOT_ACCEPTED", "BAD_CROP", "LOW_RESOLUTION"})),
+    ("numbers", "숫자 확인 권장", frozenset({
+        "UNBOUND_NUMBER", "FACT_UNLINKED", "FACT_MISSING", "FACT_NOT_ELIGIBLE", "SOURCE_CONFLICT",
+        "ESTIMATED_VALUE", "VALUE_MISMATCH", "LEAD_CITES_HIDDEN", "LEAD_TOO_MANY_NUMBERS",
+    })),
+    ("content", "문구 확인 권장", frozenset({
+        "FORBIDDEN_WORD", "INTERNAL_ID", "OVERCLAIM", "SELF_BRAND_COMPARISON", "NEUTRAL_LEAD",
+        "LEAD_NO_EVIDENCE", "TWO_LINE_COMMENTARY",
+    })),
+    ("layout", "레이아웃 확인 권장", frozenset({
+        "TOO_MANY_LINES", "TEXT_OVERFLOW", "TABLE_TOO_LONG", "CELL_OVERFLOW", "OUT_OF_CANVAS",
+    })),
+    ("materials", "자료 보완 시 개선", frozenset({
+        "NO_DATA_SLIDES", "SLOT_NEEDS_INPUT", "SLOT_THIN", "FOOTNOTE_MISSING", "PARTIAL_RATE",
+    })),
+)
 
 FORBIDDEN_WORDS = ["검토 필요", "재측정 필요", "공개 자료 없음", "측정 불가", "부스트", "Earned 강도", "N/A", "조사 필요", "TODO", "TBD",
                    "데이터 부재", "확인 필요", "정성 분석"]
@@ -57,8 +80,47 @@ class QCReport:
     def warns(self) -> int:
         return sum(1 for i in self.issues if i.severity == "warn")
 
+    @property
+    def export_blocking(self) -> list[Issue]:
+        return [issue for issue in self.issues if issue.code in EXPORT_BLOCK_CODES]
+
+    @property
+    def export_blocks(self) -> int:
+        return len(self.export_blocking)
+
+    def review_actions(self) -> list[dict]:
+        actions: list[dict] = []
+        grouped_codes: set[str] = set()
+        for key, label, codes in REVIEW_ACTIONS:
+            matched = [issue for issue in self.issues if issue.code in codes]
+            if not matched:
+                continue
+            grouped_codes.update(codes)
+            actions.append({
+                "key": key,
+                "label": label,
+                "count": len(matched),
+                "slides": len({issue.slide_id for issue in matched if issue.slide_id}),
+            })
+        other = [issue for issue in self.issues if issue.code not in grouped_codes and issue.code != "SLOT_OMITTED"]
+        if other:
+            actions.append({
+                "key": "other",
+                "label": "기타 확인 항목",
+                "count": len(other),
+                "slides": len({issue.slide_id for issue in other if issue.slide_id}),
+            })
+        return actions
+
     def to_dict(self) -> dict:
-        return {"blocks": self.blocks, "warns": self.warns, "issues": [asdict(i) for i in self.issues]}
+        return {
+            "blocks": self.blocks,
+            "warns": self.warns,
+            "export_blocks": self.export_blocks,
+            "review_required": bool(self.issues),
+            "actions": self.review_actions(),
+            "issues": [asdict(i) for i in self.issues],
+        }
 
 
 AssetLookup = Callable[[str], Optional[AssetRef]]
@@ -209,6 +271,19 @@ def _check_slide(slide: SlideSpec, registry: FactRegistry, assets: AssetLookup, 
         if needed > b.region.h + 4:
             add(Issue("TEXT_OVERFLOW", "block", f"{b.role} 텍스트가 영역을 넘침({needed:.0f}>{b.region.h:.0f})",
                       "문장 축약·레이아웃 변경", sid, b.block_id))
+
+    # Editable text boxes must not cross. Even a small top-right intersection can turn into
+    # visible glyph overlap when PowerPoint substitutes a font or a client edits the copy.
+    text_blocks = [b for b in slide.blocks if isinstance(b, TextBlock) and any(p.plain().strip() for p in b.paragraphs)]
+    for i, left in enumerate(text_blocks):
+        for right in text_blocks[i + 1:]:
+            overlap_w = min(left.region.x + left.region.w, right.region.x + right.region.w) - max(left.region.x, right.region.x)
+            overlap_h = min(left.region.y + left.region.h, right.region.y + right.region.h) - max(left.region.y, right.region.y)
+            overlap = max(0.0, overlap_w) * max(0.0, overlap_h)
+            smaller = min(left.region.w * left.region.h, right.region.w * right.region.h)
+            if smaller and overlap / smaller >= 0.8:
+                add(Issue("TEXT_COLLISION", "warn", f"텍스트 영역 겹침: {left.block_id} / {right.block_id}",
+                          "텍스트 박스 위치·크기 조정", sid, left.block_id))
 
     # 5. tables: cell overflow, row cap
     for b in slide.blocks:

@@ -104,6 +104,7 @@ def test_english_quote_gets_korean_summary_and_link(tmp_path):
     link = second.parts[0]
     assert link.type == "link" and link.href == "https://example.com/EV-4" and "Samsonite" in link.text
     assert "한국어 요약" in "".join(p.rendered() for para in en["quote_head_note"].paragraphs for p in para.parts)
+    assert en["quote_head"].region.x + en["quote_head"].region.w < en["quote_head_note"].region.x
     assert ko["quote0"].paragraphs[0].parts[0].type == "quote"  # a Korean sentence stays verbatim
 
     qc = run_qc(r.deck, r.metrics.registry, lambda a: r.assets.get(a))

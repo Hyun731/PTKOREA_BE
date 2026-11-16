@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import ROOT, settings
+from app.config import settings
 from app.db import get_db
 from app.errors import ApiError, not_found, stale_version
 from app.models import (
@@ -53,15 +53,23 @@ def _client_source_key(b: ImportBatch) -> str:
     return f"imports/{b.project_id}/{b.id}/source.pdf"
 
 
+def _contains_synthetic_fixture(text: str) -> bool:
+    rows = csv.DictReader(io.StringIO(text))
+    return any((row.get("source") or "").strip() == "synthetic_fixture" for row in rows)
+
+
 def batch_out(b: ImportBatch) -> dict:
     return {"id": b.id, "kind": b.kind, "filename": b.filename, "status": b.status, "total_rows": b.total_rows,
-            "valid_rows": b.valid_rows, "errors": b.errors, "duplicates": b.duplicates, "synthetic": b.synthetic,
+            "valid_rows": b.valid_rows, "errors": b.errors, "duplicates": b.duplicates,
             "reviewed_by": b.reviewed_by, "reviewed_at": b.reviewed_at, "created_at": b.created_at,
             "has_source_file": b.kind == "client" and get_storage().exists(_client_source_key(b))}
 
 
 def _store_batch(db: Session, project, kind: str, filename: str, text: str, who: str,
                  source_name: str = "posts.csv", source_pdf: Optional[tuple[str, bytes]] = None) -> ImportBatch:
+    if kind in ("facts", "client") and _contains_synthetic_fixture(text):
+        raise ApiError(422, "SYNTHETIC_DATA_NOT_ALLOWED", "합성 테스트 자료는 업로드할 수 없습니다",
+                       "실제 출처가 포함된 자료를 업로드하세요")
     core = core_project(project)
     batch_id = new_id("BAT")
     result = (import_facts_csv(text, core, batch_id, filename) if kind == "facts"
@@ -71,11 +79,10 @@ def _store_batch(db: Session, project, kind: str, filename: str, text: str, who:
         hint = "양식을 내려받아 열 이름을 맞춰 주세요" if kind == "client" else "템플릿 열 이름을 확인하세요"
         raise ApiError(422, "INVALID_ROW", "필수 열이 없습니다", hint, [e.model_dump() for e in result.errors])
     key = get_storage().put_bytes(f"imports/{project.id}/{batch_id}/{filename}", text.encode("utf-8"))
-    synthetic = any(f.source == "synthetic_fixture" for f in result.facts)
     valid = len(result.facts) if kind in ("facts", "client") else len(result.posts)
     batch = ImportBatch(id=batch_id, project_id=project.id, kind=kind, filename=filename, total_rows=result.total_rows,
                         valid_rows=valid, errors=[e.model_dump() for e in result.errors],
-                        duplicates=[d.model_dump() for d in result.duplicates], file_key=key, synthetic=synthetic)
+                        duplicates=[d.model_dump() for d in result.duplicates], file_key=key)
     db.add(batch)
     if source_pdf:  # P4-5: 원문 PDF는 출처 파일로 함께 남긴다(수치마다 source_id로 이어짐)
         pdf_name, pdf = source_pdf
@@ -173,40 +180,6 @@ def client_data(project_id: str, db: Session = Depends(get_db)):
             "period_start": f.period_start, "period_end": f.period_end, "source": f.source} for f in facts]})
     self_names = {b.name for b in core.brands}
     return {"batches": out, "charts": client_charts(list(accepted.values()), self_names)}
-
-
-FIXTURE_ENTITIES = ["브랜드A", "경쟁X", "경쟁Y"]
-
-
-def _facts_fixture_for(p) -> str:
-    """The fixture hard-codes a generic brand/competitor set. Projects created via
-    /projects/sample (or any manual project) use their own names, so the fixture's
-    entity names are remapped onto the project's first brand's entity_set — else
-    every row fails with UNKNOWN_ENTITY. Falls back to the raw fixture if the brand
-    doesn't have at least two competitors to map onto."""
-    base = ROOT / "tests/fixtures/quantitative_samples"
-    text = (base / "facts.csv").read_text(encoding="utf-8")
-    brands = core_project(p).brands
-    entities = brands[0].entity_set if brands else []
-    if len(entities) < len(FIXTURE_ENTITIES):
-        return text
-    for placeholder, real in zip(FIXTURE_ENTITIES, entities):
-        text = text.replace(placeholder, real)
-    return text
-
-
-@router.post("/projects/{project_id}/imports/sample", status_code=201)
-def import_sample(project_id: str, posts: Literal["posts.csv", "posts_13.csv"] = "posts.csv",
-                  db: Session = Depends(get_db), who: str = Depends(actor)):
-    """Synthetic quantitative fixture for demos; batches still need explicit acceptance."""
-    p = get_project(db, project_id)
-    base = ROOT / "tests/fixtures/quantitative_samples"
-    out = [_store_batch(db, p, "facts", "facts.csv", _facts_fixture_for(p), who),
-           _store_batch(db, p, "posts", posts, (base / posts).read_text(encoding="utf-8"), who)]
-    for b in out:
-        b.synthetic = True  # the whole fixture is synthetic, posts included
-    db.commit()
-    return [batch_out(b) for b in out]
 
 
 @router.get("/projects/{project_id}/imports")
@@ -434,14 +407,14 @@ def list_materials(project_id: str, brand_id: Optional[str] = None, section_id: 
 
 
 @router.post("/materials/{material_id}/extract")
-def extract_on_open(material_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
-    """자료를 열었을 때: 아직 요약·추출 전이면 그때 한 번 만든다(다시 열면 저장된 결과를 그대로 보여 준다)."""
+def extract_selected_evidence(material_id: str, db: Session = Depends(get_db), who: str = Depends(actor)):
+    """사용자가 선택한 근거 하나를 분석한다. 완료 결과는 재사용하고 실패한 근거는 재시도한다."""
     from app.services.lazy_extract import PENDING
     from app.services.ledger import RunLedger
     from app.services.research import extract_material
     from integrations.base import ProviderError
     m = get_material(db, material_id)
-    if m.extraction_status != PENDING:
+    if m.extraction_status not in (PENDING, "failed"):
         return material_out(db, m, detail=True)
     _ai_ready()
     p = get_project(db, m.project_id)
@@ -449,7 +422,7 @@ def extract_on_open(material_id: str, db: Session = Depends(get_db), who: str = 
         out = extract_material(db, RunLedger(db, p.id, None), p, m)
     except ProviderError as exc:
         db.rollback()
-        raise ApiError(502, exc.code, f"요약을 만들지 못했습니다: {exc.message}", "잠시 뒤 다시 열어 주세요")
+        raise ApiError(502, exc.code, f"이 근거를 분석하지 못했습니다: {exc.message}", "잠시 뒤 다시 분석해 주세요")
     m.version += 1
     audit(db, p.id, "material", m.id, "extract", after={"errors": out["errors"]}, actor=who)
     db.commit()

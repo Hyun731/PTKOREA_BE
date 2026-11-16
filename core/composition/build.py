@@ -187,6 +187,19 @@ def _case_order(project, materials: list) -> list:
                                             str(m.activity_date or m.source.published_at or ""), m.id))
 
 
+def _material_belongs_to_brand(material, brand, project: Project, brand_index: int) -> bool:
+    if brand.id in material.related_brand_ids:
+        return True
+    if not material.entity:
+        return material.brand_id == brand.id or (material.brand_id is None and brand_index == 0)
+    owners = [b.id for b in project.brands if material.entity in {b.name, *b.competitors, *b.benchmarks}]
+    if brand.id not in owners:
+        return False
+    if len(owners) == 1 or material.brand_id is None:
+        return True
+    return material.brand_id == brand.id
+
+
 def build_deck(inputs: BuildInputs) -> BuildResult:
     cfg = inputs.config or RulesConfig.load()
     project = inputs.project
@@ -497,11 +510,9 @@ def build_deck(inputs: BuildInputs) -> BuildResult:
     else:
         brand_part(ctx, inputs.materials, inputs.owned_posts, None, "shared")
         for i, b in enumerate(project.brands):
-            names = {b.name, *b.competitors, *b.benchmarks}
-            # A case belongs to every brand that lists its entity (a shared competitor shows in each);
-            # unnamed market notes go by brand, and those without one go with the first brand.
-            mats = [m for m in inputs.materials if (m.entity in names if m.entity else
-                                                    m.brand_id == b.id or (m.brand_id is None and i == 0))]
+            # An explicitly scoped shared competitor stays with its primary brand. A collector can opt
+            # into another brand through related_brand_ids; legacy unscoped cases still follow entity names.
+            mats = [m for m in inputs.materials if _material_belongs_to_brand(m, b, project, i)]
             c = replace(ctx, project=project.model_copy(update={"brands": [b]}),
                         findings=[f for f in findings if f.brand_id == b.id])
             brand_part(c, mats, [o for o in inputs.owned_posts if o.brand_id == b.id], b.id, "own")

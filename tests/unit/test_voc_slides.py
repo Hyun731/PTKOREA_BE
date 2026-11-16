@@ -33,6 +33,18 @@ def test_voc_summary_renders_quotes_by_sentiment_and_top_complaints():
     assert slide.source_ids and len(slide.source_ids) == 8
 
 
+def test_voc_product_names_with_numbers_are_not_unbound_facts():
+    project, _, _ = load_fixture()
+    materials = [
+        _voc(str(i), "positive", "quality", "search", headline=f"카본 엘리트 2.0 {20 + i}인치 후기")
+        for i in range(1, 21)
+    ]
+    cfg = project.model_copy(update={"enabled_slides": ["5-1"]})
+    result = build_deck(BuildInputs(project=cfg, facts=[], materials=materials, generated_on=date(2026, 10, 12)))
+    qc = run_qc(result.deck, result.metrics.registry, lambda a: None)
+    assert not [issue for issue in qc.issues if issue.code == "UNBOUND_NUMBER" and issue.slide_id == "5-1"]
+
+
 def test_voc_summary_absent_without_classified_materials():
     project, _, _ = load_fixture()
     cfg = project.model_copy(update={"enabled_slides": ["5-1"]})

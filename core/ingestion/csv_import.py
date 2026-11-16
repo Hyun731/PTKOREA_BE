@@ -208,7 +208,10 @@ def _parse_fact_row(row: dict, row_no: int, brands: dict, batch_id: str) -> Fact
 
 
 def natural_key(f: Fact) -> str:
-    return "|".join([f.brand_id, f.entity, f.metric, _canonical_dims(f.dims), f"{f.period_start}~{f.period_end}"])
+    parts = [f.brand_id, f.entity, f.metric, _canonical_dims(f.dims), f"{f.period_start}~{f.period_end}"]
+    if f.metric == "client_metric":
+        parts.append(f.label or "")
+    return "|".join(parts)
 
 
 def _dedupe(facts: Iterable[Fact]) -> tuple[list[Fact], list[DuplicateRecord]]:

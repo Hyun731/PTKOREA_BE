@@ -62,7 +62,7 @@ def voc_summary_page(project, materials: list[CaseMaterial]) -> Optional[SlideSp
             src += [T(" "), D(m.source.published_at)]
         body_w = BODY_W * 0.58 - 12
         cells = [TableCell(paragraphs=[P(N(SENTIMENT_LABEL.get(m.voc_sentiment, "")))]),
-                TableCell(paragraphs=[P(T(_fit_lines(m.event_name or m.title, body_w, 10, 2)))], align="l"),
+                TableCell(paragraphs=[P(N(_fit_lines(m.event_name or m.title, body_w, 10, 2)))], align="l"),
                 TableCell(paragraphs=[P(*src)])]
         return TableRow(cells=cells, ref=m.id)
 

@@ -1,11 +1,10 @@
 from app.db import SessionLocal
 from app.models import Job, new_id
+from tests.integration.fixture_api import create_fixture_project
 
 
 def _project(client) -> dict:
-    response = client.post("/v1/projects/sample")
-    assert response.status_code == 201
-    return response.json()
+    return create_fixture_project(client)
 
 
 def test_health_request_id_and_metrics(client):

@@ -19,7 +19,8 @@ from pptx.util import Emu, Pt
 
 from core.composition.tokens import color, resolve_weight, tokens, weight_info
 from core.schemas.slidespec import (
-    BarChartBlock, DeckSpec, ImageBlock, LineChartBlock, Paragraph, Region, ShapeBlock, SlideSpec, TableBlock, TextBlock,
+    BarChartBlock, DeckSpec, ImageBlock, LineChartBlock, Paragraph, Part, Region, ShapeBlock, SlideSpec, TableBlock,
+    TextBlock,
 )
 
 ALIGN = {"l": PP_ALIGN.LEFT, "c": PP_ALIGN.CENTER, "r": PP_ALIGN.RIGHT}
@@ -458,9 +459,34 @@ def _table(slide, b: TableBlock):
                 tbl.cell(ri, ci).merge(tbl.cell(ri + cell_spec.merge_down, ci))
 
 
+def _image_placeholder(slide, b: ImageBlock):
+    """Keep a draft renderable when an optional image is missing."""
+    _shape(slide, ShapeBlock(block_id=b.block_id, region=b.region, shape="rounded", fill="pillar_body", line="table_border"))
+    _text(slide, TextBlock(
+        block_id=f"{b.block_id}_placeholder",
+        role="caption",
+        region=b.region,
+        paragraphs=[Paragraph(parts=[Part(type="text", text="이미지 추가")])],
+        align="c",
+        valign="m",
+        size=11,
+        line_spacing=15,
+        color="muted",
+    ))
+
+
 def _image(slide, b: ImageBlock, resolve: AssetResolver):
-    path, width, height = resolve(b.asset_id)
+    try:
+        path, width, height = resolve(b.asset_id)
+        if not Path(path).exists() or width <= 0 or height <= 0:
+            raise FileNotFoundError(path)
+    except (FileNotFoundError, KeyError, OSError, TypeError, ValueError):
+        _image_placeholder(slide, b)
+        return
     c = b.crop
+    if c.w <= 0 or c.h <= 0 or c.x < 0 or c.y < 0 or c.x + c.w > 1 or c.y + c.h > 1:
+        _image_placeholder(slide, b)
+        return
     crop_w_px, crop_h_px = width * c.w, height * c.h
     reg = b.region
     # Contain: never crop beyond the person's selection (subject and in-image text stay).

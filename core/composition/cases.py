@@ -351,10 +351,12 @@ def _fit_lines(text: str, width: float, size_pt: float, max_lines: int) -> str:
 
 
 def _section_head(block_id: str, x: float, y: float, w: float, label: str, note: Optional[str] = None) -> list[Block]:
-    out: list[Block] = [text_block(block_id, "panel_header", Region(x=x, y=y, w=w, h=20), [P(T(label))],
+    label_w = min(w, 132.0) if note else w
+    out: list[Block] = [text_block(block_id, "panel_header", Region(x=x, y=y, w=label_w, h=20), [P(T(label))],
                                    spec="panel_header", color="navy", valign="b")]
     if note:
-        out.append(text_block(f"{block_id}_note", "caption", Region(x=x + 140, y=y + 2, w=w - 140, h=17), [P(T(note))],
+        note_x = x + label_w + 12
+        out.append(text_block(f"{block_id}_note", "caption", Region(x=note_x, y=y + 2, w=x + w - note_x, h=17), [P(T(note))],
                               spec="caption", color="muted", align="r", valign="b", size=8, line=11, weight="light"))
     out.append(ShapeBlock(block_id=f"{block_id}_rule", region=Region(x=x, y=y + 23, w=w, h=0), shape="line",
                           line="navy", line_width=1.0))
@@ -429,14 +431,16 @@ def case_detail_pages(materials: list[CaseMaterial], pf: PartFactory, badge: lis
             span = [D(day)] + ([T(" – "), D(m.activity_date_end)] if m.activity_date_end and m.activity_date_end != day else [])
             blocks.append(text_block("meta", "meta", region("meta"), [P(T("기간  "), *span)], spec="meta", align="r",
                                      valign="m", color="navy"))
-        blocks.append(text_block("case_kicker", "caption", Region(x=48, y=52, w=1184, h=18), [P(N(_card_label(m)))],
+        # The period meta ends at y=57. Keep the case label below it instead of letting two
+        # editable text boxes cross in the top-right corner on long titles.
+        blocks.append(text_block("case_kicker", "caption", Region(x=48, y=59, w=1184, h=18), [P(N(_card_label(m)))],
                                  spec="panel_header", color="muted"))
         head = interp[0] if interp else facts_claims[0]
         # P4 사례 카드 해설이 채택돼 있으면(경쟁사·벤치마크 사례만 해당) 그 쪽이 리드로 우선한다 —
         # 원문 그대로의 claim보다 '무엇을 했고 왜 통했나'로 다듬은 문장이 낫다.
         lead_parts = [T(m.ai_detail)] if m.ai_detail else _claim_parts(head, pf)
         l_size, l_line = (19, 25) if height_at([P(*lead_parts)], 1184, 19, 25) <= 50 else (15, 20)
-        blocks.append(text_block("lead_claim", "lead", Region(x=48, y=71, w=1184, h=73), [P(*lead_parts)],
+        blocks.append(text_block("lead_claim", "lead", Region(x=48, y=81, w=1184, h=63), [P(*lead_parts)],
                                  spec="lead", color="navy", size=l_size, line=l_line, editable=True))
         has_figure = bool(metric_ids)
         # left: the image with its source caption — wider when the right column has no summary/figure row

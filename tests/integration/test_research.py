@@ -17,6 +17,7 @@ from app.services import (
 )
 from integrations.base import CallResult, ProviderError
 from integrations.fetch.page import Page
+from tests.integration.fixture_api import create_fixture_project, upload_fixture_batches
 
 ARTICLE = ("경쟁X는 2026년 3월 성수동에서 팝업스토어를 열었다. 행사 기간 방문객은 12000명으로 집계됐다. "
            "브랜드는 신제품 캐리어를 체험 공간에 배치하고 현장 구매 혜택을 제공했다.")
@@ -527,7 +528,7 @@ def ok(r, status=200):
 
 
 def setup_project(client):
-    p = ok(client.post("/v1/projects/sample"), 201)
+    p = create_fixture_project(client)
     plan = ok(client.get(f"/v1/projects/{p['id']}/research-plan"))
     return p["id"], plan
 
@@ -547,7 +548,7 @@ def mute_other_commerce_platforms(monkeypatch, *, keep: str = "musinsa"):
 
 
 def open_pending(client, pid) -> dict:
-    """사람이 자료를 여는 것과 같다: 아직 요약·추출 전인 자료마다 추출을 부르고, 만든 문장·수치 수를 돌려준다."""
+    """사람이 각 근거를 선택하는 것과 같다: 선택한 자료마다 추출을 부르고, 만든 문장·수치 수를 돌려준다."""
     made = {"opened": 0, "facts": 0, "claims": 0}
     for m in ok(client.get(f"/v1/projects/{pid}/materials")):
         if m.get("extraction_status") == "pending":
@@ -577,15 +578,15 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
     assert job["state"] == "succeeded", job
     res = job["result"]["items"][it["id"]]
     assert res["status"] == "succeeded" and res["created"] == 2 and res["pages"] == 1 and res["images"] == 1
-    # 수집 때는 저가 모델 선별만 — 비싼 추출은 아직 없다(자료를 열 때 한다)
+    # 수집 때는 저가 모델 선별만 — 비싼 추출은 아직 없다(사람이 근거를 선택할 때 한다)
     assert res["facts"] == 0 and res["claims"] == 0 and fakes.calls["screen"] == 1 and fakes.calls.get("structured", 0) == 0
     pending = [m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["extraction_status"] == "pending"]
     assert len(pending) == 1 and not pending[0]["summary"] and not pending[0]["facts"]
-    opened = ok(client.post(f"/v1/materials/{pending[0]['id']}/extract"))  # 사람이 자료를 연다
+    opened = ok(client.post(f"/v1/materials/{pending[0]['id']}/extract"))  # 사람이 이 근거를 선택한다
     assert len(opened["facts"]) == 1 and len([c for c in opened["claims"] if c["author"] == "ai"]) == 2
     dropped = opened["extraction"]["dropped"]  # fake quote and bare-digit claim are dropped
     assert any("원문 인용 불일치" in d for d in dropped) and any("근거 없는 숫자" in d for d in dropped)
-    again = ok(client.post(f"/v1/materials/{pending[0]['id']}/extract"))  # 다시 열면 저장된 결과 그대로
+    again = ok(client.post(f"/v1/materials/{pending[0]['id']}/extract"))  # 다시 선택하면 저장된 결과 그대로
     assert again["extraction_status"] == "done" and fakes.calls["structured"] == 1
 
     mats = ok(client.get(f"/v1/projects/{pid}/materials"))
@@ -620,6 +621,29 @@ def test_campaign_run_creates_candidates_without_rebilling(client, fakes):
     assert fakes.calls["search"] == before["search"]
     assert r3["skipped_existing"] == 2 and len(ok(client.get(f"/v1/projects/{pid}/materials"))) == len(mats)
     assert any(r.status == "cache_hit" and r.job_id == job3["id"] for r in ledger_rows(pid))
+
+
+def test_selected_evidence_can_retry_after_extraction_failure(client, fakes, monkeypatch):
+    """선택한 근거의 일시적 AI 실패는 같은 카드에서 재시도할 수 있다."""
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+    job = ok(client.post(f"/v1/projects/{pid}/research-runs", json={"item_ids": [it["id"]]}), 202)["job"]
+    assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
+    card = next(m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["extraction_status"] == "pending")
+    clear_cache()
+
+    working = research.PROVIDERS["structured"]
+    monkeypatch.setitem(
+        research.PROVIDERS,
+        "structured",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ProviderError("RATE_LIMITED", "잠시 사용량 제한", 429)),
+    )
+    failed = ok(client.post(f"/v1/materials/{card['id']}/extract"))
+    assert failed["extraction_status"] == "failed" and not failed["summary"]
+
+    monkeypatch.setitem(research.PROVIDERS, "structured", working)
+    retried = ok(client.post(f"/v1/materials/{card['id']}/extract"))
+    assert retried["extraction_status"] == "done" and retried["summary"]
 
 
 def test_market_item_classifies_aspect_and_does_not_leak_to_other_sections(client, fakes):
@@ -748,7 +772,7 @@ def test_influencer_urls_become_candidate_batch(client, fakes, monkeypatch):
     res = ok(client.get(f"/v1/jobs/{job['id']}"))["result"]["items"][it["id"]]
     assert res["status"] == "succeeded" and res["posts"] == 2
     batch = next(b for b in ok(client.get(f"/v1/projects/{pid}/imports")) if b["id"] == res["batch_id"])
-    assert batch["status"] == "candidate" and batch["kind"] == "posts" and not batch["synthetic"]
+    assert batch["status"] == "candidate" and batch["kind"] == "posts"
     assert fakes.calls["youtube_channel"] == 1  # subscribers come from the channel endpoint
     assert fakes.calls["instagram_profile"] == 1  # Instagram followers come from the profile endpoint
     ok(client.post(f"/v1/imports/{batch['id']}/review", json={"action": "accept"}))
@@ -1265,12 +1289,12 @@ def test_deck_build_asks_before_building_with_pending_review(client, fakes):
 
 
 def test_deck_build_recollects_missing_items_before_building(client, fakes):
-    """Phase 3-5: 만들기 전에, 원인이 '수집 필요'인 항목만 한 번 더 자동으로 수집을 시도한다."""
+    """누락 자료 재수집을 명시한 경우에만 수집 필요 항목을 한 번 더 시도한다."""
     pid, plan = setup_project(client)
     it = item(plan, "campaign", "경쟁X")
     assert it["execution_status"] == "not_started"
 
-    out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds", json={"collect_missing": True}), 202)
     assert ok(client.get(f"/v1/jobs/{out['job']['id']}"))["state"] == "succeeded"
 
     again = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "campaign", "경쟁X")
@@ -1279,9 +1303,21 @@ def test_deck_build_recollects_missing_items_before_building(client, fakes):
     assert any(m["source"]["url"] == "https://news.example.com/a1" for m in mats)
 
 
+def test_deck_build_does_not_recollect_missing_items_by_default(client, fakes):
+    """MVP 초안은 현재 자료로 즉시 만들고 외부 API 비용을 암묵적으로 발생시키지 않는다."""
+    pid, plan = setup_project(client)
+    it = item(plan, "campaign", "경쟁X")
+
+    out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
+    assert ok(client.get(f"/v1/jobs/{out['job']['id']}"))["state"] == "succeeded"
+
+    again = item(ok(client.get(f"/v1/projects/{pid}/research-plan")), "campaign", "경쟁X")
+    assert again["execution_status"] == "not_started"
+
+
 def test_lead_proposal_rewrite_then_accept(client, fakes):
     pid, _ = setup_project(client)
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     job = ok(client.post(f"/v1/projects/{pid}/insight-proposals", json={"slide_ids": ["2-8a"]}), 202)["job"]
     assert ok(client.get(f"/v1/jobs/{job['id']}"))["state"] == "succeeded"
@@ -1301,7 +1337,7 @@ def test_deck_build_writes_claim_evidence_and_page_insights_once_per_page_body(c
     from app.models import SlideWriting
 
     pid, _ = setup_project(client)
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     clear_cache()
     out = ok(client.post(f"/v1/projects/{pid}/deck-builds"), 202)
@@ -2525,7 +2561,7 @@ def test_card_ai_help_summary_suggestions_polish_chat(client, fakes):
 
 def test_outline_reads_the_deck_and_slide_feedback_changes_it(client, fakes):
     pid, _ = setup_project(client)
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     flow = ok(client.get(f"/v1/projects/{pid}/outline"))
     slides = [x for x in flow["flow"] if x["kind"] == "slide"]
@@ -2634,7 +2670,7 @@ def test_results_that_never_name_the_brand_are_dropped_before_fetching(client, f
 
 def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
     pid, _ = setup_project(client)
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     brand_id = ok(client.get(f"/v1/projects/{pid}"))["config"]["brands"][0]["id"]
 
@@ -2674,7 +2710,7 @@ def test_synthesis_writes_summary_pages_from_the_deck(client, fakes):
 
 def test_deck_build_creates_default_insight_once_and_reuses_fingerprint(client, fakes):
     pid, _ = setup_project(client)
-    for batch in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+    for batch in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{batch['id']}/review", json={"action": "accept"}))
     assert ok(client.get(f"/v1/projects/{pid}/synthesis")) == []
 

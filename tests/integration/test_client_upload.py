@@ -66,6 +66,18 @@ def test_rows_become_candidate_facts_with_client_footnote():
     assert (sales.period_start, sales.period_end) == (date(2026, 1, 1), date(2026, 1, 31))
 
 
+def test_distinct_client_metrics_for_same_entity_period_are_not_deduplicated():
+    rows = (
+        "브랜드A,보조인지,77,%,2026-01-01,2026-06-30,전체,500,브랜드 트래커,2026-07-10\n"
+        "브랜드A,구매 고려,61,%,2026-01-01,2026-06-30,전체,500,브랜드 트래커,2026-07-10\n"
+        "브랜드A,보유,46,%,2026-01-01,2026-06-30,전체,500,브랜드 트래커,2026-07-10\n"
+    )
+    result = import_client_csv(HEAD + rows, _core(), "BAT-1")
+
+    assert not result.duplicates
+    assert [fact.label for fact in result.facts] == ["보조인지", "구매 고려", "보유"]
+
+
 def test_english_headers_and_missing_columns():
     eng = "entity,metric_label,value,unit,period_start,period_end,source_name\n브랜드A,재구매율,31,%,2026-01-01,2026-03-31,설문\n"
     assert len(import_client_csv(eng, _core(), "B").facts) == 1

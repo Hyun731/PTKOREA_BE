@@ -6,6 +6,7 @@ from app.models import Project
 from app.services import diagnosis
 from app.services.inputs import load_inputs
 from integrations.base import CallResult
+from tests.integration.fixture_api import create_fixture_project, upload_fixture_batches
 
 
 def ok(r, status=200):
@@ -54,8 +55,8 @@ def _stub(calls: list):
 
 
 def test_diagnosis_is_written_once_per_materials_and_edited_in_the_tab(client):
-    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
-    for b in ok(client.post(f"/v1/projects/{pid}/imports/sample"), 201):
+    pid = create_fixture_project(client)["id"]
+    for b in upload_fixture_batches(client, pid):
         ok(client.post(f"/v1/imports/{b['id']}/review", json={"action": "accept"}))
     calls: list[str] = []
     diagnosis.STRUCTURED.clear()
@@ -112,7 +113,7 @@ def test_diagnosis_is_written_once_per_materials_and_edited_in_the_tab(client):
 
 
 def test_diagnosis_tab_without_ai_or_brand(client):
-    pid = ok(client.post("/v1/projects/sample"), 201)["id"]
+    pid = create_fixture_project(client)["id"]
     tab = ok(client.get(f"/v1/projects/{pid}/diagnosis"))
     assert tab[0]["data"] is None and tab[0]["versions"] == []
     r = client.post(f"/v1/projects/{pid}/diagnosis", json={"brand_id": "B1"})
