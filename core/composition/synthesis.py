@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from core.composition.chrome import L, M, N, P, T, PartFactory, footnote_block, lead_block, text_block, title_block
-from core.composition.formatters import UNIT_FORMATTER
+from core.composition.diagnosis import formatter_for
 from core.schemas.slidespec import Block, Region, ShapeBlock, SlideSpec
 
 C_LABELS = [("company", "Company · 자사"), ("competitor", "Competitor · 경쟁사"), ("customer", "Customer · 소비자")]
@@ -27,7 +27,7 @@ def _line_parts(line, pf: Optional[PartFactory]) -> list:
     fact_ref = line.get("fact_ref")
     if fact_ref and pf and fact_ref in pf.registry:
         fact = pf.registry.get(fact_ref)
-        parts += [T(" "), pf.fact(fact_ref, UNIT_FORMATTER.get(fact.unit, "int"), bold=True)]
+        parts += [T(" "), pf.fact(fact_ref, formatter_for(fact), bold=True)]
     ref = line.get("ref")
     if ref:
         parts.append(T(" "))
