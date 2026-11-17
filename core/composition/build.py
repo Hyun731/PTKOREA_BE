@@ -984,7 +984,7 @@ def _black(slide_id: str, template: str, role: str, title: str, blocks) -> Slide
 
 def _cover(project: Project, generated_on: date, synthetic: bool) -> SlideSpec:
     brands = "  ·  ".join(b.name for b in project.brands)
-    rivals = "  ·  ".join(c for b in project.brands for c in b.competitors)
+    rivals = "  ·  ".join(dict.fromkeys(c for b in project.brands for c in b.competitors))
     blocks = [
         text_block("cover_kicker", "cover_kicker", Region(x=80, y=200, w=1120, h=24), [P(N(brands.upper()))],
                    spec="cover_kicker", color="gold"),
