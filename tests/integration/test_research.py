@@ -2192,7 +2192,8 @@ def test_voc_item_also_collects_x_and_threads_public_posts(client, fakes):
     def twitter_search_posts(query, **kw):
         fakes._hit("twitter_search_posts")
         return CallResult(data={"posts": [
-            {"url": "https://x.com/foo/status/1", "text": "브랜드A 가성비 좋아서 추천함", "posted_at": "2026-05-01",
+            # 실제 트윗처럼 줄바꿈이 섞여 있다 — 출처 표 제목에 그대로 남으면 셀이 넘친다(회귀 테스트).
+            {"url": "https://x.com/foo/status/1", "text": "브랜드A 가성비 좋아서 추천함\n\n꼭 사보세요", "posted_at": "2026-05-01",
              "author": "foo", "likes": 10},
         ], "cursor": None}, cost_usd=0.002)
 
@@ -2230,6 +2231,7 @@ def test_voc_item_also_collects_x_and_threads_public_posts(client, fakes):
     mats = {m["source"]["url"]: m for m in ok(client.get(f"/v1/projects/{pid}/materials")) if m["section_id"] == "voc"}
     tw = mats["https://x.com/foo/status/1"]
     assert tw["voc_sentiment"] == "positive" and tw["source"]["source_type"] == "social"
+    assert "\n" not in tw["title"] and tw["title"] == "브랜드A 가성비 좋아서 추천함 꼭 사보세요"  # 줄바꿈은 공백으로
     th = mats["https://www.threads.com/@bar/post/abc"]
     assert th["voc_sentiment"] == "negative" and th["voc_topic"] == "shipping"
 

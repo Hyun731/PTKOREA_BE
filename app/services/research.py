@@ -1355,7 +1355,7 @@ def run_voc_item(db: Session, ledger: RunLedger, project: Project, item: Researc
             out["out_of_period"] = out.get("out_of_period", 0) + 1
             continue
         existing_urls.add(url)
-        title = (post.get("title") or post["text"])[:80]
+        title = _norm(post.get("title") or post["text"])[:80]  # 원문 줄바꿈이 그대로 제목에 남으면 출처 표 셀이 넘친다
         src = Source(id=new_id("SRC"), project_id=project.id, title=title, original_url=url,
                      publisher=post.get("author") or _host(url), published_at=_safe_date(post.get("posted_at")),
                      fetched_at=utcnow(), source_type="social", access_status="unknown")

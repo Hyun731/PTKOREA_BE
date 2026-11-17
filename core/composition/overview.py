@@ -33,22 +33,20 @@ def brand_mapping_page(ctx: QuantContext) -> Optional[SlideSpec]:
         return None
     columns = [
         TableColumn(key="brand", label="브랜드", width=0.14),
-        TableColumn(key="category", label="주력 카테고리", width=0.18, align="l"),
-        TableColumn(key="target", label="핵심 타겟", width=0.24, align="l"),
-        TableColumn(key="rivals", label="카테고리 경쟁 세트", width=0.30, align="l"),
-        TableColumn(key="note", label="비고", width=0.14, align="l"),
+        TableColumn(key="category", label="주력 카테고리", width=0.22, align="l"),
+        TableColumn(key="target", label="핵심 타겟", width=0.28, align="l"),
+        TableColumn(key="rivals", label="카테고리 경쟁 세트", width=0.36, align="l"),
     ]
     rows = []
     for b in brands:
-        cat = b.categories[0] if b.categories else "미등록"
-        target = b.target.label if b.target else "미등록"
-        rivals = ", ".join(b.competitors) if b.competitors else "미등록"
+        cat = [P(N(b.categories[0]))] if b.categories else [P(T("—", color="muted"))]
+        target = [P(N(b.target.label))] if b.target else [P(T("—", color="muted"))]
+        rivals = [P(N(", ".join(b.competitors)))] if b.competitors else [P(T("—", color="muted"))]
         cells = [
             TableCell(paragraphs=[P(N(b.name))]),
-            TableCell(paragraphs=[P(N(cat))], align="l"),
-            TableCell(paragraphs=[P(N(target))], align="l"),
-            TableCell(paragraphs=[P(N(rivals))], align="l"),
-            TableCell(paragraphs=[P(T("대표 제품·가격대, 기간 내 활동(내부)은 자료 등록 후 반영"))], align="l"),
+            TableCell(paragraphs=cat, align="l"),
+            TableCell(paragraphs=target, align="l"),
+            TableCell(paragraphs=rivals, align="l"),
         ]
         rows.append(TableRow(cells=cells, ref=b.id))
     table_h = HEADER_H + ROW_H * len(rows)
@@ -59,8 +57,7 @@ def brand_mapping_page(ctx: QuantContext) -> Optional[SlideSpec]:
         title_block("Brand Status", "브랜드 × 카테고리 × 타겟 매핑"),
         lead, table,
         footnote_block([P(PERIOD(ctx.project.period.start, ctx.project.period.end),
-                          T(" 기준 설정값 · 출처: 프로젝트 설정(브랜드·카테고리·타겟·경쟁 세트) · "
-                            "대표 제품·가격대와 기간 내 주요 활동(내부)은 자료 등록 후 별도 업데이트"))]),
+                          T(" 기준 설정값 · 출처: 프로젝트 설정(브랜드·카테고리·타겟·경쟁 세트)"))]),
     ]
     return SlideSpec(slide_id="1-1", template_id="brand_mapping.v1", page_role="content", section_id="overview",
                      title="브랜드 × 카테고리 × 타겟 매핑", blocks=blocks, needs_review=False, is_data=True)
