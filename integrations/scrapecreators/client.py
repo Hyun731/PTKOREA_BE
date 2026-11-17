@@ -18,6 +18,7 @@ BASE_V2 = "https://api.scrapecreators.com/v2"
 BASE_V3 = "https://api.scrapecreators.com/v3"
 EST_COST_PER_CREDIT = 0.002  # plan price not confirmed: estimate, units recorded as credits
 SHORTS_MAX_SECONDS = 60  # YouTube's own Shorts definition
+DEFAULT_TIMEOUT_SECONDS = 120.0
 
 
 def _key() -> str:
@@ -27,9 +28,16 @@ def _key() -> str:
     return key
 
 
+def _timeout_seconds() -> float:
+    try:
+        return max(1.0, float(os.environ.get("SCRAPECREATORS_TIMEOUT_SECONDS") or DEFAULT_TIMEOUT_SECONDS))
+    except ValueError:
+        return DEFAULT_TIMEOUT_SECONDS
+
+
 def _get(path: str, params: dict, transport, base: str = BASE) -> dict:
     return request_json("ScrapeCreators", "GET", f"{base}{path}", headers={"x-api-key": _key()}, params=params,
-                        transport=transport)
+                        timeout=_timeout_seconds(), transport=transport)
 
 
 def _credits(data: dict) -> int:

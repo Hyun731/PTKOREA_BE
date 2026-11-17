@@ -41,6 +41,18 @@ def test_raises_on_http_error():
         instagram_post_comments("https://www.instagram.com/p/abc/", transport=httpx.MockTransport(blocked))
 
 
+def test_uses_configured_extended_timeout(monkeypatch):
+    observed = {}
+    monkeypatch.setenv("SCRAPECREATORS_TIMEOUT_SECONDS", "150")
+
+    def ok(request: httpx.Request) -> httpx.Response:
+        observed.update(request.extensions["timeout"])
+        return httpx.Response(200, json={"comments": []})
+
+    instagram_post_comments("https://www.instagram.com/p/abc/", transport=httpx.MockTransport(ok))
+    assert observed["read"] == 150.0
+
+
 @pytest.mark.parametrize(("reader", "payload", "expected"), [
     (youtube_video_comments,
      {"comments": [{"id": "y1", "content": "바퀴 소음이 커요", "publishedAt": "2026-08-01", "likeCount": 2}]},
