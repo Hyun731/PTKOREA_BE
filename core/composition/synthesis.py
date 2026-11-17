@@ -10,14 +10,13 @@ from typing import Optional
 
 from core.composition.chrome import L, M, N, P, T, PartFactory, footnote_block, lead_block, text_block, title_block
 from core.composition.diagnosis import formatter_for
+from core.composition.measure import height_at
 from core.schemas.slidespec import Block, Region, ShapeBlock, SlideSpec
+
+PILLAR_BODY_SIZE, PILLAR_BODY_LINE = 10.5, 16  # must match templates/style_tokens.v1.json "pillar_body"
 
 C_LABELS = [("company", "Company · 자사"), ("competitor", "Competitor · 경쟁사"), ("customer", "Customer · 소비자")]
 SWOT_LABELS = [("S", "Strength · 강점"), ("W", "Weakness · 약점"), ("O", "Opportunity · 기회"), ("T", "Threat · 위협")]
-
-
-def _line_text(line) -> str:
-    return line.get("text", "") if isinstance(line, dict) else str(line)
 
 
 def _line_parts(line, pf: Optional[PartFactory]) -> list:
@@ -57,11 +56,16 @@ def _panel(i: int, x: float, y: float, w: float, h_head: float, h_body: float, h
 TOP, BOTTOM = 140, 630  # free band between the lead and the footnote
 
 
-def _body_h(lines: list, w: float, per_line: float = 22) -> float:
-    """Panel body height from its text: about 40 Korean characters per 372px line, plus padding."""
-    chars = max(1, int(w / 9.5))
-    rows = sum(max(1, -(-len(_line_text(t)) // chars)) for t in lines) + max(0, len(lines) - 1) * 0.4
-    return max(96, rows * per_line + 28)
+def _body_h(lines: list, w: float, pf: Optional[PartFactory] = None, numbered: bool = False) -> float:
+    """Panel body height, measured with the actual font and the exact parts _panel() will render
+    (bullet, fact value, [ref] tag) — the same measurement QC uses, so a panel never overflows."""
+    paras = []
+    for k, line in enumerate(lines):
+        p = P(*_line_parts(line, pf))
+        p.bullet = f"{k + 1}." if numbered else "•"
+        p.space_before = 8 if k else 0
+        paras.append(p)
+    return max(96, height_at(paras, w, PILLAR_BODY_SIZE, PILLAR_BODY_LINE) + 28)
 
 
 def _top(total_h: float) -> float:
@@ -94,12 +98,12 @@ def es_page(es: dict, pf: Optional[PartFactory] = None) -> Optional[SlideSpec]:
                           "source_url": it.get("source_url")} for it in insights]
         # _panel reserves 24px inner padding; leave another line of slack for Office/LibreOffice
         # font-width differences rather than shrinking the richer two-sentence summary.
-        sh = max(128, max(_body_h([line], sw - 32, 16) for line in summary_lines) + 12)
+        sh = max(128, max(_body_h([line], sw - 32, pf) for line in summary_lines) + 12)
         for i, (it, line) in enumerate(zip(insights, summary_lines)):
             blocks += _panel(10 + i, 48 + i * (sw + sg), 132, sw, 48, sh, it.get("title", ""), [line],
                              no=f"{i + 1}.", pf=pf)
         summary_bottom = 132 + 48 + 8 + sh
-    h = max(_body_h(lines, w - 32) for _, _, lines in cols)
+    h = max(_body_h(lines, w - 32, pf) for _, _, lines in cols)
     y = max(summary_bottom + 24 if insights else TOP, _top(48 + 8 + h))
     for i, (_, label, lines) in enumerate(cols):
         blocks += _panel(i, x0 + i * (w + gap), y, w, 48, h, label, lines, pf=pf)
@@ -115,7 +119,7 @@ def swot_page(swot: dict, pf: Optional[PartFactory] = None) -> Optional[SlideSpe
     if swot.get("lead"):
         blocks.append(lead_block([P(T(swot["lead"]))]))
     w, gap = 580, 20
-    h_body = max(_body_h(swot.get(k) or [], w - 32) for k, _ in SWOT_LABELS)
+    h_body = max(_body_h(swot.get(k) or [], w - 32, pf) for k, _ in SWOT_LABELS)
     y = _top(2 * (32 + 8 + h_body) + gap)
     for i, (k, label) in enumerate(SWOT_LABELS):
         r, c = divmod(i, 2)
@@ -142,7 +146,7 @@ def _items_page(slide_id: str, template: str, heading: str, sub: str, title: str
         blocks.append(lead_block([P(T(data["lead"]))]))
     lines = [{"text": it.get("body", ""), "ref": it.get("ref"), "fact_ref": it.get("fact_ref"),
               "source_url": it.get("source_url")} for it in items]
-    h = max(132, max(_body_h([line], w - 32) for line in lines))
+    h = max(132, max(_body_h([line], w - 32, pf) for line in lines))
     # A short recap row looks accidental when pinned directly under the header. Keep it in the
     # visual center of the body band, while still moving upward when richer copy needs the room.
     y = max(190, _top(60 + 8 + h))
@@ -172,7 +176,7 @@ def problem_page(problem: dict, pf: Optional[PartFactory] = None) -> Optional[Sl
     if problem.get("lead"):
         blocks.append(lead_block([P(T(problem["lead"]))]))
     w = 1184
-    h = _body_h(problems, w - 32)
+    h = _body_h(problems, w - 32, pf, numbered=True)
     y = _top(48 + 8 + h)
     blocks += _panel(0, 48, y, w, 48, h, "문제", problems, numbered=True, pf=pf)
     blocks.append(_note())
